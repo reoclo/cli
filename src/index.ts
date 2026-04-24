@@ -9,6 +9,7 @@ import { registerWhoami } from "./commands/whoami";
 import { registerServers } from "./commands/servers";
 import { registerApps } from "./commands/apps";
 import { registerDeployments } from "./commands/deployments";
+import { registerLogs } from "./commands/logs";
 
 export const VERSION = pkg.version;
 
@@ -30,6 +31,7 @@ if (import.meta.main) {
   registerServers(program);
   registerApps(program);
   registerDeployments(program);
+  registerLogs(program);
 
   try {
     await program.parseAsync(process.argv);
