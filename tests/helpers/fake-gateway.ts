@@ -18,9 +18,24 @@ export interface FakeGateway {
 }
 
 export function startFakeGateway(): FakeGateway {
+  // In-memory state per gateway instance — reset on each fresh startFakeGateway().
+  const envVars = new Map<string, Map<string, string>>();
+  const domains: Array<{
+    id: string;
+    tenant_id: string;
+    fqdn: string;
+    status: string;
+    application_id: string | null;
+    bound_server_id: string | null;
+    verified_domain_id: string | null;
+    scheme_hint: string | null;
+  }> = [];
+  const deployments: Array<{ id: string; status: string }> = [];
+  let nextId = 1;
+
   const server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       const auth = req.headers.get("authorization");
       if (auth !== `Bearer ${TOKEN}`) return new Response("unauth", { status: 401 });
@@ -86,6 +101,91 @@ export function startFakeGateway(): FakeGateway {
           skip: 0,
           limit: 200,
         });
+      }
+
+      // POST /mcp/tenants/{tid}/applications/{app_id}/deploy
+      const deployMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/deploy$`),
+      );
+      if (deployMatch && req.method === "POST") {
+        const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+        const dep = { id, status: "queued" };
+        deployments.push(dep);
+        return Response.json(dep);
+      }
+
+      // GET /mcp/tenants/{tid}/applications/{app_id}/deployments/{dep_id}
+      const depGetMatch = url.pathname.match(
+        new RegExp(
+          `^/mcp/tenants/${TENANT_ID}/applications/[^/]+/deployments/([^/]+)$`,
+        ),
+      );
+      if (depGetMatch && req.method === "GET") {
+        const dep = deployments.find((d) => d.id === depGetMatch[1]);
+        if (!dep) return new Response("not found", { status: 404 });
+        // Immediately return "succeeded" so --wait completes on the first poll.
+        return Response.json({ ...dep, status: "succeeded" });
+      }
+
+      // /mcp/tenants/{tid}/applications/{app_id}/env/
+      const envCollectionMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/env/$`),
+      );
+      if (envCollectionMatch) {
+        const appId = envCollectionMatch[1] ?? "";
+        if (!envVars.has(appId)) envVars.set(appId, new Map());
+        const map = envVars.get(appId)!;
+
+        if (req.method === "GET") {
+          const items = Array.from(map.keys()).map((k) => ({
+            key: k,
+            updated_at: "2026-01-01T00:00:00Z",
+          }));
+          return Response.json(items);
+        }
+        if (req.method === "PATCH") {
+          const body = (await req.json()) as { vars: Array<{ key: string; value: string }> };
+          for (const v of body.vars) map.set(v.key, v.value);
+          const items = Array.from(map.keys()).map((k) => ({
+            key: k,
+            updated_at: "2026-01-01T00:00:00Z",
+          }));
+          return Response.json(items);
+        }
+      }
+
+      // DELETE /mcp/tenants/{tid}/applications/{app_id}/env/{key}
+      const envKeyMatch = url.pathname.match(
+        new RegExp(
+          `^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/env/([^/]+)$`,
+        ),
+      );
+      if (envKeyMatch && req.method === "DELETE") {
+        const appId = envKeyMatch[1] ?? "";
+        const key = envKeyMatch[2] ?? "";
+        envVars.get(appId)?.delete(key);
+        return new Response(null, { status: 204 });
+      }
+
+      // /mcp/tenants/{tid}/domains/
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/domains/`) {
+        if (req.method === "GET") return Response.json(domains);
+        if (req.method === "POST") {
+          const body = (await req.json()) as { fqdn: string };
+          const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+          const d = {
+            id,
+            tenant_id: TENANT_ID,
+            fqdn: body.fqdn,
+            status: "pending",
+            application_id: null,
+            bound_server_id: null,
+            verified_domain_id: null,
+            scheme_hint: null,
+          };
+          domains.push(d);
+          return Response.json(d);
+        }
       }
 
       // /mcp/tenants/{tid}/applications/{id}
