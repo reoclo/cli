@@ -18,7 +18,7 @@ test("apiPrefix automation", () => {
 });
 
 test("apiPrefix tenant", () => {
-  expect(apiPrefix("tenant")).toBe("/api/v1");
+  expect(apiPrefix("tenant")).toBe("/mcp");
 });
 
 test("commandSupportedBy: tenant key allows everything", () => {

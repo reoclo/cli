@@ -16,7 +16,7 @@ beforeEach(() => {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === "/api/v1/auth/me") {
+      if (url.pathname === "/mcp/auth/me") {
         const auth = req.headers.get("authorization");
         if (auth !== "Bearer rk_t_fake") return new Response("unauth", { status: 401 });
         return Response.json({

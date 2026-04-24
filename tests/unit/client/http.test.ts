@@ -10,12 +10,12 @@ beforeAll(() => {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === "/api/v1/auth/me") {
+      if (url.pathname === "/mcp/auth/me") {
         const auth = req.headers.get("authorization");
         if (auth !== "Bearer rk_t_good") return new Response("unauth", { status: 401 });
         return Response.json({ tenant_slug: "acme", email: "u@x" });
       }
-      if (url.pathname === "/api/v1/missing") return new Response("no", { status: 404 });
+      if (url.pathname === "/mcp/missing") return new Response("no", { status: 404 });
       return new Response("hi", { status: 200 });
     },
   });
