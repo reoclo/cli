@@ -1,0 +1,34 @@
+when:
+  - event: push
+  - event: pull_request
+  - event: tag
+
+steps:
+  lint:
+    image: oven/bun:1
+    commands:
+      - bun install --frozen-lockfile
+      - bun run lint
+
+  typecheck:
+    image: oven/bun:1
+    commands:
+      - bun install --frozen-lockfile
+      - bun run typecheck
+
+  test:
+    image: oven/bun:1
+    commands:
+      - bun install --frozen-lockfile
+      - bun test --coverage
+
+  build:
+    image: oven/bun:1
+    commands:
+      - bun install --frozen-lockfile
+      - bun run build
+      - ls -la dist/
+    when:
+      - event: tag
+      - event: push
+        branch: main
