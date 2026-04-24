@@ -3,9 +3,13 @@
   "version": "0.0.1",
   "description": "Reoclo command-line interface",
   "license": "MIT",
-  "bin": { "reoclo": "./dist/reoclo" },
+  "bin": {
+    "reoclo": "./dist/reoclo"
+  },
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bun run scripts/build-all.ts",
@@ -15,8 +19,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "commander": "^12.1.0",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
