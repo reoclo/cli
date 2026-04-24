@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
-import type { Application } from "../client/types";
+import type { Application, PaginatedResponse } from "../client/types";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -19,9 +19,11 @@ export function registerApps(program: Command): void {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const list = await ctx.client.get<Application[]>(`/tenants/${tid}/applications/`);
+      const res = await ctx.client.get<PaginatedResponse<Application>>(
+        `/tenants/${tid}/applications/?limit=200`,
+      );
       printList(
-        list as unknown as Array<Record<string, unknown>>,
+        res.items as unknown as Array<Record<string, unknown>>,
         [
           { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },

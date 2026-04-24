@@ -48,7 +48,14 @@ export interface Domain {
   created_at: string;
 }
 
-export interface ListResponse<T> {
+/**
+ * Standard paginated envelope used by the API for several list endpoints
+ * (applications, deployments). Other list endpoints (servers, domains)
+ * return bare arrays — check the specific endpoint's response shape.
+ */
+export interface PaginatedResponse<T> {
   items: T[];
-  total?: number;
+  total: number;
+  skip: number;
+  limit: number;
 }

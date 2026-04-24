@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cacheDir } from "../config/paths";
 import type { HttpClient } from "./http";
-import type { Application, Server } from "./types";
+import type { Application, PaginatedResponse, Server } from "./types";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TTL_MS = 10 * 60 * 1000;
@@ -60,9 +60,14 @@ export async function resolveApp(c: HttpClient, tenantId: string, idOrSlug: stri
   const cache = read();
   const hit = cache.apps[idOrSlug];
   if (hit && Date.now() - hit.ts < TTL_MS) return hit.id;
-  const list = await c.get<Application[]>(`/tenants/${tenantId}/applications/`);
+  // Apps list is paginated. limit=200 is the API's max per page; for v1 we
+  // assume a tenant has fewer than 200 apps. If that ever stops being true
+  // we'll page through here.
+  const res = await c.get<PaginatedResponse<Application>>(
+    `/tenants/${tenantId}/applications/?limit=200`,
+  );
   cache.apps = {};
-  for (const a of list) cache.apps[a.slug] = { id: a.id, ts: Date.now() };
+  for (const a of res.items) cache.apps[a.slug] = { id: a.id, ts: Date.now() };
   write(cache);
   const found = cache.apps[idOrSlug];
   if (!found) {
