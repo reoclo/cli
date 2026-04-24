@@ -10,7 +10,7 @@
     "dev": "bun run src/index.ts",
     "build": "bun run scripts/build-all.ts",
     "test": "bun test",
-    "lint": "eslint src tests --ext .ts",
+    "lint": "eslint",
     "format": "prettier --write src tests",
     "typecheck": "tsc --noEmit"
   },

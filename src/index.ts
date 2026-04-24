@@ -8,4 +8,4 @@ const program = new Command()
   .description("Reoclo CLI")
   .version(VERSION);
 
-program.parseAsync(process.argv);
+void program.parseAsync(process.argv);
