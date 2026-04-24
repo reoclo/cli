@@ -9,6 +9,29 @@ export interface ResolvedContext {
   api: string;
   token: string;
   tokenType: KeyType;
+  /**
+   * Tenant ID from the active profile. Populated by `reoclo login` from
+   * the `/auth/me` response. May be undefined in env-var-only flows where
+   * no profile exists; in that case, tenant-scoped commands should call
+   * `/auth/me` themselves or use {@link requireTenantId}.
+   */
+  tenantId?: string;
+}
+
+/**
+ * Asserts that {@link ResolvedContext.tenantId} is present and returns it.
+ * Throws with exit code 3 if missing — the same code as "not authenticated"
+ * since the typical fix is to re-run `reoclo login`.
+ */
+export function requireTenantId(ctx: ResolvedContext): string {
+  if (!ctx.tenantId) {
+    const err = new Error(
+      "no tenant_id resolved — run 'reoclo login' to populate the profile, or call /auth/me",
+    ) as Error & { exitCode: number };
+    err.exitCode = 3;
+    throw err;
+  }
+  return ctx.tenantId;
 }
 
 export interface BootstrapOptions {
@@ -57,5 +80,6 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     api,
     token,
     tokenType: detectKeyType(token),
+    tenantId: profile?.tenant_id,
   };
 }
