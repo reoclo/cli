@@ -11,6 +11,7 @@ import { registerApps } from "./commands/apps";
 import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
+import { registerDomains } from "./commands/domains";
 
 export const VERSION = pkg.version;
 
@@ -34,6 +35,7 @@ if (import.meta.main) {
   registerDeployments(program);
   registerLogs(program);
   registerEnv(program);
+  registerDomains(program);
 
   try {
     await program.parseAsync(process.argv);

@@ -42,10 +42,13 @@ export interface Deployment {
 
 export interface Domain {
   id: string;
-  domain: string;
-  verified: boolean;
-  application_id?: string;
-  created_at: string;
+  tenant_id: string;
+  fqdn: string;
+  status: string;
+  application_id: string | null;
+  bound_server_id: string | null;
+  verified_domain_id: string | null;
+  scheme_hint: string | null;
 }
 
 /**
