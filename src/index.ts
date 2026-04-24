@@ -6,6 +6,7 @@ import { registerKeyring } from "./commands/keyring";
 import { registerLogin } from "./commands/login";
 import { registerLogout } from "./commands/logout";
 import { registerWhoami } from "./commands/whoami";
+import { registerServers } from "./commands/servers";
 
 export const VERSION = pkg.version;
 
@@ -24,6 +25,7 @@ if (import.meta.main) {
   registerLogin(program);
   registerLogout(program);
   registerWhoami(program);
+  registerServers(program);
 
   try {
     await program.parseAsync(process.argv);
