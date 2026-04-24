@@ -12,6 +12,8 @@ import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
+import { bootstrap } from "./client/bootstrap";
+import { commandSupportedBy } from "./client/routing";
 
 export const VERSION = pkg.version;
 
@@ -36,6 +38,40 @@ if (import.meta.main) {
   registerLogs(program);
   registerEnv(program);
   registerDomains(program);
+
+  // Skip preAction for commands that don't need authentication or run before login.
+  const PASSTHROUGH_COMMANDS = new Set([
+    "login",
+    "logout",
+    "version",
+    "help",
+    "completion",
+    "profile",   // ls/use/rm operate on local config; no API needed
+    "keyring",   // status/migrate/export operate on local stores
+  ]);
+
+  program.hook("preAction", async (_thisCommand, actionCommand) => {
+    // For nested commands like `apps deploy`, actionCommand is the leaf
+    // ("deploy"), and its parent is the group ("apps"). For top-level
+    // commands like `whoami`, parent is the root program.
+    const leafName = actionCommand.name();
+    const parentName = actionCommand.parent?.name();
+    const topLevel = parentName && parentName !== "reoclo" ? parentName : leafName;
+
+    if (PASSTHROUGH_COMMANDS.has(topLevel)) return;
+
+    // Resolve the auth context (token + key type) without making a network call.
+    const ctx = await bootstrap();
+
+    if (!commandSupportedBy(leafName, ctx.tokenType)) {
+      const cmd = parentName && parentName !== "reoclo" ? `${parentName} ${leafName}` : leafName;
+      const err = new Error(
+        `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec.`,
+      ) as Error & { exitCode: number };
+      err.exitCode = 4;
+      throw err;
+    }
+  });
 
   try {
     await program.parseAsync(process.argv);
