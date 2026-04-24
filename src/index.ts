@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import pkg from "../package.json" with { type: "json" };
 
-const VERSION = "0.0.1";
+export const VERSION = pkg.version;
 
-const program = new Command()
-  .name("reoclo")
-  .description("Reoclo CLI")
-  .version(VERSION);
-
-void program.parseAsync(process.argv);
+if (import.meta.main) {
+  const program = new Command()
+    .name("reoclo")
+    .description("Reoclo CLI")
+    .version(VERSION);
+  await program.parseAsync(process.argv);
+}
