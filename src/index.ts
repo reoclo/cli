@@ -15,6 +15,7 @@ import { registerDomains } from "./commands/domains";
 import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
+import { registerExec } from "./commands/exec";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 
@@ -44,6 +45,7 @@ if (import.meta.main) {
   registerMcp(program);
   registerUpgrade(program);
   registerCompletion(program);
+  registerExec(program);
 
   // Skip preAction for commands that don't need authentication or run before login.
   const PASSTHROUGH_COMMANDS = new Set([

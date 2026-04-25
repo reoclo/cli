@@ -188,6 +188,77 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
+      // POST /mcp/tenants/{tid}/applications/{app_id}/restart
+      const restartMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/restart$`),
+      );
+      if (restartMatch && req.method === "POST") {
+        return Response.json({
+          application_id: restartMatch[1] ?? "",
+          container_name: "reoclo-acme-app-1",
+          exit_code: 0,
+          stdout: "",
+          stderr: "",
+        });
+      }
+
+      // GET /mcp/tenants/{tid}/applications/{app_id}/logs
+      const appLogsMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/logs$`),
+      );
+      if (appLogsMatch && req.method === "GET") {
+        return Response.json({
+          server_id: "00000000-0000-0000-0000-00000000bbbb",
+          server_name: "srv-1",
+          source_type: "container",
+          source_name: "reoclo-acme-app-1",
+          fetched_at: "2026-04-25T00:00:00Z",
+          entries: [
+            {
+              timestamp: "2026-04-25T00:00:01Z",
+              level: "info",
+              message: "boot ok",
+              server_id: "00000000-0000-0000-0000-00000000bbbb",
+              server_name: "srv-1",
+              source_type: "container",
+              source_name: "reoclo-acme-app-1",
+            },
+            {
+              timestamp: "2026-04-25T00:00:02Z",
+              level: "warn",
+              message: "slow query",
+              server_id: "00000000-0000-0000-0000-00000000bbbb",
+              server_name: "srv-1",
+              source_type: "container",
+              source_name: "reoclo-acme-app-1",
+            },
+          ],
+        });
+      }
+
+      // POST /mcp/tenants/{tid}/servers/{server_id}/exec
+      const execMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/exec$`),
+      );
+      if (execMatch && req.method === "POST") {
+        const body = (await req.json()) as { command?: string };
+        const cmd = body.command ?? "";
+        if (cmd.startsWith("fail")) {
+          return Response.json({
+            exit_code: 1,
+            stdout: "",
+            stderr: "boom\n",
+            truncated: false,
+          });
+        }
+        return Response.json({
+          exit_code: 0,
+          stdout: `ran: ${cmd}\n`,
+          stderr: "",
+          truncated: false,
+        });
+      }
+
       // /mcp/tenants/{tid}/applications/{id}
       const appMatch = url.pathname.match(
         new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)$`),
