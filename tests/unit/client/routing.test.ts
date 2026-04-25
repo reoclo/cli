@@ -26,10 +26,11 @@ test("commandSupportedBy: tenant key allows everything", () => {
   expect(commandSupportedBy("deploy", "tenant")).toBe(true);
 });
 
-test("commandSupportedBy: automation key allows only deploy/restart/exec", () => {
+test("commandSupportedBy: automation key allows deploy/restart/exec/shell", () => {
   expect(commandSupportedBy("deploy", "automation")).toBe(true);
   expect(commandSupportedBy("restart", "automation")).toBe(true);
   expect(commandSupportedBy("exec", "automation")).toBe(true);
+  expect(commandSupportedBy("shell", "automation")).toBe(true);
   expect(commandSupportedBy("domains", "automation")).toBe(false);
   expect(commandSupportedBy("env", "automation")).toBe(false);
 });

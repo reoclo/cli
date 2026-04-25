@@ -16,6 +16,7 @@ import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
+import { registerShell } from "./commands/shell";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 
@@ -46,6 +47,7 @@ if (import.meta.main) {
   registerUpgrade(program);
   registerCompletion(program);
   registerExec(program);
+  registerShell(program);
 
   // Skip preAction for commands that don't need authentication or run before login.
   const PASSTHROUGH_COMMANDS = new Set([
@@ -76,7 +78,7 @@ if (import.meta.main) {
     if (!commandSupportedBy(leafName, ctx.tokenType)) {
       const cmd = parentName && parentName !== "reoclo" ? `${parentName} ${leafName}` : leafName;
       const err = new Error(
-        `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec.`,
+        `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec/shell.`,
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

@@ -11,6 +11,7 @@ const TOP_LEVEL_COMMANDS = [
   "deployments",
   "logs",
   "exec",
+  "shell",
   "env",
   "domains",
   "profile",

@@ -30,7 +30,6 @@ const DEFAULT_DOCS = resolve(
 const DOCS_DIR = process.env.REOCLO_DOCS_DIR ?? DEFAULT_DOCS;
 
 // Commands that must have a doc page. Keep alphabetised within sections.
-// Add `shell` once that CLI command ships.
 const COMMANDS = [
   "apps",
   "deployments",
@@ -44,6 +43,7 @@ const COMMANDS = [
   "mcp",
   "profile",
   "servers",
+  "shell",
   "upgrade",
   "whoami",
 ];

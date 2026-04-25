@@ -13,7 +13,7 @@ export function apiPrefix(t: KeyType): string {
   return t === "automation" ? "/api/automation/v1" : "/mcp";
 }
 
-const AUTOMATION_ALLOWED = new Set(["deploy", "restart", "exec"]);
+const AUTOMATION_ALLOWED = new Set(["deploy", "restart", "exec", "shell"]);
 
 export function commandSupportedBy(command: string, t: KeyType): boolean {
   if (t === "tenant") return true;
