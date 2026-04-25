@@ -1,0 +1,8 @@
+{
+  "name": "@reoclo/theta",
+  "version": "2.0.0",
+  "description": "Compatibility shim — downloads and runs 'reoclo mcp' on first use.",
+  "license": "MIT",
+  "bin": { "reoclo-theta": "./bin.js" },
+  "engines": { "node": ">=18" }
+}
