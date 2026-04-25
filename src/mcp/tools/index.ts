@@ -1,26 +1,29 @@
 // src/mcp/tools/index.ts
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import type { HttpClient } from "../../client/http";
 
-export interface McpRegistrationContext {
-  client: HttpClient;
-  tenantId: string | undefined;
-}
+import type { McpRegistrationContext } from "./context";
+import { registerApplicationTools } from "./applications";
+import { registerAuthTools } from "./auth";
+import { registerDeploymentTools } from "./deployments";
+import { registerDomainTools } from "./domains";
+import { registerLogTools } from "./logs";
+import { registerMonitorTools } from "./monitors";
+import { registerOtherTools } from "./other";
+import { registerScheduledOperationTools } from "./scheduled-operations";
+import { registerServerTools } from "./servers";
+import { registerStatusPageTools } from "./status-pages";
 
-export function registerAllTools(server: McpServer, _ctx: McpRegistrationContext): void {
-  // Placeholder — actual tool migration is Task 6.1b/c/d.
-  // For now, register one trivial tool so the protocol round-trip is testable.
-  server.tool(
-    "ping",
-    "Returns 'pong' — placeholder tool used to verify the MCP server boots.",
-    {},
-    () => ({
-      content: [{ type: "text", text: "pong" }],
-    }),
-  );
+export type { McpRegistrationContext } from "./context";
 
-  // Suppress unused-var lint for the schema import. The real tools (Task 6.1b+)
-  // will use `z.object({...})` schemas.
-  void z;
+export function registerAllTools(server: McpServer, ctx: McpRegistrationContext): void {
+  registerServerTools(server, ctx);
+  registerApplicationTools(server, ctx);
+  registerDeploymentTools(server, ctx);
+  registerLogTools(server, ctx);
+  registerDomainTools(server, ctx);
+  registerMonitorTools(server, ctx);
+  registerStatusPageTools(server, ctx);
+  registerOtherTools(server, ctx);
+  registerAuthTools(server, ctx);
+  registerScheduledOperationTools(server, ctx);
 }

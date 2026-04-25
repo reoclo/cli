@@ -1,7 +1,8 @@
 // src/mcp/server.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { HttpClient } from "../client/http";
-import { registerAllTools, type McpRegistrationContext } from "./tools/index";
+import { registerAllTools } from "./tools/index";
+import type { McpRegistrationContext } from "./tools/context";
 
 export function createMcpServer(ctx: McpRegistrationContext): McpServer {
   const server = new McpServer({
