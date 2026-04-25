@@ -1,0 +1,36 @@
+class Reoclo < Formula
+  desc "Reoclo CLI"
+  homepage "https://reoclo.com"
+  version "{{VERSION}}"
+  license "MIT"
+
+  on_macos do
+    on_intel do
+      url "https://github.com/reoclo/cli/releases/download/v{{VERSION}}/reoclo-darwin-x64"
+      sha256 "{{SHA_DARWIN_X64}}"
+    end
+    on_arm do
+      url "https://github.com/reoclo/cli/releases/download/v{{VERSION}}/reoclo-darwin-arm64"
+      sha256 "{{SHA_DARWIN_ARM64}}"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/reoclo/cli/releases/download/v{{VERSION}}/reoclo-linux-x64"
+      sha256 "{{SHA_LINUX_X64}}"
+    end
+    on_arm do
+      url "https://github.com/reoclo/cli/releases/download/v{{VERSION}}/reoclo-linux-arm64"
+      sha256 "{{SHA_LINUX_ARM64}}"
+    end
+  end
+
+  def install
+    bin.install Dir["reoclo-*"].first => "reoclo"
+  end
+
+  test do
+    assert_match(/^{{VERSION}}$/, shell_output("#{bin}/reoclo --version").strip)
+  end
+end
