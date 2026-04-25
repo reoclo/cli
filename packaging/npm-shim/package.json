@@ -1,0 +1,15 @@
+{
+  "name": "@reoclo/cli",
+  "version": "0.0.0-placeholder",
+  "description": "Reoclo CLI",
+  "license": "MIT",
+  "bin": { "reoclo": "./bin.js" },
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "@reoclo/cli-linux-x64":    "0.0.0-placeholder",
+    "@reoclo/cli-linux-arm64":  "0.0.0-placeholder",
+    "@reoclo/cli-darwin-x64":   "0.0.0-placeholder",
+    "@reoclo/cli-darwin-arm64": "0.0.0-placeholder",
+    "@reoclo/cli-windows-x64":  "0.0.0-placeholder"
+  }
+}
