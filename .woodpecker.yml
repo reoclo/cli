@@ -44,16 +44,18 @@ steps:
         from_secret: github_release_token
       NPM_TOKEN:
         from_secret: npm_token
-      DEPLOY_HOST:
-        from_secret: get_deploy_host
-      DEPLOY_KEY:
-        from_secret: get_deploy_key
+      MINIO_ENDPOINT_URL:
+        from_secret: minio_endpoint_url
+      MINIO_ACCESS_KEY:
+        from_secret: minio_access_key
+      MINIO_SECRET_KEY:
+        from_secret: minio_secret_key
     commands:
       - bun install --frozen-lockfile
-      - bun run build                     # produces dist/reoclo-*
-      - bash scripts/release-checksums.sh # SHA256SUMS in dist/
-      - bash scripts/release-gitea.sh     # uploads binaries + SHA256SUMS to Gitea release
-      - bash scripts/release-github.sh    # mirrors release to github.com/reoclo/cli
+      - bun run build                       # produces dist/reoclo-*
+      - bash scripts/release-checksums.sh   # SHA256SUMS in dist/
+      - bash scripts/release-gitea.sh       # uploads binaries + SHA256SUMS to Gitea release
+      - bash scripts/release-github.sh      # mirrors release to github.com/reoclo/cli
       - bash scripts/publish-npm.sh
+      - bash scripts/update-get-pointer.sh  # pushes install.sh + channel pointer to MinIO
       # TODO(7.5 prereq): bash scripts/update-homebrew.sh — requires reoclo/homebrew-tap with push key
-      # TODO(7.7 prereq): bash scripts/update-get-pointer.sh — requires SSH key for get.reoclo.com host
