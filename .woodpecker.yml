@@ -52,8 +52,8 @@ steps:
       - bun install --frozen-lockfile
       - bun run build                     # produces dist/reoclo-*
       - bash scripts/release-checksums.sh # SHA256SUMS in dist/
-      # TODO(7.3): bash scripts/release-gitea.sh
-      # TODO(7.3): bash scripts/release-github.sh
+      - bash scripts/release-gitea.sh     # uploads binaries + SHA256SUMS to Gitea release
+      - bash scripts/release-github.sh    # mirrors release to github.com/reoclo/cli
       - bash scripts/publish-npm.sh
       # TODO(7.5 prereq): bash scripts/update-homebrew.sh — requires reoclo/homebrew-tap with push key
       # TODO(7.7 prereq): bash scripts/update-get-pointer.sh — requires SSH key for get.reoclo.com host
