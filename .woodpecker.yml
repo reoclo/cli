@@ -32,3 +32,28 @@ steps:
       - event: tag
       - event: push
         branch: main
+
+  release:
+    image: oven/bun:1
+    when:
+      - event: tag
+    environment:
+      GITEA_TOKEN:
+        from_secret: gitea_release_token
+      GITHUB_TOKEN:
+        from_secret: github_release_token
+      NPM_TOKEN:
+        from_secret: npm_token
+      DEPLOY_HOST:
+        from_secret: get_deploy_host
+      DEPLOY_KEY:
+        from_secret: get_deploy_key
+    commands:
+      - bun install --frozen-lockfile
+      - bun run build                     # produces dist/reoclo-*
+      - bash scripts/release-checksums.sh # SHA256SUMS in dist/
+      # TODO(7.3): bash scripts/release-gitea.sh
+      # TODO(7.3): bash scripts/release-github.sh
+      - bash scripts/publish-npm.sh
+      # TODO(7.5 prereq): bash scripts/update-homebrew.sh — requires reoclo/homebrew-tap with push key
+      # TODO(7.7 prereq): bash scripts/update-get-pointer.sh — requires SSH key for get.reoclo.com host
