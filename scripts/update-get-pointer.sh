@@ -45,6 +45,35 @@ if [[ ! -f packaging/install.sh ]]; then
   exit 1
 fi
 
+# Idempotent bucket bootstrap: create the bucket if it does not exist and apply
+# a public-read policy so curl|bash works without auth. head-bucket exits 0 if
+# the bucket exists and is reachable; anything else means we need to create it.
+if ! aws s3api head-bucket --bucket "${BUCKET}" --endpoint-url "${ENDPOINT}" >/dev/null 2>&1; then
+  echo "  bucket s3://${BUCKET} does not exist — creating"
+  aws s3 mb "s3://${BUCKET}" --endpoint-url "${ENDPOINT}" >/dev/null
+
+  POLICY=$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPublicRead",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::${BUCKET}/*"
+    }
+  ]
+}
+JSON
+)
+  echo "  applying public-read policy to s3://${BUCKET}"
+  printf '%s' "${POLICY}" | aws s3api put-bucket-policy \
+    --bucket "${BUCKET}" \
+    --endpoint-url "${ENDPOINT}" \
+    --policy file:///dev/stdin
+fi
+
 echo "  uploading install.sh -> s3://${BUCKET}/install.sh"
 aws s3 cp packaging/install.sh "s3://${BUCKET}/install.sh" \
   --endpoint-url "${ENDPOINT}" \
