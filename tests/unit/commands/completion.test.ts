@@ -14,14 +14,14 @@ function captureCompletion(shell: string): {
 
   const origStdout = process.stdout.write.bind(process.stdout);
   const origStderr = process.stderr.write.bind(process.stderr);
-  process.stdout.write = ((chunk: unknown) => {
+  process.stdout.write = (chunk: unknown): boolean => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: unknown) => {
+  };
+  process.stderr.write = (chunk: unknown): boolean => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
-  }) as typeof process.stderr.write;
+  };
 
   try {
     const program = new Command().exitOverride();

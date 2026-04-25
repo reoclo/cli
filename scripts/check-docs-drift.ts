@@ -30,12 +30,13 @@ const DEFAULT_DOCS = resolve(
 const DOCS_DIR = process.env.REOCLO_DOCS_DIR ?? DEFAULT_DOCS;
 
 // Commands that must have a doc page. Keep alphabetised within sections.
-// Add `apps logs`, `apps restart`, `exec`, `shell` once their CLI commands ship.
+// Add `shell` once that CLI command ships.
 const COMMANDS = [
   "apps",
   "deployments",
   "domains",
   "env",
+  "exec",
   "keyring",
   "login",
   "logout",

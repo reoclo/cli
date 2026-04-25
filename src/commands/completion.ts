@@ -10,6 +10,7 @@ const TOP_LEVEL_COMMANDS = [
   "apps",
   "deployments",
   "logs",
+  "exec",
   "env",
   "domains",
   "profile",
@@ -33,7 +34,7 @@ _reoclo() {
 
   case "\${COMP_WORDS[1]}" in
     servers)     COMPREPLY=( $(compgen -W "ls get metrics" -- "\${cur}") );;
-    apps)        COMPREPLY=( $(compgen -W "ls get deploy" -- "\${cur}") );;
+    apps)        COMPREPLY=( $(compgen -W "ls get deploy logs restart" -- "\${cur}") );;
     deployments) COMPREPLY=( $(compgen -W "ls get logs" -- "\${cur}") );;
     logs)        COMPREPLY=( $(compgen -W "tail" -- "\${cur}") );;
     env)         COMPREPLY=( $(compgen -W "ls set rm get" -- "\${cur}") );;
@@ -54,7 +55,7 @@ _reoclo() {
 
   local -a servers_subs apps_subs deployments_subs logs_subs env_subs domains_subs profile_subs keyring_subs
   servers_subs=("ls" "get" "metrics")
-  apps_subs=("ls" "get" "deploy")
+  apps_subs=("ls" "get" "deploy" "logs" "restart")
   deployments_subs=("ls" "get" "logs")
   logs_subs=("tail")
   env_subs=("ls" "set" "rm" "get")
@@ -85,7 +86,7 @@ const FISH = `# reoclo fish completion
 complete -c reoclo -n "__fish_use_subcommand" -a "${TOP_LEVEL_COMMANDS.join(" ")}"
 
 complete -c reoclo -n "__fish_seen_subcommand_from servers"     -a "ls get metrics"
-complete -c reoclo -n "__fish_seen_subcommand_from apps"        -a "ls get deploy"
+complete -c reoclo -n "__fish_seen_subcommand_from apps"        -a "ls get deploy logs restart"
 complete -c reoclo -n "__fish_seen_subcommand_from deployments" -a "ls get logs"
 complete -c reoclo -n "__fish_seen_subcommand_from logs"        -a "tail"
 complete -c reoclo -n "__fish_seen_subcommand_from env"         -a "ls set rm get"
