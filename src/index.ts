@@ -13,6 +13,7 @@ import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
 import { registerMcp } from "./commands/mcp";
+import { registerUpgrade } from "./commands/upgrade";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 
@@ -40,6 +41,7 @@ if (import.meta.main) {
   registerEnv(program);
   registerDomains(program);
   registerMcp(program);
+  registerUpgrade(program);
 
   // Skip preAction for commands that don't need authentication or run before login.
   const PASSTHROUGH_COMMANDS = new Set([
@@ -51,6 +53,7 @@ if (import.meta.main) {
     "profile",   // ls/use/rm operate on local config; no API needed
     "keyring",   // status/migrate/export operate on local stores
     "mcp",       // bootstrap happens inside the action with proper error handling
+    "upgrade",   // checks get.reoclo.com; no tenant auth needed
   ]);
 
   program.hook("preAction", async (_thisCommand, actionCommand) => {
