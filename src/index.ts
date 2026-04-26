@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { basename } from "node:path";
 import { Command } from "commander";
 import pkg from "../package.json" with { type: "json" };
 import { registerProfile } from "./commands/profile";
@@ -22,9 +23,19 @@ import { commandSupportedBy } from "./client/routing";
 
 export const VERSION = pkg.version;
 
+// Detect how the user invoked us. We accept `rc` as a short alias for
+// `reoclo`; everything else falls back to "reoclo" so the tool always
+// has a stable name in help output and error messages.
+function detectProgramName(): string {
+  const argv0 = process.argv[0] ?? "";
+  const name = basename(argv0).toLowerCase().replace(/\.exe$/, "");
+  return name === "rc" ? "rc" : "reoclo";
+}
+
 if (import.meta.main) {
+  const PROGRAM_NAME = detectProgramName();
   const program = new Command()
-    .name("reoclo")
+    .name(PROGRAM_NAME)
     .description("Reoclo CLI")
     .version(VERSION)
     .option("-o, --output <fmt>", "output format: text|json|yaml", "text")
@@ -69,7 +80,7 @@ if (import.meta.main) {
     // commands like `whoami`, parent is the root program.
     const leafName = actionCommand.name();
     const parentName = actionCommand.parent?.name();
-    const topLevel = parentName && parentName !== "reoclo" ? parentName : leafName;
+    const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
 
     if (PASSTHROUGH_COMMANDS.has(topLevel)) return;
 
@@ -77,7 +88,7 @@ if (import.meta.main) {
     const ctx = await bootstrap();
 
     if (!commandSupportedBy(leafName, ctx.tokenType)) {
-      const cmd = parentName && parentName !== "reoclo" ? `${parentName} ${leafName}` : leafName;
+      const cmd = parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
       const err = new Error(
         `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec/shell.`,
       ) as Error & { exitCode: number };

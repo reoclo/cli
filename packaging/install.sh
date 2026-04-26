@@ -61,7 +61,12 @@ curl -sSLf -o "${TMP}/SHA256SUMS" "$SUMS_URL"
 chmod +x "${TMP}/reoclo"
 mv "${TMP}/reoclo" "${INSTALL_DIR}/reoclo"
 
+# Create the 'rc' short alias as a symlink. Idempotent: replaces an
+# existing rc symlink/file in the same dir.
+ln -sf reoclo "${INSTALL_DIR}/rc"
+
 echo "✓ installed reoclo ${VERSION} to ${INSTALL_DIR}/reoclo"
+echo "✓ symlinked rc -> reoclo at ${INSTALL_DIR}/rc"
 if ! command -v reoclo >/dev/null && [[ "$NO_MODIFY_PATH" == "0" ]]; then
   echo ""
   echo "⚠ ${INSTALL_DIR} is not on your PATH."

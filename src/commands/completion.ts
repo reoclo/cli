@@ -18,25 +18,33 @@ import { getCompletionCandidates } from "../completion/engine";
 
 type Shell = "bash" | "zsh" | "fish";
 
-const BASH_SHIM = `# reoclo bash completion
+const BASH_SHIM = `# reoclo bash completion (also registers for the 'rc' alias)
 _reoclo() {
-  local cur cwords candidates
+  local cur cwords raw line
   cur="\${COMP_WORDS[COMP_CWORD]}"
   if (( COMP_CWORD > 0 )); then
     cwords=("\${COMP_WORDS[@]:1:COMP_CWORD-1}")
   else
     cwords=()
   fi
-  if ! candidates=$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
+  if ! raw=$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
     return
   fi
-  COMPREPLY=( $(compgen -W "\${candidates}" -- "\${cur}") )
+  # Read newline-separated candidates and backslash-escape spaces so
+  # multi-word names ("Reoclo Production") survive bash's word-split on
+  # insertion. The CLI already prefix-filters; no need for compgen.
+  COMPREPLY=()
+  while IFS= read -r line; do
+    [ -z "\$line" ] && continue
+    COMPREPLY+=("\${line// /\\\\ }")
+  done <<< "\$raw"
 }
 complete -F _reoclo reoclo
+complete -F _reoclo rc
 `;
 
-const ZSH_SHIM = `#compdef reoclo
-# reoclo zsh completion
+const ZSH_SHIM = `#compdef reoclo rc
+# reoclo zsh completion (also registers for the 'rc' alias)
 _reoclo() {
   local cur cwords candidates
   cur="\${words[CURRENT]}"
@@ -44,10 +52,10 @@ _reoclo() {
   candidates=("\${(@f)$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null)}")
   compadd -- "\${candidates[@]}"
 }
-compdef _reoclo reoclo
+compdef _reoclo reoclo rc
 `;
 
-const FISH_SHIM = `# reoclo fish completion
+const FISH_SHIM = `# reoclo fish completion (also registers for the 'rc' alias)
 function __reoclo_complete
   set -l tokens (commandline -opc)
   set -l current (commandline -ct)
@@ -56,6 +64,7 @@ function __reoclo_complete
   reoclo __complete $tokens -- "$current" 2>/dev/null
 end
 complete -c reoclo -f -a "(__reoclo_complete)"
+complete -c rc     -f -a "(__reoclo_complete)"
 `;
 
 export function getShimScript(shell: Shell): string {
