@@ -3,11 +3,11 @@ import { expect, test, describe } from "bun:test";
 import { Command } from "commander";
 import { registerCompletion } from "../../../src/commands/completion";
 
-function captureCompletion(shell: string): {
+async function captureCompletion(shell: string): Promise<{
   stdout: string;
   stderr: string;
   exitCode: number | null;
-} {
+}> {
   let stdout = "";
   let stderr = "";
   let exitCode: number | null = null;
@@ -26,7 +26,7 @@ function captureCompletion(shell: string): {
   try {
     const program = new Command().exitOverride();
     registerCompletion(program);
-    program.parse(["node", "reoclo", "completion", shell]);
+    await program.parseAsync(["node", "reoclo", "completion", shell]);
   } catch (e) {
     const err = e as { exitCode?: number; code?: string };
     exitCode = err.exitCode ?? (err.code ? 2 : 1);
@@ -39,28 +39,28 @@ function captureCompletion(shell: string): {
 }
 
 describe("reoclo completion", () => {
-  test("emits a bash completion script that wires _reoclo", () => {
-    const { stdout } = captureCompletion("bash");
+  test("emits a bash completion shim that wires _reoclo and defers to __complete", async () => {
+    const { stdout } = await captureCompletion("bash");
     expect(stdout).toContain("_reoclo()");
     expect(stdout).toContain("complete -F _reoclo reoclo");
-    expect(stdout).toContain("apps");
-    expect(stdout).toContain("servers");
+    expect(stdout).toContain("reoclo __complete");
   });
 
-  test("emits a zsh completion script with #compdef", () => {
-    const { stdout } = captureCompletion("zsh");
+  test("emits a zsh completion shim with #compdef header", async () => {
+    const { stdout } = await captureCompletion("zsh");
     expect(stdout.startsWith("#compdef reoclo")).toBe(true);
     expect(stdout).toContain("compdef _reoclo reoclo");
+    expect(stdout).toContain("reoclo __complete");
   });
 
-  test("emits a fish completion script", () => {
-    const { stdout } = captureCompletion("fish");
+  test("emits a fish completion shim that calls __complete", async () => {
+    const { stdout } = await captureCompletion("fish");
     expect(stdout).toContain("complete -c reoclo");
-    expect(stdout).toContain("__fish_seen_subcommand_from servers");
+    expect(stdout).toContain("reoclo __complete");
   });
 
-  test("rejects unsupported shell with exit code 2", () => {
-    const { stderr, exitCode } = captureCompletion("powershell");
+  test("rejects unsupported shell with exit code 2", async () => {
+    const { stderr, exitCode } = await captureCompletion("powershell");
     expect(stderr).toContain("unsupported shell: powershell");
     expect(exitCode).toBe(2);
   });

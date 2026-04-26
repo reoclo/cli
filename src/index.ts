@@ -56,6 +56,7 @@ if (import.meta.main) {
     "version",
     "help",
     "completion",
+    "__complete", // hidden completion engine — pure cache reads, never authenticates
     "profile",   // ls/use/rm operate on local config; no API needed
     "keyring",   // status/migrate/export operate on local stores
     "mcp",       // bootstrap happens inside the action with proper error handling
