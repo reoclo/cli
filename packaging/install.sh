@@ -42,6 +42,7 @@ SUMS_URL="https://github.com/reoclo/cli/releases/download/${VERSION}/SHA256SUMS"
 # Resolve install dir
 if [[ -n "$INSTALL_DIR_FLAG" ]]; then
   INSTALL_DIR="$INSTALL_DIR_FLAG"
+  mkdir -p "$INSTALL_DIR"
 elif [[ -w /usr/local/bin ]]; then
   INSTALL_DIR=/usr/local/bin
 else
