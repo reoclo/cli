@@ -41,6 +41,34 @@ const RESOURCE_SLOTS: Record<string, ResourceSlot> = {
   "env get": { slot: 0, kind: "envKeys" },
 };
 
+// Per-command flag → dynamic resource. When the user types `cmd --flag <TAB>`,
+// the value gets completed from the corresponding cached resource list.
+const FLAG_RESOURCES: Record<string, Record<string, ResourceKind>> = {
+  "logs tail": { "--server": "servers" },
+  "env ls": { "--app": "apps" },
+  "env set": { "--app": "apps" },
+  "env rm": { "--app": "apps" },
+  "env get": { "--app": "apps" },
+  "deployments ls": { "--app": "apps" },
+};
+
+// Per-command flag → fixed candidate set. Useful for enums and small closed
+// vocabularies where the API doesn't change the valid values.
+const STATIC_FLAG_VALUES: Record<string, Record<string, string[]>> = {
+  "logs tail": {
+    "--source": ["container", "system", "docker_daemon", "runner", "kernel", "auth"],
+  },
+  "exec": {
+    "--scope": ["host", "rootless"],
+  },
+  "upgrade": {
+    "--channel": ["stable", "beta", "dev"],
+  },
+  "completion": {
+    "--shell": ["bash", "zsh", "fish"],
+  },
+};
+
 // Commands that should never appear in completion output. These are hidden
 // (e.g. internal helpers) or otherwise inappropriate for tab-completion
 // surfaces.
@@ -160,6 +188,26 @@ export function getCompletionCandidates(
     if (current.startsWith("-")) {
       const { cmd } = walk(program, words);
       return filterByPrefix(flagsOf(cmd), current);
+    }
+
+    // 1.5 Flag-value completion: if the last typed word is a long flag that
+    //     takes a value, complete the value (static enum or dynamic resource).
+    //     Skip --flag=value (already terminated) and boolean flags.
+    const lastWord = words.at(-1);
+    if (lastWord && lastWord.startsWith("--") && !lastWord.includes("=")) {
+      const wordsBeforeFlag = words.slice(0, -1);
+      const { cmd, path } = walk(program, wordsBeforeFlag);
+      const opt = cmd.options.find((o) => o.long === lastWord);
+      if (opt && (opt.required || opt.optional)) {
+        const pathKey = path.join(" ");
+        const staticVals = STATIC_FLAG_VALUES[pathKey]?.[lastWord];
+        if (staticVals) return filterByPrefix(staticVals, current);
+        const flagRes = FLAG_RESOURCES[pathKey]?.[lastWord];
+        if (flagRes) {
+          return filterByPrefix(resourceCandidates(flagRes, words), current);
+        }
+        return [];
+      }
     }
 
     // 2. Resolve the current command from the words.

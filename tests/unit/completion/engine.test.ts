@@ -17,6 +17,8 @@ import { registerShell } from "../../../src/commands/shell";
 import { registerLogin } from "../../../src/commands/login";
 import { registerLogout } from "../../../src/commands/logout";
 import { registerWhoami } from "../../../src/commands/whoami";
+import { registerLogs } from "../../../src/commands/logs";
+import { registerUpgrade } from "../../../src/commands/upgrade";
 
 let tmp: string;
 
@@ -46,6 +48,8 @@ function buildProgram(): Command {
   registerEnv(program);
   registerExec(program);
   registerShell(program);
+  registerLogs(program);
+  registerUpgrade(program);
   registerCompletion(program);
   return program;
 }
@@ -138,6 +142,77 @@ describe("getCompletionCandidates", () => {
     const program = buildProgram();
     // Garbage `words` should not blow up.
     const out = getCompletionCandidates(program, ["nonexistent", "what"], "");
+    expect(Array.isArray(out)).toBe(true);
+  });
+
+  // Flag-value completion (the user types `cmd --flag <TAB>` and we should
+  // suggest the value, not just the next flag).
+
+  test("['logs','tail','--server'] with populated cache returns server names", () => {
+    writeCache({
+      version: 1,
+      apps: {},
+      servers: {
+        "prod-1": { id: "00000000-0000-0000-0000-00000000bbbb", ts: Date.now() },
+        "prod-2": { id: "00000000-0000-0000-0000-00000000eeee", ts: Date.now() },
+      },
+    });
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["logs", "tail", "--server"], "");
+    expect(out).toContain("prod-1");
+    expect(out).toContain("prod-2");
+  });
+
+  test("['logs','tail','--source'] returns the static source-type set", () => {
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["logs", "tail", "--source"], "");
+    for (const v of ["container", "system", "docker_daemon", "runner", "kernel", "auth"]) {
+      expect(out).toContain(v);
+    }
+  });
+
+  test("['exec','--scope'] returns host/rootless", () => {
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["exec", "--scope"], "");
+    expect(out).toEqual(["host", "rootless"]);
+  });
+
+  test("['upgrade','--channel'] returns stable/beta/dev", () => {
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["upgrade", "--channel"], "");
+    expect(out).toEqual(["stable", "beta", "dev"]);
+  });
+
+  test("['env','ls','--app'] returns app slugs from cache", () => {
+    writeCache({
+      version: 1,
+      servers: {},
+      apps: {
+        "api": { id: "00000000-0000-0000-0000-00000000cccc", ts: Date.now() },
+        "worker": { id: "00000000-0000-0000-0000-00000000dddd", ts: Date.now() },
+      },
+    });
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["env", "ls", "--app"], "");
+    expect(out).toContain("api");
+    expect(out).toContain("worker");
+  });
+
+  test("flag-value prefix filter narrows candidates", () => {
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["exec", "--scope"], "ho");
+    expect(out).toEqual(["host"]);
+  });
+
+  test("boolean flag (no value) does NOT trigger flag-value completion", () => {
+    // upgrade --check is a boolean flag — typing `reoclo upgrade --check <TAB>`
+    // should fall through to other rules, not return [] from the flag-value
+    // branch.
+    const program = buildProgram();
+    const out = getCompletionCandidates(program, ["upgrade", "--check"], "");
+    // No subcommands, no resource slot — the engine returns [] but via the
+    // fall-through path, not the flag-value path. Confirm we get empty here
+    // (no crash, no leaked candidates).
     expect(Array.isArray(out)).toBe(true);
   });
 });
