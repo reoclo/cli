@@ -9,11 +9,25 @@ import type { Me } from "../client/types";
 // TODO(future): replace plain readline with hidden-input prompt (termios raw mode).
 // Echoing is acceptable today since the primary auth path is `--token` from env.
 async function promptToken(msg: string): Promise<string> {
-  process.stdout.write(msg);
+  if (!process.stdin.isTTY) {
+    const e = new Error(
+      "no API key provided and stdin is not a TTY — pass --token or set REOCLO_API_KEY",
+    ) as Error & { exitCode: number };
+    e.exitCode = 2;
+    throw e;
+  }
+  // Pass the prompt string into rl.question directly. Splitting it across
+  // process.stdout.write + rl.question("") doesn't render reliably in
+  // bun-compiled binaries — the buffered write gets swallowed when readline
+  // takes over the TTY.
   const { createInterface } = await import("node:readline");
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question("", (answer) => {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    rl.question(msg, (answer) => {
       rl.close();
       resolve(answer.trim());
     });
