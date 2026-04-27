@@ -4,8 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveServer } from "../../../src/client/resolve";
 
+interface CacheEntry {
+  id: string;
+  slug: string;
+  name: string | null;
+  ts: number;
+}
+interface CacheFile {
+  version: number;
+  servers: Record<string, CacheEntry>;
+  apps: Record<string, CacheEntry>;
+}
+
 const fakeClient = (servers: Array<Record<string, unknown>>) => ({
-  get: async <T>(_path: string): Promise<T> => servers as unknown as T,
+  get: <T>(_path: string): Promise<T> => Promise.resolve(servers as unknown as T),
 });
 
 describe("resolveServer", () => {
@@ -19,9 +31,9 @@ describe("resolveServer", () => {
   test("UUID input short-circuits without an API call", async () => {
     let called = false;
     const client = {
-      get: async () => {
+      get: <T>(): Promise<T> => {
         called = true;
-        return [];
+        return Promise.resolve([] as unknown as T);
       },
     };
     const id = await resolveServer(
@@ -41,7 +53,7 @@ describe("resolveServer", () => {
     const id = await resolveServer(client as never, "t1", "reoclo-production");
     expect(id).toBe("srv-1");
 
-    const cache = JSON.parse(readFileSync(join(cacheDir, "slug-cache.json"), "utf8"));
+    const cache = JSON.parse(readFileSync(join(cacheDir, "slug-cache.json"), "utf8")) as CacheFile;
     expect(cache.servers["reoclo-production"]).toMatchObject({
       id: "srv-1",
       slug: "reoclo-production",
@@ -61,9 +73,15 @@ describe("resolveServer", () => {
     const client = fakeClient([
       { id: "srv-1", slug: "reoclo-production", name: "Reoclo Production" },
     ]);
-    await expect(
-      resolveServer(client as never, "t1", "nope"),
-    ).rejects.toThrow(/not found/);
+    let threw = false;
+    try {
+      await resolveServer(client as never, "t1", "nope");
+    } catch (err) {
+      threw = true;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/not found/);
+    }
+    expect(threw).toBe(true);
   });
 
   test("cache file with old shape (v1) is rebuilt on read", async () => {
@@ -80,8 +98,8 @@ describe("resolveServer", () => {
     const id = await resolveServer(client as never, "t1", "reoclo-production");
     expect(id).toBe("srv-1");
 
-    const cache = JSON.parse(readFileSync(join(cacheDir, "slug-cache.json"), "utf8"));
+    const cache = JSON.parse(readFileSync(join(cacheDir, "slug-cache.json"), "utf8")) as CacheFile;
     expect(cache.version).toBe(2);
-    expect(cache.servers["reoclo-production"].slug).toBe("reoclo-production");
+    expect(cache.servers["reoclo-production"]!.slug).toBe("reoclo-production");
   });
 });

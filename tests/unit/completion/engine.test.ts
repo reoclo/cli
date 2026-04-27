@@ -88,11 +88,11 @@ describe("getCompletionCandidates", () => {
 
   test("['apps','deploy'] with populated cache returns app slugs", () => {
     writeCache({
-      version: 1,
+      version: 2,
       servers: {},
       apps: {
-        "app-1": { id: "00000000-0000-0000-0000-00000000cccc", ts: Date.now() },
-        "app-2": { id: "00000000-0000-0000-0000-00000000dddd", ts: Date.now() },
+        "app-1": { id: "00000000-0000-0000-0000-00000000cccc", slug: "app-1", name: "App 1", ts: Date.now() },
+        "app-2": { id: "00000000-0000-0000-0000-00000000dddd", slug: "app-2", name: "App 2", ts: Date.now() },
       },
     });
     const program = buildProgram();
@@ -116,11 +116,11 @@ describe("getCompletionCandidates", () => {
 
   test("['exec'] with populated cache returns server names (exec is a leaf)", () => {
     writeCache({
-      version: 1,
+      version: 2,
       apps: {},
       servers: {
-        "srv-1": { id: "00000000-0000-0000-0000-00000000bbbb", ts: Date.now() },
-        "srv-2": { id: "00000000-0000-0000-0000-00000000eeee", ts: Date.now() },
+        "srv-1": { id: "00000000-0000-0000-0000-00000000bbbb", slug: "srv-1", name: "Server 1", ts: Date.now() },
+        "srv-2": { id: "00000000-0000-0000-0000-00000000eeee", slug: "srv-2", name: "Server 2", ts: Date.now() },
       },
     });
     const program = buildProgram();
@@ -150,11 +150,11 @@ describe("getCompletionCandidates", () => {
 
   test("['logs','tail','--server'] with populated cache returns server names", () => {
     writeCache({
-      version: 1,
+      version: 2,
       apps: {},
       servers: {
-        "prod-1": { id: "00000000-0000-0000-0000-00000000bbbb", ts: Date.now() },
-        "prod-2": { id: "00000000-0000-0000-0000-00000000eeee", ts: Date.now() },
+        "prod-1": { id: "00000000-0000-0000-0000-00000000bbbb", slug: "prod-1", name: "Prod 1", ts: Date.now() },
+        "prod-2": { id: "00000000-0000-0000-0000-00000000eeee", slug: "prod-2", name: "Prod 2", ts: Date.now() },
       },
     });
     const program = buildProgram();
@@ -185,11 +185,11 @@ describe("getCompletionCandidates", () => {
 
   test("['env','ls','--app'] returns app slugs from cache", () => {
     writeCache({
-      version: 1,
+      version: 2,
       servers: {},
       apps: {
-        "api": { id: "00000000-0000-0000-0000-00000000cccc", ts: Date.now() },
-        "worker": { id: "00000000-0000-0000-0000-00000000dddd", ts: Date.now() },
+        "api": { id: "00000000-0000-0000-0000-00000000cccc", slug: "api", name: "API", ts: Date.now() },
+        "worker": { id: "00000000-0000-0000-0000-00000000dddd", slug: "worker", name: "Worker", ts: Date.now() },
       },
     });
     const program = buildProgram();
