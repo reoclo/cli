@@ -57,4 +57,25 @@ export function registerServers(program: Command): void {
       );
       printObject(m, fmt);
     });
+
+  g.command("set-slug <idOrSlug> <newSlug>")
+    .description("change a server's slug (URL- and CLI-safe identifier)")
+    .action(async (idOrSlug: string, newSlug: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const id = await resolveServer(ctx.client, tid, idOrSlug);
+
+      const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
+      const updated = await ctx.client.patch<Server>(
+        `/tenants/${tid}/servers/${id}`,
+        { slug: newSlug },
+      );
+
+      if (fmt === "json") {
+        printObject(updated as unknown as Record<string, unknown>, fmt);
+        return;
+      }
+      process.stdout.write(`✓ slug updated: ${before.slug} → ${updated.slug}\n`);
+    });
 }
