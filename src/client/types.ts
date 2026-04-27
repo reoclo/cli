@@ -8,7 +8,8 @@ export interface Me {
 
 export interface Server {
   id: string;
-  name: string;
+  slug: string;
+  name: string | null;
   hostname: string;
   public_ip: string | null;
   status: "online" | "offline" | "unknown";
