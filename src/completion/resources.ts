@@ -9,8 +9,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cacheDir } from "../config/paths";
 
+const CACHE_VERSION = 2;
+
 interface CacheEntry {
   id: string;
+  slug: string;
+  name: string | null;
   ts: number;
 }
 
@@ -26,7 +30,9 @@ function readCache(): CacheFile {
   try {
     const p = join(cacheDir(), "slug-cache.json");
     if (!existsSync(p)) return {};
-    return JSON.parse(readFileSync(p, "utf8")) as CacheFile;
+    const parsed = JSON.parse(readFileSync(p, "utf8")) as CacheFile;
+    if (parsed.version !== CACHE_VERSION) return {};
+    return parsed;
   } catch {
     return {};
   }
@@ -34,7 +40,7 @@ function readCache(): CacheFile {
 
 function namesOf(map: Record<string, CacheEntry> | undefined): string[] {
   if (!map) return [];
-  return Object.keys(map);
+  return Object.keys(map);  // keys are now slugs
 }
 
 export function getCachedApps(): string[] {

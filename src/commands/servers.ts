@@ -23,6 +23,7 @@ export function registerServers(program: Command): void {
       printList(
         list as unknown as Array<Record<string, unknown>>,
         [
+          { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },
           { key: "hostname", label: "HOSTNAME" },
           { key: "public_ip", label: "IP" },
@@ -33,27 +34,48 @@ export function registerServers(program: Command): void {
       );
     });
 
-  g.command("get <idOrName>")
+  g.command("get <idOrSlug>")
     .description("show details for one server")
-    .action(async (idOrName: string) => {
+    .action(async (idOrSlug: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const id = await resolveServer(ctx.client, tid, idOrName);
+      const id = await resolveServer(ctx.client, tid, idOrSlug);
       const srv = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
       printObject(srv as unknown as Record<string, unknown>, fmt);
     });
 
-  g.command("metrics <idOrName>")
+  g.command("metrics <idOrSlug>")
     .description("show CPU/RAM/disk metrics for a server")
-    .action(async (idOrName: string) => {
+    .action(async (idOrSlug: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const id = await resolveServer(ctx.client, tid, idOrName);
+      const id = await resolveServer(ctx.client, tid, idOrSlug);
       const m = await ctx.client.get<Record<string, unknown>>(
         `/tenants/${tid}/servers/${id}/metrics`,
       );
       printObject(m, fmt);
+    });
+
+  g.command("set-slug <idOrSlug> <newSlug>")
+    .description("change a server's slug (URL- and CLI-safe identifier)")
+    .action(async (idOrSlug: string, newSlug: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const id = await resolveServer(ctx.client, tid, idOrSlug);
+
+      const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
+      const updated = await ctx.client.patch<Server>(
+        `/tenants/${tid}/servers/${id}`,
+        { slug: newSlug },
+      );
+
+      if (fmt === "json") {
+        printObject(updated as unknown as Record<string, unknown>, fmt);
+        return;
+      }
+      process.stdout.write(`✓ slug updated: ${before.slug} → ${updated.slug}\n`);
     });
 }
