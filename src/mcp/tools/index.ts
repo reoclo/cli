@@ -9,6 +9,7 @@ import { registerDomainTools } from "./domains";
 import { registerLogTools } from "./logs";
 import { registerMonitorTools } from "./monitors";
 import { registerOtherTools } from "./other";
+import { registerRuntimeTools } from "./runtime";
 import { registerScheduledOperationTools } from "./scheduled-operations";
 import { registerServerTools } from "./servers";
 import { registerStatusPageTools } from "./status-pages";
@@ -24,6 +25,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerMonitorTools(server, ctx);
   registerStatusPageTools(server, ctx);
   registerOtherTools(server, ctx);
+  registerRuntimeTools(server, ctx);
   registerAuthTools(server, ctx);
   registerScheduledOperationTools(server, ctx);
 }
