@@ -110,6 +110,12 @@ test("mcp server responds to initialize and tools/list", async () => {
     // Confirm a known tool name is present
     const toolNames = listResult.tools.map((t) => t.name);
     expect(toolNames).toContain("list_servers");
+
+    // Confirm runtime tools are registered
+    expect(toolNames).toContain("list_tenant_containers");
+    expect(toolNames).toContain("recreate_container");
+    expect(toolNames).toContain("scale_container");
+    expect(toolNames).toContain("update_container_labels");
   } finally {
     proc.kill();
   }
