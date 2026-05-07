@@ -1,11 +1,13 @@
 import { detectKeyType, apiPrefix } from "./routing";
 import { mapHttpError, NetworkError } from "./errors";
+import { updateProfileCapabilities } from "../config/store";
 
 export interface HttpClientOptions {
   baseUrl: string;
   token: string;
   timeoutMs?: number;
   userAgent?: string;
+  profile?: string;
 }
 
 export class HttpClient {
@@ -44,11 +46,11 @@ export class HttpClient {
     return this.request<T>("DELETE", path);
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async doFetch(method: string, path: string, body?: unknown): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 30_000);
     try {
-      const res = await fetch(this.url(path), {
+      return await fetch(this.url(path), {
         method,
         headers: {
           ...this.headers(),
@@ -57,18 +59,6 @@ export class HttpClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: ctrl.signal,
       });
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        throw mapHttpError(res.status, text || res.statusText, path);
-      }
-      if (res.status === 204) return undefined as T;
-      const ct = res.headers.get("content-type") ?? "";
-      if (ct.includes("application/json")) {
-        const data: unknown = await res.json();
-        return data as T;
-      }
-      const text: unknown = await res.text();
-      return text as T;
     } catch (e) {
       if (e instanceof Error && (e.name === "AbortError" || e.name === "TypeError")) {
         throw new NetworkError(`network error: ${e.message}`, e);
@@ -77,5 +67,44 @@ export class HttpClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async parseResponse<T>(res: Response, path: string): Promise<T> {
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw mapHttpError(res.status, text || res.statusText, path);
+    }
+    if (res.status === 204) return undefined as T;
+    const ct = res.headers.get("content-type") ?? "";
+    if (ct.includes("application/json")) {
+      const data: unknown = await res.json();
+      return data as T;
+    }
+    const text: unknown = await res.text();
+    return text as T;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await this.doFetch(method, path, body);
+
+    // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint)
+    if (res.status === 403 && path !== "/auth/me/capabilities") {
+      try {
+        const capsRes = await this.doFetch("GET", "/auth/me/capabilities");
+        if (capsRes.ok) {
+          const capsData = await capsRes.json() as { capabilities?: string[] };
+          const caps = capsData.capabilities ?? [];
+          if (this.opts.profile) {
+            void updateProfileCapabilities(this.opts.profile, caps);
+          }
+        }
+      } catch {
+        // best-effort: ignore refresh errors, still retry
+      }
+      const retryRes = await this.doFetch(method, path, body);
+      return this.parseResponse<T>(retryRes, path);
+    }
+
+    return this.parseResponse<T>(res, path);
   }
 }

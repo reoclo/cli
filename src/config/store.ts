@@ -72,3 +72,15 @@ export async function setActiveProfile(name: string): Promise<void> {
   cfg.active_profile = name;
   await writeConfig(cfg);
 }
+
+export async function updateProfileCapabilities(profileName: string, caps: string[]): Promise<void> {
+  try {
+    const cfg = await loadConfig();
+    if (!cfg.profiles[profileName]) return;
+    cfg.profiles[profileName].capabilities = caps;
+    cfg.profiles[profileName].capabilities_fetched_at = new Date().toISOString();
+    await writeConfig(cfg);
+  } catch {
+    // best-effort: swallow I/O failures silently
+  }
+}
