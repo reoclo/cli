@@ -1,10 +1,11 @@
 // src/commands/login.ts
 import type { Command } from "commander";
-import { saveProfile } from "../config/store";
+import { saveProfile, type ProfileRecord } from "../config/store";
 import { resolveStore } from "../config/token-store";
 import { HttpClient } from "../client/http";
 import { detectKeyType } from "../client/routing";
 import type { Me } from "../client/types";
+import { fetchCapabilities } from "../client/capabilities";
 
 // TODO(future): replace plain readline with hidden-input prompt (termios raw mode).
 // Echoing is acceptable today since the primary auth path is `--token` from env.
@@ -34,6 +35,34 @@ async function promptToken(msg: string): Promise<string> {
   });
 }
 
+type ClientLike = { get: <T>(path: string) => Promise<T> };
+
+export async function buildProfileWithCapabilities(
+  client: ClientLike,
+  apiUrl: string,
+  tokenType: ReturnType<typeof detectKeyType>,
+  me: Pick<Me, "tenant_id" | "tenant_slug" | "email">,
+): Promise<ProfileRecord> {
+  let capabilities: string[] = [];
+  try {
+    capabilities = await fetchCapabilities(client as unknown as HttpClient);
+  } catch {
+    // Best-effort: degrade to empty cache. Commands will fail with 403 on the
+    // server side; the http-client retry layer will refresh on first 403.
+    capabilities = [];
+  }
+  return {
+    api_url: apiUrl,
+    token_type: tokenType,
+    tenant_id: me.tenant_id,
+    tenant_slug: me.tenant_slug,
+    user_email: me.email,
+    capabilities,
+    capabilities_fetched_at: new Date().toISOString(),
+    saved_at: new Date().toISOString(),
+  };
+}
+
 export function registerLogin(program: Command): void {
   program
     .command("login")
@@ -49,14 +78,7 @@ export function registerLogin(program: Command): void {
       const probe = new HttpClient({ baseUrl: opts.api, token });
       const me = await probe.get<Me>("/auth/me");
 
-      const profile = {
-        api_url: opts.api,
-        token_type: detectKeyType(token),
-        tenant_id: me.tenant_id,
-        tenant_slug: me.tenant_slug,
-        user_email: me.email,
-        saved_at: new Date().toISOString(),
-      };
+      const profile = await buildProfileWithCapabilities(probe, opts.api, detectKeyType(token), me);
       await saveProfile(opts.profile, profile);
 
       const store = await resolveStore({
