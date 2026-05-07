@@ -20,6 +20,8 @@ import { registerExec } from "./commands/exec";
 import { registerShell } from "./commands/shell";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
+import { filterCommandsByCapability } from "./client/help-filter";
+import { getActiveProfile } from "./config/store";
 
 export const VERSION = pkg.version;
 
@@ -59,6 +61,17 @@ if (import.meta.main) {
   registerCompletion(program);
   registerExec(program);
   registerShell(program);
+
+  // Load capabilities from the active profile (best-effort — failure hides all gated commands,
+  // which is correct behaviour for unauthenticated users).
+  let capabilities: string[] | undefined;
+  try {
+    const profile = await getActiveProfile();
+    capabilities = profile?.capabilities;
+  } catch {
+    capabilities = undefined;
+  }
+  filterCommandsByCapability(program, capabilities);
 
   // Skip preAction for commands that don't need authentication or run before login.
   const PASSTHROUGH_COMMANDS = new Set([
