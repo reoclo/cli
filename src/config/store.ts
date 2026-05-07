@@ -12,6 +12,8 @@ export interface ProfileRecord {
   tenant_slug: string;
   user_email: string;
   saved_at: string;
+  capabilities?: string[];
+  capabilities_fetched_at?: string; // ISO timestamp
 }
 
 export interface ConfigFile {
