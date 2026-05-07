@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, resolveFormat } from "../ui/output";
+import { requireCapability } from "../client/command-meta";
 
 interface EnvVarRead {
   key: string;
@@ -43,7 +44,9 @@ export function registerEnv(program: Command): void {
       );
     });
 
-  g.command("set")
+  const setCmd = g.command("set");
+  requireCapability(setCmd, "app:env:write");
+  setCmd
     .description("set or update env vars (KEY=VAL one or more)")
     .requiredOption("--app <idOrSlug>", "application id or slug")
     .argument("<assignments...>", "KEY=VALUE pairs")

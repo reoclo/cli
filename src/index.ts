@@ -21,6 +21,7 @@ import { registerShell } from "./commands/shell";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { filterCommandsByCapability } from "./client/help-filter";
+import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { getActiveProfile } from "./config/store";
 
 export const VERSION = pkg.version;
@@ -107,6 +108,11 @@ if (import.meta.main) {
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;
+    }
+
+    const verb = getRequiredCapability(actionCommand);
+    if (verb !== null) {
+      ensureCapabilityOrExit(capabilities, verb);
     }
   });
 

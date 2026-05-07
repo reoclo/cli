@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
+import { requireCapability } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -45,7 +46,9 @@ export function registerApps(program: Command): void {
       printObject(app as unknown as Record<string, unknown>, fmt);
     });
 
-  g.command("deploy <idOrSlug>")
+  const deployCmd = g.command("deploy <idOrSlug>");
+  requireCapability(deployCmd, "app:deploy");
+  deployCmd
     .description("trigger a deployment for an application")
     .option("--ref <git-ref>", "branch, tag, or SHA to deploy")
     .option("--wait", "wait for the deployment to finish (poll status every 3s)")

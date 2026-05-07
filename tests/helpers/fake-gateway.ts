@@ -51,6 +51,22 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
+      // /mcp/auth/me/capabilities
+      if (url.pathname === "/mcp/auth/me/capabilities") {
+        return Response.json({
+          grants: [
+            { verb: "server:exec", scope_kind: "tenant", scope_id: null },
+            { verb: "container:read", scope_kind: "tenant", scope_id: null },
+            { verb: "container:logs:tail", scope_kind: "tenant", scope_id: null },
+            { verb: "container:write", scope_kind: "tenant", scope_id: null },
+            { verb: "container:exec", scope_kind: "tenant", scope_id: null },
+            { verb: "app:deploy", scope_kind: "tenant", scope_id: null },
+            { verb: "app:env:write", scope_kind: "tenant", scope_id: null },
+            { verb: "tenant:cost:read", scope_kind: "tenant", scope_id: null },
+          ],
+        });
+      }
+
       // /mcp/tenants/{tid}/servers/  (bare array)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/servers/`) {
         return Response.json([

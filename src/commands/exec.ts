@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { printObject, resolveFormat } from "../ui/output";
+import { requireCapability } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -17,8 +18,10 @@ interface ExecResponse {
 }
 
 export function registerExec(program: Command): void {
-  program
-    .command("exec <serverIdOrName> [command...]")
+  const execCmd = program
+    .command("exec <serverIdOrName> [command...]");
+  requireCapability(execCmd, "server:exec");
+  execCmd
     .description(
       "run a command on a server via the runner (use -- to separate flags from the command)",
     )

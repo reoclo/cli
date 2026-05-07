@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
+import { requireCapability } from "../client/command-meta";
 
 interface LiveLogEntry {
   ts: string;
@@ -25,7 +26,9 @@ interface LiveLogResponse {
 export function registerLogs(program: Command): void {
   const g = program.command("logs").description("logs");
 
-  g.command("tail")
+  const tailCmd = g.command("tail");
+  requireCapability(tailCmd, "container:logs:tail");
+  tailCmd
     .description("fetch (or follow) logs from a server source via the runner")
     .requiredOption("--server <idOrName>", "server id or name")
     .requiredOption("--source <type>", "source type: container|system|docker_daemon|runner|kernel|auth")
