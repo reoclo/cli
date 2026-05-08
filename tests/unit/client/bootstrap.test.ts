@@ -1,4 +1,4 @@
-import { expect, test, beforeEach } from "bun:test";
+import { expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,6 +11,9 @@ beforeEach(() => {
   delete process.env.REOCLO_API_KEY;
   delete process.env.REOCLO_AUTOMATION_KEY;
   delete process.env.REOCLO_PROFILE;
+});
+afterEach(() => {
+  delete process.env.REOCLO_CONFIG_DIR;
 });
 
 test("bootstrap throws with exitCode 3 when no auth source", async () => {

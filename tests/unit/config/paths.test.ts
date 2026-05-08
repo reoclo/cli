@@ -1,9 +1,16 @@
 // tests/unit/config/paths.test.ts
-import { expect, test, beforeEach } from "bun:test";
+import { expect, test, beforeEach, afterEach } from "bun:test";
 import { configDir, cacheDir, configFile } from "../../../src/config/paths";
 
 beforeEach(() => {
   delete process.env.REOCLO_CONFIG_DIR;
+  delete process.env.REOCLO_CACHE_DIR;
+  delete process.env.XDG_CONFIG_HOME;
+  delete process.env.APPDATA;
+});
+afterEach(() => {
+  delete process.env.REOCLO_CONFIG_DIR;
+  delete process.env.REOCLO_CACHE_DIR;
   delete process.env.XDG_CONFIG_HOME;
   delete process.env.APPDATA;
 });

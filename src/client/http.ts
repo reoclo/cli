@@ -1,6 +1,6 @@
 import { detectKeyType, apiPrefix } from "./routing";
 import { mapHttpError, NetworkError } from "./errors";
-import { updateProfileCapabilities } from "../config/store";
+import { updateProfileCapabilities as _updateProfileCapabilities } from "../config/store";
 
 export interface HttpClientOptions {
   baseUrl: string;
@@ -8,6 +8,8 @@ export interface HttpClientOptions {
   timeoutMs?: number;
   userAgent?: string;
   profile?: string;
+  /** Override capability persistence (primarily for testing). */
+  onCapabilities?: (profile: string, caps: string[]) => Promise<void>;
 }
 
 export class HttpClient {
@@ -95,7 +97,8 @@ export class HttpClient {
           const capsData = await capsRes.json() as { capabilities?: string[] };
           const caps = capsData.capabilities ?? [];
           if (this.opts.profile) {
-            void updateProfileCapabilities(this.opts.profile, caps);
+            const persist = this.opts.onCapabilities ?? _updateProfileCapabilities;
+            void persist(this.opts.profile, caps);
           }
         }
       } catch {

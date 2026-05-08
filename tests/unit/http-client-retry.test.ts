@@ -2,21 +2,12 @@ import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import { HttpClient } from "../../src/client/http";
 import { PermissionError } from "../../src/client/errors";
 
-// Mock updateProfileCapabilities so no disk I/O occurs in tests
-mock.module("../../src/config/store", () => ({
-  updateProfileCapabilities: mock(() => Promise.resolve()),
-  loadConfig: mock(() => Promise.resolve({ active_profile: "default", profiles: {} })),
-  saveProfile: mock(() => Promise.resolve()),
-  deleteProfile: mock(() => Promise.resolve()),
-  getActiveProfile: mock(() => Promise.resolve(null)),
-  setActiveProfile: mock(() => Promise.resolve()),
-}));
-
 function makeClient() {
   return new HttpClient({
     baseUrl: "https://api.example.com",
     token: "sk_tenant_testtoken",
     profile: "default",
+    onCapabilities: () => Promise.resolve(),
   });
 }
 
