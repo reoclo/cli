@@ -62,8 +62,12 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   } else if (envGeneric) {
     token = envGeneric;
   } else if (profile) {
-    const store = await resolveStore();
-    token = (await store.get(profileName)) ?? profile.token ?? undefined;
+    if (profile.token_ref?.startsWith("keyring:")) {
+      const store = await resolveStore();
+      token = (await store.get(profileName)) ?? undefined;
+    } else {
+      token = profile.token ?? undefined;
+    }
   }
 
   if (!token) {
