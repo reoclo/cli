@@ -1,7 +1,8 @@
-import { loadConfig } from "../config/store";
+import { loadConfig, saveProfile } from "../config/store";
 import { resolveStore } from "../config/token-store";
 import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
+import { refreshAccessToken } from "../auth/oauth-device";
 
 export interface ResolvedContext {
   client: HttpClient;
@@ -77,7 +78,56 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   }
 
   const api = opts.api ?? process.env.REOCLO_API_URL ?? profile?.api_url ?? "https://api.reoclo.com";
-  const client = new HttpClient({ baseUrl: api, token });
+
+  // Build refresh callback for OAuth profiles
+  let refreshTokenCallback: (() => Promise<string | null>) | undefined;
+  if (profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
+    const capturedProfileName = profileName;
+    const capturedProfile = profile;
+    refreshTokenCallback = async (): Promise<string | null> => {
+      try {
+        const store = await resolveStore();
+        const refreshTokenKey = capturedProfile.refresh_token_ref!;
+        // The ref stored is the keyring key name (e.g. "reoclo-default-refresh")
+        // For file store we use the same key directly.
+        const storedRefresh = await store.get(refreshTokenKey);
+        if (!storedRefresh) return null;
+
+        const authUrl = capturedProfile.oauth_auth_url ?? "https://auth.reoclo.com";
+        const clientId = capturedProfile.oauth_client_id ?? "reoclo-cli";
+        const newTokens = await refreshAccessToken(authUrl, storedRefresh, clientId);
+
+        // Persist new tokens
+        await store.set(capturedProfileName, newTokens.access_token);
+        await store.set(refreshTokenKey, newTokens.refresh_token);
+
+        // Update expiry in profile
+        const expiresAt = newTokens.expires_in
+          ? new Date(Date.now() + newTokens.expires_in * 1000).toISOString()
+          : undefined;
+        const updatedCfg = await loadConfig();
+        const existingProfile = updatedCfg.profiles[capturedProfileName];
+        if (existingProfile) {
+          await saveProfile(capturedProfileName, {
+            ...existingProfile,
+            access_token_expires_at: expiresAt,
+          });
+        }
+
+        return newTokens.access_token;
+      } catch {
+        return null;
+      }
+    };
+  }
+
+  const client = new HttpClient({
+    baseUrl: api,
+    token,
+    profile: profileName,
+    refreshToken: refreshTokenCallback,
+  });
+
   return {
     client,
     profileName,
