@@ -8,6 +8,35 @@ import type { Me } from "../client/types";
 import { fetchCapabilities } from "../client/capabilities";
 import { initiateDeviceFlow, pollForToken } from "../auth/oauth-device";
 
+/**
+ * Interactive selector shown when `reoclo login` is run without `--token` or
+ * `--device` on a TTY. Returns `true` if the user chose OAuth, `false` for API
+ * key. Default (Enter) selects option 1 (OAuth).
+ */
+async function promptAuthMethod(): Promise<boolean> {
+  const { createInterface } = await import("node:readline");
+  process.stdout.write("\nChoose how you'd like to authenticate:\n");
+  process.stdout.write("  1) OAuth via browser  (recommended)\n");
+  process.stdout.write("  2) API key            (paste a long-lived key)\n");
+  return new Promise<boolean>((resolve) => {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    rl.question("Select [1]: ", (answer) => {
+      rl.close();
+      const trimmed = answer.trim();
+      // Default + "1" + "oauth" → OAuth.  "2" + "key" + "api" → API key.
+      if (trimmed === "" || trimmed === "1" || /^oauth$/i.test(trimmed)) {
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    });
+  });
+}
+
 // TODO(future): replace plain readline with hidden-input prompt (termios raw mode).
 // Echoing is acceptable today since the primary auth path is `--token` from env.
 async function promptToken(msg: string): Promise<string> {
@@ -166,8 +195,17 @@ export function registerLogin(program: Command): void {
         auth: string;
         keyring?: boolean;
       }) => {
-        // Device flow path
-        if (opts.device) {
+        // Resolve the auth method.
+        //   --device explicit       → OAuth device flow
+        //   --token explicit        → API-key paste
+        //   neither, TTY            → interactive selector (default = 1, OAuth)
+        //   neither, non-TTY        → fall through to API-key prompt (errors)
+        let useDevice = opts.device === true;
+        if (!opts.device && !opts.token && process.stdin.isTTY) {
+          useDevice = await promptAuthMethod();
+        }
+
+        if (useDevice) {
           await runDeviceFlow({
             profile: opts.profile,
             api: opts.api,
@@ -177,7 +215,7 @@ export function registerLogin(program: Command): void {
           return;
         }
 
-        // API-key path (existing behavior)
+        // API-key path
         const token = opts.token ?? (await promptToken("Paste API key: "));
 
         const probe = new HttpClient({ baseUrl: opts.api, token });
