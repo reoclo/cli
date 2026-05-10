@@ -168,6 +168,41 @@ describe("pollForToken", () => {
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("expired_token");
   });
+
+  test("tolerates FastAPI-wrapped errors: {detail: {error: 'authorization_pending'}}", async () => {
+    const tokenResponse = {
+      access_token: "tok",
+      refresh_token: "rt",
+      scope: "openid",
+      token_type: "Bearer",
+      expires_in: 3600,
+    };
+    let call = 0;
+    globalThis.fetch = mock(() => {
+      call++;
+      if (call <= 2) {
+        // FastAPI default wraps HTTPException(detail={...}) as {"detail": {...}}.
+        return Promise.resolve(
+          jsonRes({ detail: { error: "authorization_pending" } }, 400),
+        );
+      }
+      return Promise.resolve(jsonRes(tokenResponse));
+    }) as unknown as typeof fetch;
+
+    const result = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5);
+    expect(result.access_token).toBe("tok");
+    expect(call).toBe(3);
+  });
+
+  test("tolerates FastAPI-wrapped access_denied", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(jsonRes({ detail: { error: "access_denied" } }, 400)),
+    ) as unknown as typeof fetch;
+
+    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e) => e);
+    expect(err).toBeInstanceOf(DeviceFlowError);
+    expect((err as DeviceFlowError).code).toBe("access_denied");
+  });
 });
 
 describe("refreshAccessToken", () => {
