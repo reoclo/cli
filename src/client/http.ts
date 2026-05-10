@@ -10,13 +10,22 @@ export interface HttpClientOptions {
   profile?: string;
   /** Override capability persistence (primarily for testing). */
   onCapabilities?: (profile: string, caps: string[]) => Promise<void>;
+  /**
+   * Called when a 401 is received and the profile uses OAuth.
+   * Should attempt to refresh the access token and return the new token,
+   * or return null if refresh fails. When non-null, the original request
+   * is retried exactly once with the new token.
+   */
+  refreshToken?: () => Promise<string | null>;
 }
 
 export class HttpClient {
   private readonly prefix: string;
+  private currentToken: string;
 
   constructor(private readonly opts: HttpClientOptions) {
     this.prefix = apiPrefix(detectKeyType(opts.token));
+    this.currentToken = opts.token;
   }
 
   private url(path: string): string {
@@ -24,9 +33,9 @@ export class HttpClient {
     return this.opts.baseUrl.replace(/\/$/, "") + this.prefix + p;
   }
 
-  private headers(): HeadersInit {
+  private headers(token?: string): HeadersInit {
     return {
-      Authorization: `Bearer ${this.opts.token}`,
+      Authorization: `Bearer ${token ?? this.currentToken}`,
       "User-Agent": this.opts.userAgent ?? "reoclo-cli",
       Accept: "application/json",
     };
@@ -48,14 +57,14 @@ export class HttpClient {
     return this.request<T>("DELETE", path);
   }
 
-  private async doFetch(method: string, path: string, body?: unknown): Promise<Response> {
+  private async doFetch(method: string, path: string, body?: unknown, token?: string): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 30_000);
     try {
       return await fetch(this.url(path), {
         method,
         headers: {
-          ...this.headers(),
+          ...this.headers(token),
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -88,6 +97,23 @@ export class HttpClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await this.doFetch(method, path, body);
+
+    // On 401 with a refresh callback, attempt token refresh then retry once.
+    if (res.status === 401 && this.opts.refreshToken) {
+      let newToken: string | null = null;
+      try {
+        newToken = await this.opts.refreshToken();
+      } catch {
+        // refresh threw — fall through to the original 401
+      }
+      if (newToken) {
+        this.currentToken = newToken;
+        const retryRes = await this.doFetch(method, path, body, newToken);
+        return this.parseResponse<T>(retryRes, path);
+      }
+      // Refresh returned null or threw — surface the original 401
+      return this.parseResponse<T>(res, path);
+    }
 
     // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint)
     if (res.status === 403 && path !== "/auth/me/capabilities") {

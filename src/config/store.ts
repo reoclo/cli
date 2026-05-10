@@ -14,6 +14,12 @@ export interface ProfileRecord {
   saved_at: string;
   capabilities?: string[];
   capabilities_fetched_at?: string; // ISO timestamp
+  // OAuth device-flow fields (absent for API-key profiles)
+  auth_kind?: "api-key" | "oauth";
+  refresh_token_ref?: string;        // keyring entry name for the refresh token
+  access_token_expires_at?: string;  // ISO timestamp
+  oauth_client_id?: string;          // "reoclo-cli"
+  oauth_auth_url?: string;           // "https://auth.reoclo.com"
 }
 
 export interface ConfigFile {
