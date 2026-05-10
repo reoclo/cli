@@ -51,9 +51,17 @@ else
 fi
 
 TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
-echo "==> Downloading reoclo ${VERSION} (${TARGET})..."
-curl -sSLf -o "${TMP}/reoclo" "$URL"
+echo "==> Downloading reoclo ${VERSION} (${TARGET})"
+# Interactive progress bar on the binary fetch when stdout is a TTY;
+# fall back to silent mode for pipes/CI logs.
+if [[ -t 1 ]]; then
+  CURL_PROGRESS="--progress-bar"
+else
+  CURL_PROGRESS="-sS"
+fi
+curl -fL $CURL_PROGRESS -o "${TMP}/reoclo" "$URL"
 curl -sSLf -o "${TMP}/SHA256SUMS" "$SUMS_URL"
+echo "==> Verifying checksum..."
 (cd "$TMP" && grep "reoclo-${TARGET}$" SHA256SUMS \
   | awk -v t="${TMP}/reoclo" '{print $1"  "t}' \
   | shasum -a 256 -c -)
