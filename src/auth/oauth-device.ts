@@ -64,6 +64,25 @@ interface TokenErrorBody {
   error_description?: string;
 }
 
+interface FastAPIWrappedError {
+  detail?: TokenErrorBody | string;
+}
+
+/**
+ * Extract `{error, error_description}` from either an RFC 8628 / RFC 6749
+ * body (`{"error": "..."}`) or a FastAPI-wrapped body (`{"detail": {"error": "..."}}`).
+ * Production currently emits the wrapped form because OAuth handlers raise
+ * `HTTPException(detail={...})`; tolerating both shapes keeps the client
+ * working through any server-side migration.
+ */
+function unwrapTokenError(raw: TokenErrorBody & FastAPIWrappedError): TokenErrorBody {
+  if (raw.error) return raw;
+  if (raw.detail && typeof raw.detail === "object" && raw.detail.error) {
+    return raw.detail;
+  }
+  return raw;
+}
+
 /**
  * POST /oauth/token — poll for the token using device_code grant.
  * Uses form-encoding per RFC 8628 / API spec.
@@ -117,10 +136,12 @@ export async function pollForToken(
       return res.json() as Promise<TokenResponse>;
     }
 
-    // Parse the RFC 8628 error body
+    // Parse the RFC 8628 error body. Tolerate FastAPI's `{"detail": {...}}`
+    // wrapper for backwards compatibility with older server builds.
     let errBody: TokenErrorBody = {};
     try {
-      errBody = (await res.json()) as TokenErrorBody;
+      const raw = (await res.json()) as TokenErrorBody & FastAPIWrappedError;
+      errBody = unwrapTokenError(raw);
     } catch {
       // non-JSON error body — treat as network error
       throw new DeviceFlowError("network", `unexpected token poll response (${res.status})`);

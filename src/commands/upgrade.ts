@@ -14,6 +14,7 @@ import { dirname, isAbsolute } from "node:path";
 import { argv0, execPath, platform as nodePlatform, arch as nodeArch } from "node:process";
 import { createHash } from "node:crypto";
 import { VERSION } from "../index";
+import { createProgress } from "../ui/progress";
 
 interface UpgradeOpts {
   channel: string;
@@ -100,10 +101,36 @@ async function fetchText(url: string): Promise<string> {
   return r.text();
 }
 
-async function fetchBinary(url: string): Promise<Buffer> {
+async function fetchBinary(url: string, progressLabel?: string): Promise<Buffer> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-  return Buffer.from(await r.arrayBuffer());
+  const totalHeader = r.headers.get("content-length");
+  const total = totalHeader ? Number(totalHeader) : NaN;
+  // No body stream (fetch polyfill / edge case) or unknown size + no label:
+  // just buffer normally without progress.
+  if (!r.body || !progressLabel) {
+    return Buffer.from(await r.arrayBuffer());
+  }
+  const progress = createProgress(Number.isFinite(total) && total > 0 ? total : null, progressLabel);
+  const reader = r.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.length;
+        progress.update(received);
+      }
+    }
+    progress.finish();
+  } catch (err) {
+    progress.abort();
+    throw err;
+  }
+  return Buffer.concat(chunks);
 }
 
 function parseSha256For(sumsText: string, name: string): string | null {
@@ -153,13 +180,13 @@ async function selfUpgradeRawBinary(currentPath: string, tag: string): Promise<v
   const binUrl = `${ghBase}/${target.binName}`;
   const sumsUrl = `${ghBase}/SHA256SUMS`;
 
-  process.stdout.write(`==> Downloading ${target.binName} from ${tag}...\n`);
+  process.stdout.write(`==> Upgrading reoclo to ${tag} (${target.binName})\n`);
   const sumsText = await fetchText(sumsUrl);
   const expectedSum = parseSha256For(sumsText, target.binName);
   if (!expectedSum) {
     throw new Error(`no SHA256 entry for ${target.binName} in ${sumsUrl}`);
   }
-  const binData = await fetchBinary(binUrl);
+  const binData = await fetchBinary(binUrl, `Downloading ${target.binName}`);
   const actualSum = createHash("sha256").update(binData).digest("hex");
   if (actualSum !== expectedSum) {
     throw new Error(
