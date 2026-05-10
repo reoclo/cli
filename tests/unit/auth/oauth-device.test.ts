@@ -40,6 +40,32 @@ describe("initiateDeviceFlow", () => {
     expect(result).toEqual(mockResponse);
   });
 
+  test("sends form-encoded body (RFC 8628 §3.1)", async () => {
+    let capturedHeaders: Headers | undefined;
+    let capturedBody: string | undefined;
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers);
+      capturedBody = init?.body as string;
+      return Promise.resolve(
+        jsonRes({
+          device_code: DEVICE_CODE,
+          user_code: USER_CODE,
+          verification_uri: "https://auth.reoclo.com/device",
+          verification_uri_complete: `https://auth.reoclo.com/device?user_code=${USER_CODE}`,
+          expires_in: 900,
+          interval: 5,
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    await initiateDeviceFlow(AUTH_BASE, CLIENT_ID, "openid");
+
+    expect(capturedHeaders?.get("content-type")).toBe("application/x-www-form-urlencoded");
+    const parsed = new URLSearchParams(capturedBody);
+    expect(parsed.get("client_id")).toBe(CLIENT_ID);
+    expect(parsed.get("scope")).toBe("openid");
+  });
+
   test("throws DeviceFlowError on non-OK response", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response("bad request", { status: 400 })),
