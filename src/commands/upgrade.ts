@@ -10,8 +10,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
-import { argv0, platform as nodePlatform, arch as nodeArch } from "node:process";
+import { dirname, isAbsolute } from "node:path";
+import { argv0, execPath, platform as nodePlatform, arch as nodeArch } from "node:process";
 import { createHash } from "node:crypto";
 import { VERSION } from "../index";
 
@@ -26,6 +26,41 @@ interface BuildTarget {
   arch: "x64" | "arm64";
   binName: string;
   isWindows: boolean;
+}
+
+/**
+ * Resolve the absolute path of the running CLI binary.
+ *
+ * `process.argv[0]` is often just the bare command name ("reoclo") when the
+ * binary is invoked via $PATH lookup, which makes `realpathSync(argv0)`
+ * throw ENOENT. We prefer `process.execPath` (always absolute), fall back
+ * to argv0 if it's already absolute, and otherwise resolve it via $PATH.
+ */
+function resolveSelfPath(): string {
+  // execPath is always an absolute path to the running executable. For
+  // Bun-compiled single-file binaries this is exactly what we want.
+  if (execPath && isAbsolute(execPath)) {
+    try {
+      return realpathSync(execPath);
+    } catch {
+      // fall through to argv0
+    }
+  }
+  if (argv0 && isAbsolute(argv0)) {
+    return realpathSync(argv0);
+  }
+  // argv0 was a bare name — search PATH.
+  const pathDirs = (process.env["PATH"] ?? "").split(":");
+  for (const dir of pathDirs) {
+    if (!dir) continue;
+    const candidate = `${dir}/${argv0}`;
+    if (existsSync(candidate)) {
+      return realpathSync(candidate);
+    }
+  }
+  throw new Error(
+    `cannot resolve running CLI binary path (argv0=${argv0}, execPath=${execPath})`,
+  );
 }
 
 function detectTarget(): BuildTarget {
@@ -187,7 +222,7 @@ export function registerUpgrade(program: Command): void {
         return;
       }
 
-      const self = realpathSync(argv0);
+      const self = resolveSelfPath();
 
       if (self.includes("/node_modules/")) {
         process.stdout.write("Installed via npm. Upgrade with:\n");
