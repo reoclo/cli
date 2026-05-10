@@ -38,12 +38,16 @@ export async function initiateDeviceFlow(
   scope: string,
 ): Promise<DeviceInitResponse> {
   const url = `${authBaseUrl.replace(/\/$/, "")}/oauth/device`;
+  const body = new URLSearchParams({ client_id: clientId, scope });
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ client_id: clientId, scope }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: body.toString(),
     });
   } catch (e) {
     throw new DeviceFlowError("network", `network error during device init: ${(e as Error).message}`);
