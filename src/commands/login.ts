@@ -7,6 +7,7 @@ import { detectKeyType } from "../client/routing";
 import type { Me } from "../client/types";
 import { fetchCapabilities } from "../client/capabilities";
 import { initiateDeviceFlow, pollForToken } from "../auth/oauth-device";
+import { openBrowser } from "../ui/open-browser";
 
 /**
  * Interactive selector shown when `reoclo login` is run without `--token` or
@@ -98,8 +99,9 @@ async function runDeviceFlow(opts: {
   api: string;
   auth: string;
   keyring?: boolean;
+  browser?: boolean;
 }): Promise<void> {
-  const { profile: profileName, api, auth, keyring } = opts;
+  const { profile: profileName, api, auth, keyring, browser } = opts;
   const clientId = "reoclo-cli";
   const scope = "openid tenant.read";
 
@@ -117,12 +119,24 @@ async function runDeviceFlow(opts: {
     process.stdout.write(
       `Or visit ${init.verification_uri} and enter code: ${init.user_code}\n\n`,
     );
-    process.stdout.write(`Waiting for approval... (expires in ${expiresMins} min)\n`);
   } else {
     process.stdout.write(`Visit ${uri} to authorize (code: ${init.user_code})\n`);
   }
 
-  // 3. Poll for token
+  // 3. Try to open the browser (default on; skip when --no-browser or
+  //    when running over SSH / without a display / in CI).
+  let opened = false;
+  if (browser !== false) {
+    opened = openBrowser(uri);
+  }
+  if (isTTY) {
+    if (opened) {
+      process.stdout.write("✓ Opened browser. ");
+    }
+    process.stdout.write(`Waiting for approval... (expires in ${expiresMins} min)\n`);
+  }
+
+  // 4. Poll for token
   let dotCount = 0;
   const tokens = await pollForToken(auth, init.device_code, clientId, init.interval, {
     onTick: () => {
@@ -186,6 +200,7 @@ export function registerLogin(program: Command): void {
     .option("--auth <url>", "auth service base URL", "https://auth.reoclo.com")
     .option("--keyring", "require OS keyring storage")
     .option("--no-keyring", "force file storage")
+    .option("--no-browser", "do not auto-open the browser during --device login")
     .action(
       async (opts: {
         token?: string;
@@ -194,6 +209,7 @@ export function registerLogin(program: Command): void {
         api: string;
         auth: string;
         keyring?: boolean;
+        browser?: boolean;
       }) => {
         // Resolve the auth method.
         //   --device explicit       → OAuth device flow
@@ -211,6 +227,7 @@ export function registerLogin(program: Command): void {
             api: opts.api,
             auth: opts.auth,
             keyring: opts.keyring,
+            browser: opts.browser,
           });
           return;
         }
