@@ -13,6 +13,7 @@ export function registerProfile(program: Command): void {
       tenant: p.tenant_slug,
       email: p.user_email,
       api: p.api_url,
+      streams: p.streams_url ?? "(default)",
     }));
     console.table(rows);
   });

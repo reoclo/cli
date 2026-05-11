@@ -13,8 +13,8 @@ export function base64url(input: string): string {
     .replace(/=+$/, "");
 }
 
-export function buildShellWsUrl(api: string, serverId: string): string {
-  const trimmed = api.replace(/\/$/, "");
+export function buildShellWsUrl(streamsUrl: string, serverId: string): string {
+  const trimmed = streamsUrl.replace(/\/$/, "");
   const wsBase = trimmed.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
   return `${wsBase}/mcp/ws/terminal/${serverId}`;
 }
@@ -52,7 +52,10 @@ export function registerShell(program: Command): void {
       const tid = requireTenantId(ctx);
       const serverId = await resolveServer(ctx.client, tid, idOrName);
 
-      const wsUrl = buildShellWsUrl(ctx.api, serverId);
+      // Use the CF-bypass host (streams.reoclo.com in prod) so the WS
+      // doesn't hit Cloudflare's ~100s idle reaper. In dev/staging this
+      // resolves to the same host as the API.
+      const wsUrl = buildShellWsUrl(ctx.streamsUrl, serverId);
       const subprotocol = buildShellSubprotocol(ctx.token);
 
       // Bun and modern Node both expose the browser WebSocket global.
