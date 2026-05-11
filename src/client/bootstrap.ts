@@ -8,6 +8,14 @@ export interface ResolvedContext {
   client: HttpClient;
   profileName: string;
   api: string;
+  /**
+   * Host for Cloudflare-bypass traffic (interactive terminal WS, large
+   * uploads, SSE streams). Defaults to `streams.reoclo.com` for the
+   * production API host, and to the same value as {@link api} for any
+   * dev / staging / localhost configuration — so local CLI development
+   * "just works" against a single backend without an extra flag.
+   */
+  streamsUrl: string;
   token: string;
   tokenType: KeyType;
   /**
@@ -17,6 +25,20 @@ export interface ResolvedContext {
    * `/auth/me` themselves or use {@link requireTenantId}.
    */
   tenantId?: string;
+}
+
+const PROD_API_URL = "https://api.reoclo.com";
+const PROD_STREAMS_URL = "https://streams.reoclo.com";
+
+/**
+ * Derive a default streams URL from the API URL. Production API gets the
+ * dedicated CF-bypass host; everything else (dev, staging, localhost,
+ * custom) gets the API host itself so a single backend serves both.
+ */
+export function defaultStreamsUrl(apiUrl: string): string {
+  const trimmed = apiUrl.replace(/\/$/, "");
+  if (trimmed === PROD_API_URL) return PROD_STREAMS_URL;
+  return trimmed;
 }
 
 /**
@@ -39,6 +61,7 @@ export interface BootstrapOptions {
   token?: string; // --token
   profile?: string; // --profile
   api?: string; // --api
+  streams?: string; // --streams
 }
 
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
@@ -77,7 +100,12 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     throw err;
   }
 
-  const api = opts.api ?? process.env.REOCLO_API_URL ?? profile?.api_url ?? "https://api.reoclo.com";
+  const api = opts.api ?? process.env.REOCLO_API_URL ?? profile?.api_url ?? PROD_API_URL;
+  const streamsUrl =
+    opts.streams ??
+    process.env.REOCLO_STREAMS_URL ??
+    profile?.streams_url ??
+    defaultStreamsUrl(api);
 
   // Build refresh callback for OAuth profiles
   let refreshTokenCallback: (() => Promise<string | null>) | undefined;
@@ -132,6 +160,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     client,
     profileName,
     api,
+    streamsUrl,
     token,
     tokenType: detectKeyType(token),
     tenantId: profile?.tenant_id,

@@ -73,6 +73,7 @@ export async function buildProfileWithCapabilities(
   apiUrl: string,
   tokenType: ReturnType<typeof detectKeyType>,
   me: Pick<Me, "tenant_id" | "tenant_slug" | "email">,
+  streamsUrl?: string,
 ): Promise<ProfileRecord> {
   let capabilities: string[] = [];
   try {
@@ -84,6 +85,7 @@ export async function buildProfileWithCapabilities(
   }
   return {
     api_url: apiUrl,
+    streams_url: streamsUrl,
     token_type: tokenType,
     tenant_id: me.tenant_id,
     tenant_slug: me.tenant_slug,
@@ -98,10 +100,11 @@ async function runDeviceFlow(opts: {
   profile: string;
   api: string;
   auth: string;
+  streams?: string;
   keyring?: boolean;
   browser?: boolean;
 }): Promise<void> {
-  const { profile: profileName, api, auth, keyring, browser } = opts;
+  const { profile: profileName, api, auth, streams, keyring, browser } = opts;
   const clientId = "reoclo-cli";
   const scope = "openid tenant.read";
 
@@ -154,7 +157,7 @@ async function runDeviceFlow(opts: {
   const me = await probe.get<Me>("/auth/me");
 
   // 5. Save profile
-  const baseProfile = await buildProfileWithCapabilities(probe, api, "tenant", me);
+  const baseProfile = await buildProfileWithCapabilities(probe, api, "tenant", me, streams);
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
     : undefined;
@@ -198,6 +201,10 @@ export function registerLogin(program: Command): void {
     .option("--profile <name>", "profile name", "default")
     .option("--api <url>", "API base URL", "https://api.reoclo.com")
     .option("--auth <url>", "auth service base URL", "https://auth.reoclo.com")
+    .option(
+      "--streams <url>",
+      "Cloudflare-bypass host for terminal WS and large uploads (defaults to streams.reoclo.com for prod, otherwise to --api)",
+    )
     .option("--keyring", "require OS keyring storage")
     .option("--no-keyring", "force file storage")
     .option("--no-browser", "do not auto-open the browser during --device login")
@@ -208,6 +215,7 @@ export function registerLogin(program: Command): void {
         profile: string;
         api: string;
         auth: string;
+        streams?: string;
         keyring?: boolean;
         browser?: boolean;
       }) => {
@@ -226,6 +234,7 @@ export function registerLogin(program: Command): void {
             profile: opts.profile,
             api: opts.api,
             auth: opts.auth,
+            streams: opts.streams,
             keyring: opts.keyring,
             browser: opts.browser,
           });
@@ -238,7 +247,13 @@ export function registerLogin(program: Command): void {
         const probe = new HttpClient({ baseUrl: opts.api, token });
         const me = await probe.get<Me>("/auth/me");
 
-        const profile = await buildProfileWithCapabilities(probe, opts.api, detectKeyType(token), me);
+        const profile = await buildProfileWithCapabilities(
+          probe,
+          opts.api,
+          detectKeyType(token),
+          me,
+          opts.streams,
+        );
         await saveProfile(opts.profile, { ...profile, auth_kind: "api-key" });
 
         const store = await resolveStore({

@@ -5,6 +5,8 @@ import { configFile } from "./paths";
 
 export interface ProfileRecord {
   api_url: string;
+  streams_url?: string;              // Cloudflare-bypass host for terminal WS / large uploads;
+                                     // defaults derive from api_url in bootstrap.
   token?: string;
   token_ref?: string;
   token_type: "tenant" | "automation";
