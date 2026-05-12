@@ -10,6 +10,13 @@ export interface ParsedTunnelArgs {
   reconnectDeadlineMs: number;
 }
 
+function parseDecimalInt(s: string, name: string): number {
+  if (!/^\d+$/.test(s)) {
+    throw new Error(`invalid -L ${name}: ${JSON.stringify(s)} (expected non-negative decimal integer)`);
+  }
+  return Number(s);
+}
+
 function parseForwardSpec(spec: string): ForwardSpec {
   // Forms:
   //   local_port:remote_port                       (2 parts)
@@ -21,28 +28,28 @@ function parseForwardSpec(spec: string): ForwardSpec {
   let remoteHost: string;
   let remotePort: number;
   if (parts.length === 2) {
-    localPort = Number(parts[0]);
+    localPort = parseDecimalInt(parts[0]!, "local_port");
     remoteHost = "127.0.0.1";
-    remotePort = Number(parts[1]);
+    remotePort = parseDecimalInt(parts[1]!, "remote_port");
   } else if (parts.length === 3) {
-    localPort = Number(parts[0]);
+    localPort = parseDecimalInt(parts[0]!, "local_port");
     remoteHost = parts[1]!;
-    remotePort = Number(parts[2]);
+    remotePort = parseDecimalInt(parts[2]!, "remote_port");
   } else if (parts.length === 4) {
     bind = parts[0]!;
-    localPort = Number(parts[1]);
+    localPort = parseDecimalInt(parts[1]!, "local_port");
     remoteHost = parts[2]!;
-    remotePort = Number(parts[3]);
+    remotePort = parseDecimalInt(parts[3]!, "remote_port");
   } else {
     throw new Error(`invalid -L spec: ${spec}`);
   }
   if (bind !== "127.0.0.1" && bind !== "0.0.0.0") {
     throw new Error(`invalid -L bind: ${bind} (only 127.0.0.1 or 0.0.0.0 supported)`);
   }
-  if (!Number.isInteger(localPort) || localPort < 0 || localPort > 65535) {
+  if (localPort < 0 || localPort > 65535) {
     throw new Error(`invalid -L local_port: ${parts[parts.length === 4 ? 1 : 0]}`);
   }
-  if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+  if (remotePort < 1 || remotePort > 65535) {
     throw new Error(`invalid -L remote_port: ${parts[parts.length - 1]}`);
   }
   return { localBind: bind, localPort, remoteHost, remotePort, proto: "tcp" };
@@ -99,48 +106,77 @@ export function registerTunnel(program: Command): void {
         process.exit(2);
       }
 
-      const ctx = await bootstrap();
-      const tenantId = requireTenantId(ctx);
-      const serverId = await resolveServer(ctx.client, tenantId, parsed.server);
+      try {
+        const ctx = await bootstrap();
+        const tenantId = requireTenantId(ctx);
+        const serverId = await resolveServer(ctx.client, tenantId, parsed.server);
 
-      // direct.reoclo.com bypass URL — CF-bypass host for tunnel traffic.
-      // No dedicated directUrl field exists on the context yet; derive from
-      // streamsUrl by replacing the "streams." subdomain with "direct.".
-      const directUrl =
-        process.env["REOCLO_DIRECT_URL"] ?? deriveDirectUrl(ctx.streamsUrl);
+        // direct.reoclo.com bypass URL — CF-bypass host for tunnel traffic.
+        // No dedicated directUrl field exists on the context yet; derive from
+        // streamsUrl by replacing the "streams." subdomain with "direct.".
+        const directUrl =
+          process.env["REOCLO_DIRECT_URL"]
+          ?? deriveDirectUrl(ctx.streamsUrl);
 
-      const gatewayUrl = buildTunnelWsUrl(directUrl, serverId);
+        const gatewayUrl = buildTunnelWsUrl(directUrl, serverId);
+        const session = new TunnelSession({
+          gatewayUrl,
+          token: ctx.token,
+          forwards: parsed.forwards,
+          reconnectDeadlineMs: parsed.reconnectDeadlineMs,
+          onStatus: (s) => {
+            if (s === "active") process.stderr.write("tunnel: connected\n");
+            else if (s === "reconnecting") process.stderr.write("tunnel: reconnecting...\n");
+            else if (s === "closed") process.stderr.write("tunnel: closed\n");
+          },
+        });
 
-      const session = new TunnelSession({
-        gatewayUrl,
-        token: ctx.token,
-        forwards: parsed.forwards,
-        reconnectDeadlineMs: parsed.reconnectDeadlineMs,
-        onStatus: (s) => {
-          if (s === "active") process.stderr.write("tunnel: connected\n");
-          else if (s === "reconnecting") process.stderr.write("tunnel: reconnecting...\n");
-          else if (s === "closed") process.stderr.write("tunnel: closed\n");
-        },
-      });
+        // Register SIGINT BEFORE start() to catch Ctrl-C during initial connect
+        let stopping = false;
+        const onSigInt = async () => {
+          if (stopping) return;
+          stopping = true;
+          await session.stop();
+          process.exit(0);
+        };
+        process.on("SIGINT", onSigInt);
 
-      const ready = await session.start();
-      for (let i = 0; i < parsed.forwards.length; i++) {
-        const f = parsed.forwards[i]!;
-        const bound = ready.forwards[i]!;
-        console.log(
-          `-L  ${f.localBind}:${bound.boundPort}  →  ${idOrName}:${f.remoteHost}:${f.remotePort}  (tcp)`,
-        );
+        const ready = await session.start();
+        for (let i = 0; i < parsed.forwards.length; i++) {
+          const f = parsed.forwards[i]!;
+          const bound = ready.forwards[i];
+          if (!bound) {
+            console.error(`tunnel: internal error — TunnelSession returned ${ready.forwards.length} ready forwards but ${parsed.forwards.length} were requested`);
+            await session.stop();
+            process.exit(1);
+          }
+          console.log(
+            `-L  ${f.localBind}:${bound.boundPort}  →  ${parsed.server}:${f.remoteHost}:${f.remotePort}  (tcp)`,
+          );
+        }
+        console.log("Ctrl-C to close");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`tunnel: ${msg}`);
+        process.exit(1);
       }
-      console.log("Ctrl-C to close");
-
-      process.on("SIGINT", async () => {
-        await session.stop();
-        process.exit(0);
-      });
     });
 }
 
 function deriveDirectUrl(streamsUrl: string): string {
-  // streams.reoclo.com → direct.reoclo.com  (same scheme + path conventions)
-  return streamsUrl.replace("streams.", "direct.");
+  let parsed: URL;
+  try {
+    parsed = new URL(streamsUrl);
+  } catch {
+    // Not a valid URL — return as-is; the WebSocket dial will fail clearly.
+    process.stderr.write(`tunnel: warning — could not parse streams URL ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`);
+    return streamsUrl;
+  }
+  const newHost = parsed.hostname.replace(/^streams\./, "direct.");
+  if (newHost === parsed.hostname) {
+    process.stderr.write(`tunnel: warning — could not derive direct URL from ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`);
+    return streamsUrl;
+  }
+  parsed.hostname = newHost;
+  return parsed.toString().replace(/\/$/, "");
 }

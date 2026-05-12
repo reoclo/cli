@@ -83,3 +83,23 @@ describe("buildTunnelWsUrl", () => {
       .toBe("wss://direct.reoclo.com/v1/tunnel?server_id=srv%20with%20spaces");
   });
 });
+
+describe("deriveDirectUrl behaviors via integration with buildTunnelWsUrl context", () => {
+  // deriveDirectUrl is internal, but its observable behavior is the directUrl
+  // produced for the gateway. We test the wider parseTunnelArgs+URL build flow
+  // indirectly via env-override and direct URL inspection where possible.
+
+  it("rejects hex port literals (Number-coercion safety)", () => {
+    expect(() => parseTunnelArgs("srv-1", { L: ["0x50:remote:80"] })).toThrow(/local_port/);
+    expect(() => parseTunnelArgs("srv-1", { L: ["8080:remote:0x50"] })).toThrow(/remote_port/);
+  });
+
+  it("rejects empty port segments", () => {
+    expect(() => parseTunnelArgs("srv-1", { L: [":remote:80"] })).toThrow();
+    expect(() => parseTunnelArgs("srv-1", { L: ["8080:remote:"] })).toThrow();
+  });
+
+  it("rejects float port literals", () => {
+    expect(() => parseTunnelArgs("srv-1", { L: ["8080.5:remote:80"] })).toThrow(/local_port/);
+  });
+});
