@@ -15,7 +15,7 @@ export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
 
   g.command("ls")
-    .description("list applications in the tenant")
+    .description("list applications in the organization")
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();

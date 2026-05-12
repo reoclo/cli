@@ -1,9 +1,23 @@
+/**
+ * Membership of an organization (a.k.a. tenant on the server side).
+ * Field names match the API contract; user-facing strings should
+ * call these "organizations", not "tenants".
+ */
+export interface OrgMembership {
+  id: string;
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+  role: string;
+}
+
 export interface Me {
   id: string;
   email: string;
   tenant_id: string;
   tenant_slug: string;
   roles: string[];
+  memberships?: OrgMembership[];
 }
 
 export interface Server {

@@ -14,7 +14,7 @@ export function registerServers(program: Command): void {
   const g = program.command("servers").description("manage servers");
 
   g.command("ls")
-    .description("list servers in the tenant")
+    .description("list servers in the organization")
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();

@@ -38,7 +38,7 @@ export function registerDomains(program: Command): void {
   const g = program.command("domains").description("manage domains");
 
   g.command("ls")
-    .description("list domains in the tenant")
+    .description("list domains in the organization")
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();

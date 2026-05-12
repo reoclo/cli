@@ -44,9 +44,9 @@ test("login → whoami → logout (file store, fake gateway)", async () => {
 
   const who = await $`bun run src/index.ts whoami`.env(env).quiet();
   const out = who.stdout.toString();
-  expect(out).toContain("tenant:  acme");
-  expect(out).toContain("user:    test@example.com");
-  expect(out).toContain("type:    tenant");
+  expect(out).toContain("organization:  acme");
+  expect(out).toContain("user:          test@example.com");
+  expect(out).toContain("type:          tenant");
 
   await $`bun run src/index.ts logout`.env(env);
 
