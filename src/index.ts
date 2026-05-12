@@ -18,6 +18,7 @@ import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
 import { registerShell } from "./commands/shell";
+import { registerTunnel } from "./commands/tunnel";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { filterCommandsByCapability } from "./client/help-filter";
@@ -62,6 +63,7 @@ if (import.meta.main) {
   registerCompletion(program);
   registerExec(program);
   registerShell(program);
+  registerTunnel(program);
 
   // Load capabilities from the active profile (best-effort — failure hides all gated commands,
   // which is correct behaviour for unauthenticated users).
