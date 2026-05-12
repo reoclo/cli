@@ -189,7 +189,7 @@ async function runDeviceFlow(opts: {
   await saveProfile(profileName, oauthProfile);
 
   // 6. Success
-  console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (tenant: ${me.tenant_slug})`);
+  console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);
 }
 
 export function registerLogin(program: Command): void {
@@ -270,7 +270,7 @@ export function registerLogin(program: Command): void {
           });
         }
 
-        console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (tenant: ${me.tenant_slug})`);
+        console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);
       },
     );
 }

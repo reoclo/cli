@@ -35,7 +35,7 @@ export function registerDeployments(program: Command): void {
   const g = program.command("deployments").description("deployment history");
 
   g.command("ls")
-    .description("list deployments for the tenant")
+    .description("list deployments for the organization")
     .option("--app <idOrSlug>", "filter by application")
     .option("--skip <n>", "pagination skip", "0")
     .option("--limit <n>", "pagination limit", "20")
