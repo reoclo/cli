@@ -10,10 +10,14 @@ export function registerWhoami(program: Command): void {
     .action(async () => {
       const ctx = await bootstrap();
       const me = await ctx.client.get<Me>("/auth/me");
+      // Map the internal KeyType enum ("tenant" | "automation") to a
+      // user-facing label. "tenant" is internal-only language; here it
+      // means an interactive user session, so display "user".
+      const displayType = ctx.tokenType === "tenant" ? "user" : ctx.tokenType;
       console.log(`organization:  ${me.tenant_slug}`);
       console.log(`user:          ${me.email}`);
       console.log(`api:           ${ctx.api}`);
-      console.log(`type:          ${ctx.tokenType}`);
+      console.log(`type:          ${displayType}`);
       console.log(`prefix:        ${ctx.token.slice(0, 8)}…***`);
 
       const memberships = me.memberships ?? [];
