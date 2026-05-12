@@ -46,7 +46,7 @@ test("login → whoami → logout (file store, fake gateway)", async () => {
   const out = who.stdout.toString();
   expect(out).toContain("organization:  acme");
   expect(out).toContain("user:          test@example.com");
-  expect(out).toContain("type:          tenant");
+  expect(out).toContain("type:          user");
 
   await $`bun run src/index.ts logout`.env(env);
 
