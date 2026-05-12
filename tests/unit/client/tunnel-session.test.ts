@@ -221,4 +221,39 @@ describe("TunnelSession — reconnect", () => {
     await session.stop();
     await gw.stop();
   });
+
+  it("local TCP listener accepts new connections after WS drops", async () => {
+    const gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [
+        { localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" },
+      ],
+      reconnectDeadlineMs: 30_000,
+    });
+    const ready = await session.start();
+    const localPort = ready.forwards[0]!.boundPort;
+
+    // Force gateway WSS close (the WS-server side) but DON'T stop the mock — server still binds
+    gw.dropConnections();
+
+    // Wait briefly for the session to enter reconnecting state
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Local listener should still accept new connections (they queue while reconnect attempts)
+    const probe = net.connect(localPort, "127.0.0.1");
+    const connected = await new Promise<boolean>((r) => {
+      probe.once("connect", () => {
+        probe.destroy();
+        r(true);
+      });
+      probe.once("error", () => r(false));
+      setTimeout(() => r(false), 500);
+    });
+    expect(connected).toBe(true);
+
+    await session.stop();
+    await gw.stop();
+  });
 });

@@ -36,10 +36,12 @@ interface UdpStream {
   proto: "udp";
   localPeer: { addr: string; port: number };
   localSock: dgram.Socket; // the same listener that received the source datagram
+  idleTimer: NodeJS.Timeout;
 }
 
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
+const UDP_IDLE_MS = 60_000;
 
 export class TunnelSession {
   private ws?: WebSocket;
@@ -53,6 +55,8 @@ export class TunnelSession {
   private stopped = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  /** Timestamp of the first consecutive disconnect; null when connected. */
+  private reconnectStartedAt: number | null = null;
   private opts: TunnelSessionOptions & { reconnectDeadlineMs: number };
 
   constructor(opts: TunnelSessionOptions) {
@@ -73,7 +77,10 @@ export class TunnelSession {
     }
     for (const s of this.tcpListeners) s.close();
     for (const s of this.udpListeners) s.close();
-    for (const id of Array.from(this.streams.keys())) {
+    for (const [id, s] of this.streams.entries()) {
+      if (s.proto === "udp") {
+        clearTimeout(s.idleTimer);
+      }
       this.tearDownStream(id, "session_stopped");
     }
     // Abort any in-progress connect by destroying the underlying socket
@@ -120,6 +127,7 @@ export class TunnelSession {
         }
         this.ws = ws;
         this.reconnectAttempt = 0;
+        this.reconnectStartedAt = null; // success — clear the disconnect timer
         this.status("active");
         ws.on("message", (raw) => this.onWsMessage(raw));
         ws.on("close", () => this.onWsClose());
@@ -157,6 +165,7 @@ export class TunnelSession {
       // end() lets the local app see EOF cleanly
       s.sock.end();
     } else {
+      clearTimeout(s.idleTimer);
       // For UDP we don't close the listener socket; we just forget the peer mapping
       const key = `${s.localPeer.addr}:${s.localPeer.port}`;
       this.udpPeerToStream.delete(key);
@@ -169,18 +178,23 @@ export class TunnelSession {
     for (const [id, s] of this.streams.entries()) {
       if (s.proto === "tcp") {
         s.sock.end();
+      } else {
+        clearTimeout(s.idleTimer);
       }
       this.streams.delete(id);
     }
     this.udpPeerToStream.clear();
 
     if (this.stopped) return;
+    // Record the start of the first consecutive disconnect only
+    if (this.reconnectStartedAt === null) this.reconnectStartedAt = Date.now();
     this.status("reconnecting");
     this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
-    const deadline = Date.now() + this.opts.reconnectDeadlineMs;
+    const startedAt = this.reconnectStartedAt ?? Date.now();
+    const deadline = startedAt + this.opts.reconnectDeadlineMs;
     const tryAgain = async (): Promise<void> => {
       if (this.stopped) return;
       if (Date.now() > deadline) {
@@ -269,6 +283,10 @@ export class TunnelSession {
         proto: "udp",
         localPeer: { addr: rinfo.address, port: rinfo.port },
         localSock: listener,
+        idleTimer: setTimeout(
+          () => this.tearDownStream(streamId!, "udp_idle_timeout"),
+          UDP_IDLE_MS,
+        ),
       });
       this.send({
         type: "tunnel_open",
@@ -279,6 +297,16 @@ export class TunnelSession {
       });
     }
     this.send({ type: "tunnel_data", stream_id: streamId, data: buf.toString("base64") });
+    this.resetUdpIdle(streamId);
+  }
+
+  private resetUdpIdle(streamId: string): void {
+    const s = this.streams.get(streamId);
+    if (!s || s.proto !== "udp") return;
+    clearTimeout(s.idleTimer);
+    s.idleTimer = setTimeout(() => {
+      this.tearDownStream(streamId, "udp_idle_timeout");
+    }, UDP_IDLE_MS);
   }
 
   private onWsMessage(raw: WebSocket.RawData): void {
@@ -306,9 +334,15 @@ export class TunnelSession {
         const data =
           typeof msg.data === "string" ? Buffer.from(msg.data, "base64") : Buffer.alloc(0);
         if (s.proto === "tcp") {
-          s.sock.write(data);
+          // Note: bounded flow control comes in Phase 6 (bandwidth policy).
+          // For now we log when the local app's read buffer is full so it's visible.
+          const drained = s.sock.write(data);
+          if (!drained) {
+            console.warn(`[tunnel] local TCP write backpressure on stream ${sid}`);
+          }
         } else {
           s.localSock.send(data, s.localPeer.port, s.localPeer.addr);
+          this.resetUdpIdle(sid);
         }
         return;
       }
@@ -320,6 +354,7 @@ export class TunnelSession {
         if (s.proto === "tcp") {
           s.sock.end();
         } else {
+          clearTimeout(s.idleTimer);
           this.udpPeerToStream.delete(`${s.localPeer.addr}:${s.localPeer.port}`);
         }
         return;
