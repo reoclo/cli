@@ -31,6 +31,10 @@ interface ResilientBackend {
   directUrl: string;
   /** How many tunnel_listen_open frames have arrived from the CLI */
   listenOpenCount: number;
+  /** How many WS connections the CLI has opened (should stay 1 for the whole session) */
+  wsOpenCount: number;
+  /** True if the backend currently holds a live CLI WS reference */
+  cliWsAlive: () => boolean;
   /** Push any JSON frame directly to the CLI WS */
   pushToCli: (frame: object) => void;
   /** Resolves when listenOpenCount reaches n, or rejects after timeoutMs */
@@ -40,6 +44,7 @@ interface ResilientBackend {
 
 function startResilientBackend(): ResilientBackend {
   let listenOpenCount = 0;
+  let wsOpenCount = 0;
   let cliWs: ServerWebSocket<unknown> | null = null;
   const listenCountWaiters: Array<{ n: number; resolve: () => void; reject: (e: Error) => void }> =
     [];
@@ -86,6 +91,7 @@ function startResilientBackend(): ResilientBackend {
 
     websocket: {
       open(ws) {
+        wsOpenCount++;
         cliWs = ws;
       },
       message(ws: ServerWebSocket<unknown>, raw: string | Buffer) {
@@ -117,6 +123,12 @@ function startResilientBackend(): ResilientBackend {
     directUrl: `ws://localhost:${server.port}`,
     get listenOpenCount() {
       return listenOpenCount;
+    },
+    get wsOpenCount() {
+      return wsOpenCount;
+    },
+    cliWsAlive() {
+      return cliWs !== null;
     },
     pushToCli(frame) {
       if (cliWs) {
@@ -230,11 +242,9 @@ describe("reoclo tunnel -R — e2e resilient reconnect", () => {
 
         cli.on("error", reject);
         cli.on("exit", (code) => {
-          if (code !== null && code !== 0) {
-            reject(
-              new Error(`CLI exited early with code ${code}. stderr: ${stderrBuf}`),
-            );
-          }
+          reject(
+            new Error(`CLI exited (code ${code}) before printing the -R bound line. stderr: ${stderrBuf}`),
+          );
         });
 
         setTimeout(
@@ -257,8 +267,9 @@ describe("reoclo tunnel -R — e2e resilient reconnect", () => {
       // The CLI should set status → "reconnecting" but keep the WS open.
       backend.pushToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
 
-      // Brief pause to let the CLI process the frame.
-      await new Promise<void>((r) => setTimeout(r, 150));
+      // Deliberate settle-time: give the CLI a chance to process the frame before
+      // asserting exitCode. 300ms provides CI headroom without needing a stderr-wait.
+      await new Promise<void>((r) => setTimeout(r, 300));
 
       // Step 4: Assert the CLI WS is still open — process still alive.
       expect(cli.exitCode).toBeNull();
@@ -274,6 +285,12 @@ describe("reoclo tunnel -R — e2e resilient reconnect", () => {
       expect(backend.listenOpenCount).toBe(2);
       // CLI process is still alive — WS never closed, no exit.
       expect(cli.exitCode).toBeNull();
+
+      // CORE GUARANTEE: the CLI WS was never closed/reopened across interrupt→resume.
+      // Exactly one WS connection should have been established for the whole session.
+      expect(backend.wsOpenCount).toBe(1);
+      // The backend still holds a live cliWs reference (close() was never fired).
+      expect(backend.cliWsAlive()).toBe(true);
     },
     20_000, // generous timeout for bun process startup
   );
