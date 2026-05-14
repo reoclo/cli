@@ -257,6 +257,10 @@ export class TunnelSession {
   }
 
   private onWsClose(): void {
+    // A full WS reconnect is a clean slate — any prior runner-interrupt state
+    // (signalled over the now-dead WS) no longer applies. Clear it so the
+    // accept-guard doesn't stay stuck after the WS comes back.
+    this.interrupted = false;
     // Drain pending listen waiters so sendListenOpen promises settle instead of hanging
     for (const [listenId, w] of this.listenWaiters) {
       try {

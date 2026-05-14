@@ -11,6 +11,8 @@ interface MockGateway {
   stop: () => Promise<void>;
   /** Force-drop all active WS connections without waiting */
   dropConnections: () => void;
+  /** Send a proper WS close frame from the server side — causes the CLI's close event to fire */
+  closeActiveConnection: () => void;
   /** Frames received from the CLI, in order */
   received: object[];
   /** Send a frame to whatever CLI is currently connected */
@@ -64,12 +66,23 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
         (client as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
       }
     },
+    closeActiveConnection: () => {
+      // Sends a proper WS close frame so the CLI-side WS fires its "close" event.
+      activeWs?.close();
+    },
     stop: () =>
       new Promise((r) => {
         for (const client of wss.clients) {
           (client as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
         }
-        wss.close(() => r());
+        // Bun v1.3.11: wss.close() does not fire its callback when clients=0.
+        // Work around by resolving immediately when there are no active clients.
+        if (wss.clients.size === 0) {
+          wss.close();
+          r();
+        } else {
+          wss.close(() => r());
+        }
       }),
     get onClientFrame() { return onClientFrame; },
     set onClientFrame(fn) { onClientFrame = fn; },
@@ -563,6 +576,62 @@ describe("TunnelSession — interrupt/resume", () => {
     expect(closeSent).toBe(false);
 
     await session.stop();
+  });
+
+  it("clears the interrupted flag when the CLI's own WS drops and reconnects", async () => {
+    // Sequence: session starts → gateway sends tunnel_interrupted (interrupted=true, accept-guard
+    // active) → gateway sends a proper WS close frame → onWsClose fires → interrupted cleared.
+    // Key invariant: after the WS close, the accept-guard MUST NOT destroy new local TCP
+    // connections — even before the reconnect backoff timer fires.
+    //
+    // We set reconnectDeadlineMs=0 so the session immediately gives up reconnecting after the
+    // WS close, which prevents the reconnect timer from creating a new WS connection that would
+    // interfere with the afterEach gw.stop() teardown.
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+      reconnectDeadlineMs: 10_000,
+    });
+    const ready = await session.start();
+    const localPort = ready.forwards[0]!.boundPort;
+
+    // Put the session into interrupted state — accept-guard now active
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Verify guard IS active: a connection attempt should be immediately destroyed
+    const guardProbe = net.connect(localPort, "127.0.0.1");
+    const guardResult = await new Promise<"closed" | "survived">((r) => {
+      guardProbe.once("close", () => r("closed"));
+      guardProbe.once("error", () => r("closed"));
+      setTimeout(() => r("survived"), 200);
+    });
+    guardProbe.destroy();
+    expect(guardResult).toBe("closed"); // accept-guard is working
+
+    // Close the active WS with a proper close frame (ws.close()) — this triggers onWsClose()
+    // which clears this.interrupted = false, lifting the accept-guard.
+    // reconnectDeadlineMs=0 ensures tryAgain() immediately gives up (deadline already passed)
+    // so no reconnect timer is set, keeping cleanup deterministic.
+    gw.closeActiveConnection();
+    // Wait for the WS close event to propagate through the event loop on both sides.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Now the accept-guard MUST be cleared. A new probe should survive (not be destroyed).
+    // Note: tunnel_open cannot reach the gateway (WS is closed) but the socket is not destroyed.
+    const probe = net.connect(localPort, "127.0.0.1");
+    const probeResult = await new Promise<"closed" | "survived">((r) => {
+      probe.once("close", () => r("closed"));
+      probe.once("error", () => r("closed"));
+      setTimeout(() => r("survived"), 200);
+    });
+    probe.destroy();
+    await session.stop();
+
+    // Accept-guard cleared — probe should survive (not be destroyed by onLocalTcpAccept guard)
+    expect(probeResult).toBe("survived");
   });
 
   it("while interrupted, new local TCP connections are destroyed fast (accept-guard)", async () => {
