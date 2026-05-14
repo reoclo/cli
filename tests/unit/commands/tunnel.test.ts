@@ -40,8 +40,8 @@ describe("parseTunnelArgs", () => {
     expect(() => parseTunnelArgs("srv-1", { L: ["8080:x:0"] })).toThrow(/remote_port/);
   });
 
-  it("requires at least one -L", () => {
-    expect(() => parseTunnelArgs("srv-1", {})).toThrow(/at least one -L/);
+  it("requires at least one -L or -R", () => {
+    expect(() => parseTunnelArgs("srv-1", {})).toThrow(/-L or -R/);
   });
 
   it("supports multiple -L specs", () => {
@@ -114,6 +114,79 @@ describe("parseTunnelArgs --udp flag", () => {
       remotePort: 53,
       proto: "udp",
     });
+  });
+});
+
+describe("parseTunnelArgs --R reverse spec", () => {
+  it("parses -R with 2 parts as remote_port:local_port (local_host=127.0.0.1)", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["8080:8080"] });
+    expect(r.reverses).toEqual([{
+      remoteBind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 8080, proto: "tcp",
+    }]);
+  });
+
+  it("parses -R with 3 parts as remote_port:local_host:local_port", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["9000:127.0.0.1:3000"] });
+    expect(r.reverses[0]).toEqual({
+      remoteBind: "127.0.0.1", remotePort: 9000, localHost: "127.0.0.1", localPort: 3000, proto: "tcp",
+    });
+  });
+
+  it("parses -R with 4 parts as bind:remote_port:local_host:local_port (requires --bind-public for 0.0.0.0)", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["0.0.0.0:80:127.0.0.1:8000"], bindPublic: true });
+    expect(r.reverses[0]).toEqual({
+      remoteBind: "0.0.0.0", remotePort: 80, localHost: "127.0.0.1", localPort: 8000, proto: "tcp",
+    });
+  });
+
+  it("rejects 4-part -R with bind=0.0.0.0 when --bind-public is missing", () => {
+    expect(() => parseTunnelArgs("srv-1", { R: ["0.0.0.0:80:127.0.0.1:8000"] })).toThrow(/--bind-public/);
+  });
+
+  it("accepts explicit bind=127.0.0.1 without --bind-public", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["127.0.0.1:8080:127.0.0.1:3000"] });
+    expect(r.reverses[0]!.remoteBind).toBe("127.0.0.1");
+  });
+
+  it("rejects invalid bind in 4-part form", () => {
+    expect(() => parseTunnelArgs("srv-1", { R: ["10.0.0.5:80:x:1"], bindPublic: true })).toThrow(/invalid -R bind/);
+  });
+
+  it("rejects hex/decimal/negative ports", () => {
+    expect(() => parseTunnelArgs("srv-1", { R: ["0x50:127.0.0.1:80"] })).toThrow(/remote_port/);
+    expect(() => parseTunnelArgs("srv-1", { R: ["8080:127.0.0.1:0"] })).toThrow(/local_port/);
+  });
+
+  it("rejects remote_port=0 on -R (port 0 is not a meaningful listen port)", () => {
+    expect(() => parseTunnelArgs("srv-1", { R: ["0:127.0.0.1:80"] })).toThrow(/remote_port/);
+  });
+
+  it("--udp applies to -R specs too", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["8080:3000"], udp: true });
+    expect(r.reverses[0]!.proto).toBe("udp");
+  });
+
+  it("--udp applies to both -L and -R when mixed", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["5432:5432"], R: ["8080:3000"], udp: true });
+    expect(r.forwards[0]!.proto).toBe("udp");
+    expect(r.reverses[0]!.proto).toBe("udp");
+  });
+
+  it("supports multiple -R specs", () => {
+    const r = parseTunnelArgs("srv-1", { R: ["8080:3000", "9090:4000"] });
+    expect(r.reverses.length).toBe(2);
+    expect(r.reverses[0]!.remotePort).toBe(8080);
+    expect(r.reverses[1]!.remotePort).toBe(9090);
+  });
+
+  it("accepts -L and -R together", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["5432:5432"], R: ["8080:3000"] });
+    expect(r.forwards.length).toBe(1);
+    expect(r.reverses.length).toBe(1);
+  });
+
+  it("error message change: at least one -L or -R is required", () => {
+    expect(() => parseTunnelArgs("srv-1", {})).toThrow(/-L or -R/);
   });
 });
 
