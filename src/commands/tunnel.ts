@@ -17,7 +17,7 @@ function parseDecimalInt(s: string, name: string): number {
   return Number(s);
 }
 
-function parseForwardSpec(spec: string): ForwardSpec {
+function parseForwardSpec(spec: string, proto: "tcp" | "udp" = "tcp"): ForwardSpec {
   // Forms:
   //   local_port:remote_port                       (2 parts)
   //   local_port:remote_host:remote_port           (3 parts)
@@ -52,16 +52,18 @@ function parseForwardSpec(spec: string): ForwardSpec {
   if (remotePort < 1 || remotePort > 65535) {
     throw new Error(`invalid -L remote_port: ${parts[parts.length - 1]}`);
   }
-  return { localBind: bind, localPort, remoteHost, remotePort, proto: "tcp" };
+  return { localBind: bind, localPort, remoteHost, remotePort, proto };
 }
 
 export interface ParseOptions {
   L?: string[];
   reconnectDeadline?: string;
+  udp?: boolean;
 }
 
 export function parseTunnelArgs(server: string, opts: ParseOptions): ParsedTunnelArgs {
-  const forwards = (opts.L ?? []).map(parseForwardSpec);
+  const proto: "tcp" | "udp" = opts.udp ? "udp" : "tcp";
+  const forwards = (opts.L ?? []).map((spec) => parseForwardSpec(spec, proto));
   if (forwards.length === 0) {
     throw new Error("at least one -L spec is required");
   }
@@ -83,13 +85,18 @@ export function registerTunnel(program: Command): void {
   program
     .command("tunnel <serverIdOrName>")
     .description(
-      "open a TCP tunnel from this machine through a Reoclo runner (forward; -L only in Phase 1)",
+      "open a TCP/UDP tunnel from this machine through a Reoclo runner (forward; -L only)",
     )
     .option(
       "-L <spec>",
       "forward [bind:]local_port:remote_host:remote_port (repeat for multiple)",
       (value, prev: string[] = []) => [...prev, value],
       [] as string[],
+    )
+    .option(
+      "--udp",
+      "use UDP for all forwards in this invocation (default: TCP)",
+      false,
     )
     .option(
       "--reconnect-deadline <seconds>",
@@ -151,7 +158,7 @@ export function registerTunnel(program: Command): void {
             process.exit(1);
           }
           console.log(
-            `-L  ${f.localBind}:${bound.boundPort}  →  ${parsed.server}:${f.remoteHost}:${f.remotePort}  (tcp)`,
+            `-L  ${f.localBind}:${bound.boundPort}  →  ${parsed.server}:${f.remoteHost}:${f.remotePort}  (${f.proto})`,
           );
         }
         console.log("Ctrl-C to close");

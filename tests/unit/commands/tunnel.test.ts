@@ -84,6 +84,39 @@ describe("buildTunnelWsUrl", () => {
   });
 });
 
+describe("parseTunnelArgs --udp flag", () => {
+  it("defaults proto to tcp when --udp omitted", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["5432:5432"] });
+    expect(r.forwards[0]!.proto).toBe("tcp");
+  });
+
+  it("sets proto to udp when --udp passed", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["5353:53"], udp: true });
+    expect(r.forwards[0]!.proto).toBe("udp");
+  });
+
+  it("applies --udp to ALL -L specs in the invocation", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["5353:53", "5354:54", "5355:55"], udp: true });
+    expect(r.forwards.map((f) => f.proto)).toEqual(["udp", "udp", "udp"]);
+  });
+
+  it("--udp false explicit is same as omitted (tcp)", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["80:80"], udp: false });
+    expect(r.forwards[0]!.proto).toBe("tcp");
+  });
+
+  it("UDP forwards preserve all other parsed fields", () => {
+    const r = parseTunnelArgs("srv-1", { L: ["0.0.0.0:5353:internal:53"], udp: true });
+    expect(r.forwards[0]).toEqual({
+      localBind: "0.0.0.0",
+      localPort: 5353,
+      remoteHost: "internal",
+      remotePort: 53,
+      proto: "udp",
+    });
+  });
+});
+
 describe("deriveDirectUrl behaviors via integration with buildTunnelWsUrl context", () => {
   // deriveDirectUrl is internal, but its observable behavior is the directUrl
   // produced for the gateway. We test the wider parseTunnelArgs+URL build flow
