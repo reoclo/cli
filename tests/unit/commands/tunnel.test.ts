@@ -157,6 +157,10 @@ describe("parseTunnelArgs --R reverse spec", () => {
     expect(() => parseTunnelArgs("srv-1", { R: ["8080:127.0.0.1:0"] })).toThrow(/local_port/);
   });
 
+  it("rejects remote_port=0 on -R (port 0 is not a meaningful listen port)", () => {
+    expect(() => parseTunnelArgs("srv-1", { R: ["0:127.0.0.1:80"] })).toThrow(/remote_port/);
+  });
+
   it("--udp applies to -R specs too", () => {
     const r = parseTunnelArgs("srv-1", { R: ["8080:3000"], udp: true });
     expect(r.reverses[0]!.proto).toBe("udp");

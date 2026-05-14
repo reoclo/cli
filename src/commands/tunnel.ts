@@ -11,9 +11,9 @@ export interface ParsedTunnelArgs {
   reconnectDeadlineMs: number;
 }
 
-function parseDecimalInt(s: string, name: string): number {
+function parseDecimalInt(s: string, flag: "-L" | "-R", name: string): number {
   if (!/^\d+$/.test(s)) {
-    throw new Error(`invalid -L ${name}: ${JSON.stringify(s)} (expected non-negative decimal integer)`);
+    throw new Error(`invalid ${flag} ${name}: ${JSON.stringify(s)} (expected non-negative decimal integer)`);
   }
   return Number(s);
 }
@@ -29,18 +29,18 @@ function parseForwardSpec(spec: string, proto: "tcp" | "udp" = "tcp"): ForwardSp
   let remoteHost: string;
   let remotePort: number;
   if (parts.length === 2) {
-    localPort = parseDecimalInt(parts[0]!, "local_port");
+    localPort = parseDecimalInt(parts[0]!, "-L", "local_port");
     remoteHost = "127.0.0.1";
-    remotePort = parseDecimalInt(parts[1]!, "remote_port");
+    remotePort = parseDecimalInt(parts[1]!, "-L", "remote_port");
   } else if (parts.length === 3) {
-    localPort = parseDecimalInt(parts[0]!, "local_port");
+    localPort = parseDecimalInt(parts[0]!, "-L", "local_port");
     remoteHost = parts[1]!;
-    remotePort = parseDecimalInt(parts[2]!, "remote_port");
+    remotePort = parseDecimalInt(parts[2]!, "-L", "remote_port");
   } else if (parts.length === 4) {
     bind = parts[0]!;
-    localPort = parseDecimalInt(parts[1]!, "local_port");
+    localPort = parseDecimalInt(parts[1]!, "-L", "local_port");
     remoteHost = parts[2]!;
-    remotePort = parseDecimalInt(parts[3]!, "remote_port");
+    remotePort = parseDecimalInt(parts[3]!, "-L", "remote_port");
   } else {
     throw new Error(`invalid -L spec: ${spec}`);
   }
@@ -67,28 +67,28 @@ function parseReverseSpec(spec: string, proto: "tcp" | "udp" = "tcp", bindPublic
   let localHost: string;
   let localPort: number;
   if (parts.length === 2) {
-    remotePort = parseDecimalInt(parts[0]!, "remote_port");
+    remotePort = parseDecimalInt(parts[0]!, "-R", "remote_port");
     localHost = "127.0.0.1";
-    localPort = parseDecimalInt(parts[1]!, "local_port");
+    localPort = parseDecimalInt(parts[1]!, "-R", "local_port");
   } else if (parts.length === 3) {
-    remotePort = parseDecimalInt(parts[0]!, "remote_port");
+    remotePort = parseDecimalInt(parts[0]!, "-R", "remote_port");
     localHost = parts[1]!;
-    localPort = parseDecimalInt(parts[2]!, "local_port");
+    localPort = parseDecimalInt(parts[2]!, "-R", "local_port");
   } else if (parts.length === 4) {
     if (parts[0] !== "127.0.0.1" && parts[0] !== "0.0.0.0") {
       throw new Error(`invalid -R bind: ${parts[0]} (only 127.0.0.1 or 0.0.0.0 supported)`);
     }
     bind = parts[0] as "127.0.0.1" | "0.0.0.0";
-    remotePort = parseDecimalInt(parts[1]!, "remote_port");
+    remotePort = parseDecimalInt(parts[1]!, "-R", "remote_port");
     localHost = parts[2]!;
-    localPort = parseDecimalInt(parts[3]!, "local_port");
+    localPort = parseDecimalInt(parts[3]!, "-R", "local_port");
   } else {
     throw new Error(`invalid -R spec: ${spec}`);
   }
   if (bind === "0.0.0.0" && !bindPublicAllowed) {
     throw new Error(`invalid -R bind: 0.0.0.0 requires --bind-public flag`);
   }
-  if (remotePort < 0 || remotePort > 65535) {
+  if (remotePort < 1 || remotePort > 65535) {
     throw new Error(`invalid -R remote_port: ${remotePort}`);
   }
   if (localPort < 1 || localPort > 65535) {
