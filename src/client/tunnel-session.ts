@@ -15,16 +15,26 @@ export interface ForwardSpec {
 
 export type SessionStatus = "connecting" | "active" | "reconnecting" | "closed";
 
+export interface ReverseSpec {
+  remoteBind: "127.0.0.1" | "0.0.0.0"; // server-side bind address
+  remotePort: number;                    // server-side listen port
+  localHost: string;                     // local dial target host
+  localPort: number;                     // local dial target port
+  proto: Proto;
+}
+
 export interface TunnelSessionOptions {
   gatewayUrl: string; // wss://direct.reoclo.com/v1/tunnel?server_id=...
   token: string; // user JWT for Authorization: Bearer
   forwards?: ForwardSpec[];
+  reverses?: ReverseSpec[];
   reconnectDeadlineMs?: number; // default 5 * 60_000
   onStatus?: (s: SessionStatus) => void;
 }
 
 export interface ReadyState {
   forwards: { boundPort: number }[];
+  reverses: { boundPort: number }[];
 }
 
 interface TcpStream {
@@ -66,7 +76,7 @@ export class TunnelSession {
   async start(): Promise<ReadyState> {
     await this.connect();
     const forwards = await this.openLocalListeners();
-    return { forwards };
+    return { forwards, reverses: [] };
   }
 
   async stop(): Promise<void> {

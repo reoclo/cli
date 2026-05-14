@@ -2,11 +2,12 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
-import { TunnelSession, type ForwardSpec } from "../client/tunnel-session";
+import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tunnel-session";
 
 export interface ParsedTunnelArgs {
   server: string;
   forwards: ForwardSpec[];
+  reverses: ReverseSpec[];
   reconnectDeadlineMs: number;
 }
 
@@ -55,23 +56,68 @@ function parseForwardSpec(spec: string, proto: "tcp" | "udp" = "tcp"): ForwardSp
   return { localBind: bind, localPort, remoteHost, remotePort, proto };
 }
 
+function parseReverseSpec(spec: string, proto: "tcp" | "udp" = "tcp", bindPublicAllowed: boolean = false): ReverseSpec {
+  // Forms:
+  //   remote_port:local_port                            (2 parts; local_host=127.0.0.1)
+  //   remote_port:local_host:local_port                 (3 parts)
+  //   bind:remote_port:local_host:local_port            (4 parts)
+  const parts = spec.split(":");
+  let bind: "127.0.0.1" | "0.0.0.0" = "127.0.0.1";
+  let remotePort: number;
+  let localHost: string;
+  let localPort: number;
+  if (parts.length === 2) {
+    remotePort = parseDecimalInt(parts[0]!, "remote_port");
+    localHost = "127.0.0.1";
+    localPort = parseDecimalInt(parts[1]!, "local_port");
+  } else if (parts.length === 3) {
+    remotePort = parseDecimalInt(parts[0]!, "remote_port");
+    localHost = parts[1]!;
+    localPort = parseDecimalInt(parts[2]!, "local_port");
+  } else if (parts.length === 4) {
+    if (parts[0] !== "127.0.0.1" && parts[0] !== "0.0.0.0") {
+      throw new Error(`invalid -R bind: ${parts[0]} (only 127.0.0.1 or 0.0.0.0 supported)`);
+    }
+    bind = parts[0] as "127.0.0.1" | "0.0.0.0";
+    remotePort = parseDecimalInt(parts[1]!, "remote_port");
+    localHost = parts[2]!;
+    localPort = parseDecimalInt(parts[3]!, "local_port");
+  } else {
+    throw new Error(`invalid -R spec: ${spec}`);
+  }
+  if (bind === "0.0.0.0" && !bindPublicAllowed) {
+    throw new Error(`invalid -R bind: 0.0.0.0 requires --bind-public flag`);
+  }
+  if (remotePort < 0 || remotePort > 65535) {
+    throw new Error(`invalid -R remote_port: ${remotePort}`);
+  }
+  if (localPort < 1 || localPort > 65535) {
+    throw new Error(`invalid -R local_port: ${localPort}`);
+  }
+  return { remoteBind: bind, remotePort, localHost, localPort, proto };
+}
+
 export interface ParseOptions {
   L?: string[];
-  reconnectDeadline?: string;
+  R?: string[];
   udp?: boolean;
+  bindPublic?: boolean;
+  reconnectDeadline?: string;
 }
 
 export function parseTunnelArgs(server: string, opts: ParseOptions): ParsedTunnelArgs {
   const proto: "tcp" | "udp" = opts.udp ? "udp" : "tcp";
+  const bindPublicAllowed = !!opts.bindPublic;
   const forwards = (opts.L ?? []).map((spec) => parseForwardSpec(spec, proto));
-  if (forwards.length === 0) {
-    throw new Error("at least one -L spec is required");
+  const reverses = (opts.R ?? []).map((spec) => parseReverseSpec(spec, proto, bindPublicAllowed));
+  if (forwards.length === 0 && reverses.length === 0) {
+    throw new Error("at least one -L or -R spec is required");
   }
   const deadlineSec = opts.reconnectDeadline ? Number(opts.reconnectDeadline) : 300;
   if (!Number.isFinite(deadlineSec) || deadlineSec < 0) {
     throw new Error(`invalid --reconnect-deadline: ${opts.reconnectDeadline}`);
   }
-  return { server, forwards, reconnectDeadlineMs: deadlineSec * 1000 };
+  return { server, forwards, reverses, reconnectDeadlineMs: deadlineSec * 1000 };
 }
 
 /** Build wss://direct.reoclo.com/v1/tunnel?server_id=X from a directUrl + serverId. */
@@ -85,7 +131,7 @@ export function registerTunnel(program: Command): void {
   program
     .command("tunnel <serverIdOrName>")
     .description(
-      "open a TCP/UDP tunnel from this machine through a Reoclo runner (forward; -L only)",
+      "open a TCP/UDP tunnel through a Reoclo runner (forward -L or reverse -R)",
     )
     .option(
       "-L <spec>",
@@ -94,8 +140,19 @@ export function registerTunnel(program: Command): void {
       [] as string[],
     )
     .option(
+      "-R <spec>",
+      "reverse [bind:]remote_port:local_host:local_port (repeat for multiple; bind=0.0.0.0 requires --bind-public)",
+      (value, prev: string[] = []) => [...prev, value],
+      [] as string[],
+    )
+    .option(
       "--udp",
       "use UDP for all forwards in this invocation (default: TCP)",
+      false,
+    )
+    .option(
+      "--bind-public",
+      "allow -R specs to bind 0.0.0.0 on the server (default: 127.0.0.1 only)",
       false,
     )
     .option(
@@ -130,6 +187,7 @@ export function registerTunnel(program: Command): void {
           gatewayUrl,
           token: ctx.token,
           forwards: parsed.forwards,
+          reverses: parsed.reverses,
           reconnectDeadlineMs: parsed.reconnectDeadlineMs,
           onStatus: (s) => {
             if (s === "active") process.stderr.write("tunnel: connected\n");
@@ -159,6 +217,18 @@ export function registerTunnel(program: Command): void {
           }
           console.log(
             `-L  ${f.localBind}:${bound.boundPort}  →  ${parsed.server}:${f.remoteHost}:${f.remotePort}  (${f.proto})`,
+          );
+        }
+        for (let i = 0; i < parsed.reverses.length; i++) {
+          const r = parsed.reverses[i]!;
+          const bound = ready.reverses?.[i];
+          if (!bound) {
+            console.error(`tunnel: internal error — TunnelSession returned ${ready.reverses?.length ?? 0} ready reverses but ${parsed.reverses.length} were requested`);
+            await session.stop();
+            process.exit(1);
+          }
+          console.log(
+            `-R  ${parsed.server}:${bound.boundPort}  →  ${r.localHost}:${r.localPort}  (${r.proto})`,
           );
         }
         console.log("Ctrl-C to close");
