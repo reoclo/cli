@@ -368,6 +368,61 @@ describe("TunnelSession — reverse TCP", () => {
     await session.stop();
   });
 
+  it("on inbound tunnel_open for UDP-reverse, sends datagram to local target and pipes reply back", async () => {
+    // Local UDP echo target
+    const target = dgram.createSocket("udp4");
+    target.on("message", (buf, rinfo) => target.send(buf, rinfo.port, rinfo.address));
+    await new Promise<void>((r) => target.bind(0, "127.0.0.1", () => r()));
+    const targetPort = (target.address() as { port: number }).port;
+
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg.listen_id, port: 100 }));
+        setTimeout(() => {
+          ws.send(JSON.stringify({
+            type: "tunnel_open",
+            stream_id: "s-udp-rev",
+            proto: "udp",
+            host: "1.2.3.4",
+            port: 99,
+            listen_id: msg.listen_id,
+          }));
+          setTimeout(() => {
+            ws.send(JSON.stringify({
+              type: "tunnel_data",
+              stream_id: "s-udp-rev",
+              data: Buffer.from("ping").toString("base64"),
+            }));
+          }, 30);
+        }, 30);
+      },
+    });
+
+    const echoes: string[] = [];
+    gw.onClientFrame = (msg) => {
+      if (msg.type === "tunnel_data" && msg.stream_id === "s-udp-rev") {
+        echoes.push(msg.data as string);
+      }
+    };
+
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 100, localHost: "127.0.0.1", localPort: targetPort, proto: "udp" }],
+    });
+    await session.start();
+
+    const deadline = Date.now() + 1500;
+    while (Date.now() < deadline && echoes.length === 0) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(echoes.length).toBeGreaterThan(0);
+    expect(Buffer.from(echoes[0]!, "base64").toString()).toBe("ping");
+
+    await session.stop();
+    await new Promise<void>((r) => target.close(() => r()));
+  });
+
   it("stop() sends tunnel_listen_close per active reverse listener", async () => {
     const closeFrames: string[] = [];
     gw = await startMockGateway({

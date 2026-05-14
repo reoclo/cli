@@ -77,8 +77,8 @@ export class TunnelSession {
 
   /** Active reverse listeners: listen_id → ReverseSpec (for inbound tunnel_open routing) */
   private reverseListeners = new Map<string, ReverseSpec>();
-  /** Pending waiters for tunnel_listen_opened / tunnel_listen_error */
-  private listenWaiters: ((msg: Record<string, unknown>) => void)[] = [];
+  /** Pending waiters for tunnel_listen_opened / tunnel_listen_error, keyed by listen_id */
+  private listenWaiters = new Map<string, (msg: Record<string, unknown>) => void>();
 
   constructor(opts: TunnelSessionOptions) {
     this.opts = { reconnectDeadlineMs: 5 * 60_000, ...opts };
@@ -184,13 +184,12 @@ export class TunnelSession {
     }
   }
 
-  private addListenWaiter(fn: (msg: Record<string, unknown>) => void): void {
-    this.listenWaiters.push(fn);
+  private addListenWaiter(listenId: string, fn: (msg: Record<string, unknown>) => void): void {
+    this.listenWaiters.set(listenId, fn);
   }
 
-  private removeListenWaiter(fn: (msg: Record<string, unknown>) => void): void {
-    const i = this.listenWaiters.indexOf(fn);
-    if (i >= 0) this.listenWaiters.splice(i, 1);
+  private removeListenWaiter(listenId: string): void {
+    this.listenWaiters.delete(listenId);
   }
 
   private async openReverseListeners(): Promise<{ boundPort: number }[]> {
@@ -212,6 +211,21 @@ export class TunnelSession {
 
   private sendListenOpen(listenId: string, r: ReverseSpec): Promise<number> {
     return new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.removeListenWaiter(listenId);
+        reject(new Error(`tunnel_listen_open timeout for listen_id=${listenId}`));
+      }, 10_000);
+      const onMsg = (msg: Record<string, unknown>) => {
+        clearTimeout(timeout);
+        if (msg.type === "tunnel_listen_opened") {
+          this.removeListenWaiter(listenId);
+          resolve(typeof msg.port === "number" ? msg.port : 0);
+        } else if (msg.type === "tunnel_listen_error") {
+          this.removeListenWaiter(listenId);
+          reject(new Error(typeof msg.error === "string" ? msg.error : "listen error"));
+        }
+      };
+      this.addListenWaiter(listenId, onMsg);
       this.send({
         type: "tunnel_listen_open",
         listen_id: listenId,
@@ -219,17 +233,6 @@ export class TunnelSession {
         port: r.remotePort,
         bind: r.remoteBind,
       });
-      const onMsg = (msg: Record<string, unknown>) => {
-        if (msg.listen_id !== listenId) return;
-        if (msg.type === "tunnel_listen_opened") {
-          this.removeListenWaiter(onMsg);
-          resolve(typeof msg.port === "number" ? msg.port : 0);
-        } else if (msg.type === "tunnel_listen_error") {
-          this.removeListenWaiter(onMsg);
-          reject(new Error(typeof msg.error === "string" ? msg.error : "listen error"));
-        }
-      };
-      this.addListenWaiter(onMsg);
     });
   }
 
@@ -253,6 +256,14 @@ export class TunnelSession {
   }
 
   private onWsClose(): void {
+    // Drain pending listen waiters so sendListenOpen promises settle instead of hanging
+    for (const [listenId, w] of this.listenWaiters) {
+      try {
+        w({ type: "tunnel_listen_error", listen_id: listenId, error: "ws_closed_before_ack" });
+      } catch { /* ignore */ }
+    }
+    this.listenWaiters.clear();
+
     // Clean local TCP/UDP-reverse streams so the local app sees a clean drop, not a hang
     for (const [id, s] of this.streams.entries()) {
       if (s.proto === "tcp") {
@@ -413,7 +424,19 @@ export class TunnelSession {
 
     // Dispatch tunnel_listen_opened / tunnel_listen_error to pending sendListenOpen() callers
     if (msg.type === "tunnel_listen_opened" || msg.type === "tunnel_listen_error") {
-      for (const w of [...this.listenWaiters]) w(msg);
+      if (typeof msg.listen_id === "string") {
+        const w = this.listenWaiters.get(msg.listen_id);
+        if (w) w(msg);
+      }
+      // Defensive sweep (Issue 1): if this is a reconnect-era error with no pending waiter,
+      // remove the stale reverseListeners entry so the failure is surfaced, not silently dropped.
+      if (msg.type === "tunnel_listen_error" && typeof msg.listen_id === "string") {
+        if (this.reverseListeners.delete(msg.listen_id)) {
+          process.stderr.write(
+            `tunnel: reverse listener ${msg.listen_id} failed after reconnect: ${typeof msg.error === "string" ? msg.error : "unknown"}\n`,
+          );
+        }
+      }
       return;
     }
 
@@ -458,15 +481,16 @@ export class TunnelSession {
         } else {
           // UDP reverse: bind a local ephemeral socket to receive replies from the local target.
           const sock = dgram.createSocket("udp4");
-          sock.bind(0);
+          // Register error handler BEFORE bind so a synchronous error event is always handled.
+          sock.on("error", (err) => {
+            if (this.streams.delete(sid)) {
+              this.send({ type: "tunnel_close", stream_id: sid, reason: `local_udp_error: ${err.message}` });
+            }
+          });
           sock.on("message", (buf) => {
             this.send({ type: "tunnel_data", stream_id: sid, data: buf.toString("base64") });
           });
-          sock.on("error", () => {
-            if (this.streams.delete(sid)) {
-              this.send({ type: "tunnel_close", stream_id: sid, reason: "local_udp_error" });
-            }
-          });
+          sock.bind(0);
           this.streams.set(sid, {
             proto: "udp-reverse",
             sock,
