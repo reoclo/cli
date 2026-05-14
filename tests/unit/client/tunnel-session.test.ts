@@ -446,3 +446,159 @@ describe("TunnelSession — reverse TCP", () => {
     expect(closeFrames.length).toBe(1);
   });
 });
+
+describe("TunnelSession — interrupt/resume", () => {
+  let gw: MockGateway;
+  afterEach(async () => { await gw?.stop(); });
+
+  it("tunnel_interrupted sets status 'reconnecting' and WS stays open", async () => {
+    const statuses: string[] = [];
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s) => statuses.push(s),
+    });
+    await session.start();
+
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+
+    // Wait for the status to propagate
+    const deadline = Date.now() + 500;
+    while (Date.now() < deadline && !statuses.includes("reconnecting")) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    expect(statuses).toContain("reconnecting");
+    // Verify session WS is still OPEN (not closed by the CLI)
+    // The mock gateway still has an active connection — it would be null if CLI closed
+    expect((gw as { received: object[] }).received.some(
+      (m: object) => (m as { type?: string }).type === "close"
+    )).toBe(false);
+
+    await session.stop();
+  });
+
+  it("tunnel_resumed re-sends tunnel_listen_open for active reverse listeners and sets status 'active'", async () => {
+    const statuses: string[] = [];
+    let listenOpenCount = 0;
+
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        listenOpenCount++;
+        ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg.listen_id, port: 7777 }));
+      },
+    });
+
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 7777, localHost: "127.0.0.1", localPort: 3000, proto: "tcp" }],
+      onStatus: (s) => statuses.push(s),
+    });
+    await session.start();
+    expect(listenOpenCount).toBe(1);
+
+    // Simulate gateway interrupt then resume
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+    await new Promise((r) => setTimeout(r, 20));
+    gw.sendToCli({ type: "tunnel_resumed" });
+
+    // Wait for the second tunnel_listen_open
+    const deadline = Date.now() + 500;
+    while (Date.now() < deadline && listenOpenCount < 2) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    expect(listenOpenCount).toBe(2);
+    expect(statuses).toContain("active");
+    // The last status after resume should be "active"
+    expect(statuses[statuses.length - 1]).toBe("active");
+
+    await session.stop();
+  });
+
+  it("tunnel_resumed with no reverse listeners is a clean no-op", async () => {
+    const statuses: string[] = [];
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+      onStatus: (s) => statuses.push(s),
+    });
+    await session.start();
+
+    // No crash expected — just status transitions
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+    await new Promise((r) => setTimeout(r, 20));
+    gw.sendToCli({ type: "tunnel_resumed" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(statuses).toContain("reconnecting");
+    expect(statuses[statuses.length - 1]).toBe("active");
+
+    await session.stop();
+  });
+
+  it("tunnel_interrupted does not close the CLI WS", async () => {
+    gw = await startMockGateway();
+    let wsCloseCount = 0;
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s) => { if (s === "closed") wsCloseCount++; },
+    });
+    await session.start();
+
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Session should NOT have emitted "closed" — the WS is still open
+    expect(wsCloseCount).toBe(0);
+    // Verify the CLI hasn't sent any "close" frames to the gateway
+    const closeSent = gw.received.some(
+      (m: object) => (m as { type?: string }).type === "tunnel_close"
+    );
+    expect(closeSent).toBe(false);
+
+    await session.stop();
+  });
+
+  it("while interrupted, new local TCP connections are destroyed fast (accept-guard)", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+    });
+    const ready = await session.start();
+    const localPort = ready.forwards[0]!.boundPort;
+
+    // Interrupt the session
+    gw.sendToCli({ type: "tunnel_interrupted", reason: "runner_disconnected" });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const tunnelOpensBefore = gw.received.filter(
+      (m: object) => (m as { type?: string }).type === "tunnel_open"
+    ).length;
+
+    // Try to connect — should be destroyed without a tunnel_open being sent
+    const probe = net.connect(localPort, "127.0.0.1");
+    const result = await new Promise<"closed" | "connected">((r) => {
+      probe.once("close", () => r("closed"));
+      probe.once("error", () => r("closed"));
+      setTimeout(() => r("connected"), 200);
+    });
+
+    // The socket should be closed fast (destroyed by accept-guard)
+    expect(result).toBe("closed");
+
+    const tunnelOpensAfter = gw.received.filter(
+      (m: object) => (m as { type?: string }).type === "tunnel_open"
+    ).length;
+    expect(tunnelOpensAfter).toBe(tunnelOpensBefore);
+
+    await session.stop();
+  });
+});

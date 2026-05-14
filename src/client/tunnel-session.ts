@@ -69,6 +69,7 @@ export class TunnelSession {
   private tcpListeners: net.Server[] = [];
   private udpListeners: dgram.Socket[] = [];
   private stopped = false;
+  private interrupted = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   /** Timestamp of the first consecutive disconnect; null when connected. */
@@ -309,22 +310,30 @@ export class TunnelSession {
         try {
           await this.connect();
           // Re-arm reverse listeners so the runner re-binds its server-side ports
-          for (const [listenId, spec] of this.reverseListeners.entries()) {
-            this.send({
-              type: "tunnel_listen_open",
-              listen_id: listenId,
-              proto: spec.proto,
-              port: spec.remotePort,
-              bind: spec.remoteBind,
-            });
-            // Don't await — we trust the runner re-binds; if not, we'll get a tunnel_listen_error later.
-          }
+          this.rearmReverseListeners();
         } catch {
           void tryAgain();
         }
       }, backoff);
     };
     void tryAgain();
+  }
+
+  /**
+   * Re-sends tunnel_listen_open for every active reverse listener.
+   * Called on WS-level reconnect AND on tunnel_resumed (runner re-registration).
+   * Don't await — the runner re-binds asynchronously; errors arrive as tunnel_listen_error later.
+   */
+  private rearmReverseListeners(): void {
+    for (const [listenId, spec] of this.reverseListeners.entries()) {
+      this.send({
+        type: "tunnel_listen_open",
+        listen_id: listenId,
+        proto: spec.proto,
+        port: spec.remotePort,
+        bind: spec.remoteBind,
+      });
+    }
   }
 
   private async openLocalListeners(): Promise<{ boundPort: number }[]> {
@@ -353,6 +362,8 @@ export class TunnelSession {
   }
 
   private onLocalTcpAccept(sock: net.Socket, f: ForwardSpec): void {
+    // Drop new connections fast while interrupted — gateway would drop the tunnel_open anyway.
+    if (this.interrupted) { sock.destroy(); return; }
     const streamId = `s-${randomUUID()}`;
     this.streams.set(streamId, { proto: "tcp", sock });
     this.send({
@@ -379,6 +390,8 @@ export class TunnelSession {
     f: ForwardSpec,
     listener: dgram.Socket,
   ): void {
+    // Drop new datagrams while interrupted — gateway would drop tunnel_open anyway.
+    if (this.interrupted) return;
     const key = `${rinfo.address}:${rinfo.port}`;
     let streamId = this.udpPeerToStream.get(key);
     if (!streamId) {
@@ -437,6 +450,23 @@ export class TunnelSession {
           );
         }
       }
+      return;
+    }
+
+    // Handle gateway-signalled interrupt/resume (no stream_id — must come before the sid guard)
+    if (msg.type === "tunnel_interrupted") {
+      // Gateway is holding our WS open while the runner reconnects.
+      // In-flight streams were already torn down via tunnel_close frames.
+      this.interrupted = true;
+      this.opts.onStatus?.("reconnecting");
+      return;
+    }
+    if (msg.type === "tunnel_resumed") {
+      // Runner re-registered. Re-arm reverse listeners — the runner lost its
+      // server-side bind state and must re-create the listeners.
+      this.interrupted = false;
+      this.rearmReverseListeners();
+      this.opts.onStatus?.("active");
       return;
     }
 
