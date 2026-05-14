@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import net from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -51,9 +51,6 @@ function startTunnelBackend(): TunnelBackend {
     }
   }
 
-  // Holds the live WS so the reverse orchestration can send messages later.
-  let liveWs: ServerWebSocket<{ streamId: string | null }> | null = null;
-
   const server = Bun.serve<{ streamId: string | null }>({
     port: 0,
 
@@ -85,9 +82,7 @@ function startTunnelBackend(): TunnelBackend {
     },
 
     websocket: {
-      open(ws) {
-        liveWs = ws;
-      },
+      open(_ws) {},
       message(ws: ServerWebSocket<{ streamId: string | null }>, raw: string | Buffer) {
         let msg: { type?: string; stream_id?: string; listen_id?: string; data?: string };
         try {
@@ -133,9 +128,7 @@ function startTunnelBackend(): TunnelBackend {
           return;
         }
       },
-      close() {
-        liveWs = null;
-      },
+      close() {},
     },
   });
 
@@ -200,6 +193,7 @@ beforeEach(async () => {
 afterEach(() => {
   backend.stop();
   targetServer?.close();
+  rmSync(tmp, { recursive: true, force: true });
 });
 
 describe("reoclo tunnel -R — e2e reverse TCP", () => {
