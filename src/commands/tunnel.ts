@@ -3,6 +3,141 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tunnel-session";
+import { printList, printObject, resolveFormat } from "../ui/output";
+import type { OutputFormat } from "../ui/output";
+
+// ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
+
+export interface TunnelInterruption {
+  at: string;
+  reason: string;
+  recovered_at: string | null;
+}
+
+export interface TunnelSessionRead {
+  id: string;
+  tenant_id: string;
+  server_id: string;
+  user_id: string;
+  tunnel_id: string;
+  mode: "forward" | "reverse";
+  proto: "tcp" | "udp";
+  local_port: number;
+  remote_host: string;
+  remote_port: number;
+  bind: string;
+  reason: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  close_reason: string | null;
+  bytes_in: number;
+  bytes_out: number;
+  datagrams_in: number;
+  datagrams_out: number;
+  peer_count: number;
+  interruptions: TunnelInterruption[];
+}
+
+export interface TunnelCloseResponse {
+  requested: boolean;
+  gateway_found: boolean;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function globalOutput(program: Command): string | undefined {
+  const opts: Record<string, unknown> = program.opts();
+  return typeof opts["output"] === "string" ? opts["output"] : undefined;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function tunnelStatus(t: TunnelSessionRead): string {
+  if (t.closed_at === null) return "active";
+  return t.close_reason ? `closed (${t.close_reason})` : "closed";
+}
+
+function tunnelPorts(t: TunnelSessionRead): string {
+  return `:${t.local_port}→${t.remote_host}:${t.remote_port}`;
+}
+
+export function formatTunnelTable(items: TunnelSessionRead[], fmt: OutputFormat): void {
+  if (fmt === "json") {
+    for (const item of items) process.stdout.write(JSON.stringify(item) + "\n");
+    return;
+  }
+  if (items.length === 0) {
+    process.stdout.write("no tunnels found\n");
+    return;
+  }
+  printList(
+    items.map((t) => ({
+      id: t.id,
+      server: t.server_id,
+      mode: t.mode,
+      proto: t.proto,
+      ports: tunnelPorts(t),
+      opened: t.opened_at,
+      status: tunnelStatus(t),
+      bytes: `${formatBytes(t.bytes_in)}/${formatBytes(t.bytes_out)}`,
+    })),
+    [
+      { key: "id", label: "TUNNEL ID" },
+      { key: "server", label: "SERVER" },
+      { key: "mode", label: "MODE" },
+      { key: "proto", label: "PROTO" },
+      { key: "ports", label: "PORTS" },
+      { key: "opened", label: "OPENED" },
+      { key: "status", label: "STATUS" },
+      { key: "bytes", label: "BYTES IN/OUT" },
+    ],
+    fmt,
+  );
+}
+
+export function formatTunnelDescribe(t: TunnelSessionRead, fmt: OutputFormat): void {
+  if (fmt === "json") {
+    process.stdout.write(JSON.stringify(t, null, 2) + "\n");
+    return;
+  }
+  // text: print top-level fields then interruptions sub-list
+  const flat: Record<string, unknown> = {
+    id: t.id,
+    tenant_id: t.tenant_id,
+    server_id: t.server_id,
+    user_id: t.user_id,
+    tunnel_id: t.tunnel_id,
+    mode: t.mode,
+    proto: t.proto,
+    local_port: t.local_port,
+    remote_host: t.remote_host,
+    remote_port: t.remote_port,
+    bind: t.bind,
+    reason: t.reason ?? "",
+    opened_at: t.opened_at,
+    closed_at: t.closed_at ?? "",
+    close_reason: t.close_reason ?? "",
+    bytes_in: t.bytes_in,
+    bytes_out: t.bytes_out,
+    datagrams_in: t.datagrams_in,
+    datagrams_out: t.datagrams_out,
+    peer_count: t.peer_count,
+  };
+  printObject(flat, fmt);
+  if (t.interruptions.length > 0) {
+    process.stdout.write(`\ninterruptions (${t.interruptions.length}):\n`);
+    for (const intr of t.interruptions) {
+      const recovered = intr.recovered_at ? ` recovered_at=${intr.recovered_at}` : " (not recovered)";
+      process.stdout.write(`  at=${intr.at}  reason=${intr.reason}${recovered}\n`);
+    }
+  } else {
+    process.stdout.write("\ninterruptions: none\n");
+  }
+}
 
 export interface ParsedTunnelArgs {
   server: string;
@@ -128,10 +263,10 @@ export function buildTunnelWsUrl(directUrl: string, serverId: string): string {
 }
 
 export function registerTunnel(program: Command): void {
-  program
-    .command("tunnel <serverIdOrName>")
+  const tunnelCmd = program
+    .command("tunnel [serverIdOrName]")
     .description(
-      "open a TCP/UDP tunnel through a Reoclo runner (forward -L or reverse -R)",
+      "open a TCP/UDP tunnel through a Reoclo runner (forward -L or reverse -R), or manage existing sessions",
     )
     .option(
       "-L <spec>",
@@ -160,7 +295,12 @@ export function registerTunnel(program: Command): void {
       "give up reconnecting after N seconds (default 300)",
       "300",
     )
-    .action(async (idOrName: string, rawOpts: ParseOptions) => {
+    .action(async (idOrName: string | undefined, rawOpts: ParseOptions) => {
+      if (!idOrName) {
+        console.error("tunnel: specify a server ID or name, or use 'tunnel ls' to list sessions");
+        process.exit(2);
+      }
+
       let parsed: ParsedTunnelArgs;
       try {
         parsed = parseTunnelArgs(idOrName, rawOpts);
@@ -232,6 +372,100 @@ export function registerTunnel(program: Command): void {
           );
         }
         console.log("Ctrl-C to close");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`tunnel: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── tunnel ls ──────────────────────────────────────────────────────────────
+  tunnelCmd
+    .command("ls")
+    .description("list tunnel sessions in the organization")
+    .option("--server <slug>", "filter by server slug or ID")
+    .option("--active", "show only active (open) sessions", false)
+    .action(async (opts: { server?: string; active?: boolean }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      try {
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+
+        const params = new URLSearchParams();
+        if (opts.server) {
+          const serverId = await resolveServer(ctx.client, tid, opts.server);
+          params.set("server_id", serverId);
+        }
+        if (opts.active) {
+          params.set("active", "true");
+        }
+
+        const qs = params.toString();
+        const path = `/tenants/${tid}/tunnels${qs ? `?${qs}` : ""}`;
+        const list = await ctx.client.get<TunnelSessionRead[]>(path);
+        formatTunnelTable(list, fmt);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`tunnel: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── tunnel describe <tunnel_id> ────────────────────────────────────────────
+  tunnelCmd
+    .command("describe <tunnelId>")
+    .description("show full details for a tunnel session")
+    .action(async (tunnelId: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      try {
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const session = await ctx.client.get<TunnelSessionRead>(`/tenants/${tid}/tunnels/${tunnelId}`);
+        formatTunnelDescribe(session, fmt);
+      } catch (err) {
+        if (err instanceof Error && err.name === "NotFoundError") {
+          console.error(`tunnel: no session "${tunnelId}" found in your organization`);
+          process.exit(1);
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`tunnel: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── tunnel close <tunnel_id> ───────────────────────────────────────────────
+  tunnelCmd
+    .command("close <tunnelId>")
+    .description("request graceful close of a live tunnel session")
+    .action(async (tunnelId: string) => {
+      try {
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+
+        let result: TunnelCloseResponse;
+        try {
+          result = await ctx.client.post<TunnelCloseResponse>(`/tenants/${tid}/tunnels/${tunnelId}/close`);
+        } catch (err) {
+          if (err instanceof Error) {
+            if (err.name === "NotFoundError") {
+              console.error(`tunnel: no session "${tunnelId}" found in your organization`);
+              process.exit(1);
+            }
+            // 409 Conflict — session already closed
+            if ("status" in err && (err as { status: number }).status === 409) {
+              console.error(`tunnel: ${tunnelId} is already closed`);
+              process.exit(1);
+            }
+          }
+          throw err;
+        }
+
+        process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
+        if (!result.gateway_found) {
+          process.stdout.write(
+            "tunnel: note — gateway-ws had no live tunnel for this session; the audit record may be stale\n",
+          );
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`tunnel: ${msg}`);
