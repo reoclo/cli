@@ -49,6 +49,12 @@ interface UdpStream {
   idleTimer: NodeJS.Timeout;
 }
 
+interface UdpReverseStream {
+  proto: "udp-reverse";
+  sock: dgram.Socket;
+  target: { addr: string; port: number };
+}
+
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const UDP_IDLE_MS = 60_000;
@@ -57,7 +63,7 @@ export class TunnelSession {
   private ws?: WebSocket;
   /** WS that is currently in the connecting state (not yet open) */
   private connectingWs?: WebSocket;
-  private streams = new Map<string, TcpStream | UdpStream>();
+  private streams = new Map<string, TcpStream | UdpStream | UdpReverseStream>();
   /** UDP forward: source-peer key "addr:port" → stream_id */
   private udpPeerToStream = new Map<string, string>();
   private tcpListeners: net.Server[] = [];
@@ -69,6 +75,11 @@ export class TunnelSession {
   private reconnectStartedAt: number | null = null;
   private opts: TunnelSessionOptions & { reconnectDeadlineMs: number };
 
+  /** Active reverse listeners: listen_id → ReverseSpec (for inbound tunnel_open routing) */
+  private reverseListeners = new Map<string, ReverseSpec>();
+  /** Pending waiters for tunnel_listen_opened / tunnel_listen_error */
+  private listenWaiters: ((msg: Record<string, unknown>) => void)[] = [];
+
   constructor(opts: TunnelSessionOptions) {
     this.opts = { reconnectDeadlineMs: 5 * 60_000, ...opts };
   }
@@ -76,11 +87,17 @@ export class TunnelSession {
   async start(): Promise<ReadyState> {
     await this.connect();
     const forwards = await this.openLocalListeners();
-    return { forwards, reverses: [] };
+    const reverses = await this.openReverseListeners();
+    return { forwards, reverses };
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    // Send tunnel_listen_close for each active reverse listener so runner cleans up server-side ports
+    for (const listenId of this.reverseListeners.keys()) {
+      this.send({ type: "tunnel_listen_close", listen_id: listenId });
+    }
+    this.reverseListeners.clear();
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
@@ -167,6 +184,55 @@ export class TunnelSession {
     }
   }
 
+  private addListenWaiter(fn: (msg: Record<string, unknown>) => void): void {
+    this.listenWaiters.push(fn);
+  }
+
+  private removeListenWaiter(fn: (msg: Record<string, unknown>) => void): void {
+    const i = this.listenWaiters.indexOf(fn);
+    if (i >= 0) this.listenWaiters.splice(i, 1);
+  }
+
+  private async openReverseListeners(): Promise<{ boundPort: number }[]> {
+    const out: { boundPort: number }[] = [];
+    for (const r of this.opts.reverses ?? []) {
+      const listenId = `l-${randomUUID()}`;
+      this.reverseListeners.set(listenId, r);
+      try {
+        const boundPort = await this.sendListenOpen(listenId, r);
+        out.push({ boundPort });
+      } catch (err) {
+        // Remove the stale entry so stop() doesn't try to close a never-opened listener
+        this.reverseListeners.delete(listenId);
+        throw err;
+      }
+    }
+    return out;
+  }
+
+  private sendListenOpen(listenId: string, r: ReverseSpec): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      this.send({
+        type: "tunnel_listen_open",
+        listen_id: listenId,
+        proto: r.proto,
+        port: r.remotePort,
+        bind: r.remoteBind,
+      });
+      const onMsg = (msg: Record<string, unknown>) => {
+        if (msg.listen_id !== listenId) return;
+        if (msg.type === "tunnel_listen_opened") {
+          this.removeListenWaiter(onMsg);
+          resolve(typeof msg.port === "number" ? msg.port : 0);
+        } else if (msg.type === "tunnel_listen_error") {
+          this.removeListenWaiter(onMsg);
+          reject(new Error(typeof msg.error === "string" ? msg.error : "listen error"));
+        }
+      };
+      this.addListenWaiter(onMsg);
+    });
+  }
+
   private tearDownStream(streamId: string, reason: string): void {
     const s = this.streams.get(streamId);
     if (!s) return;
@@ -174,26 +240,33 @@ export class TunnelSession {
     if (s.proto === "tcp") {
       // end() lets the local app see EOF cleanly
       s.sock.end();
-    } else {
+    } else if (s.proto === "udp") {
       clearTimeout(s.idleTimer);
       // For UDP we don't close the listener socket; we just forget the peer mapping
       const key = `${s.localPeer.addr}:${s.localPeer.port}`;
       this.udpPeerToStream.delete(key);
+    } else {
+      // udp-reverse: close the ephemeral socket
+      s.sock.close();
     }
     this.send({ type: "tunnel_close", stream_id: streamId, reason });
   }
 
   private onWsClose(): void {
-    // Clean local TCP streams so the local app sees a clean drop, not a hang
+    // Clean local TCP/UDP-reverse streams so the local app sees a clean drop, not a hang
     for (const [id, s] of this.streams.entries()) {
       if (s.proto === "tcp") {
         s.sock.end();
-      } else {
+      } else if (s.proto === "udp") {
         clearTimeout(s.idleTimer);
+      } else {
+        // udp-reverse
+        s.sock.close();
       }
       this.streams.delete(id);
     }
     this.udpPeerToStream.clear();
+    // reverseListeners intentionally preserved — re-armed on reconnect
 
     if (this.stopped) return;
     // Record the start of the first consecutive disconnect only
@@ -224,6 +297,17 @@ export class TunnelSession {
         this.reconnectTimer = undefined;
         try {
           await this.connect();
+          // Re-arm reverse listeners so the runner re-binds its server-side ports
+          for (const [listenId, spec] of this.reverseListeners.entries()) {
+            this.send({
+              type: "tunnel_listen_open",
+              listen_id: listenId,
+              proto: spec.proto,
+              port: spec.remotePort,
+              bind: spec.remoteBind,
+            });
+            // Don't await — we trust the runner re-binds; if not, we'll get a tunnel_listen_error later.
+          }
         } catch {
           void tryAgain();
         }
@@ -320,29 +404,83 @@ export class TunnelSession {
   }
 
   private onWsMessage(raw: WebSocket.RawData): void {
-    let msg: {
-      type?: string;
-      stream_id?: string;
-      data?: string;
-      reason?: string;
-      error?: string;
-    };
+    let msg: Record<string, unknown>;
     try {
-      msg = JSON.parse(raw.toString()) as typeof msg;
+      msg = JSON.parse(raw.toString()) as Record<string, unknown>;
     } catch {
       return;
     }
+
+    // Dispatch tunnel_listen_opened / tunnel_listen_error to pending sendListenOpen() callers
+    if (msg.type === "tunnel_listen_opened" || msg.type === "tunnel_listen_error") {
+      for (const w of [...this.listenWaiters]) w(msg);
+      return;
+    }
+
     const sid = msg.stream_id;
     if (typeof sid !== "string") return;
+
     switch (msg.type) {
       case "tunnel_opened":
         // No-op for forward path — local socket is already accepting bytes
         return;
+
+      case "tunnel_open": {
+        // Reverse-path: gateway is forwarding an inbound connection from the runner.
+        const lid = msg.listen_id;
+        if (typeof lid !== "string") return;
+        const spec = this.reverseListeners.get(lid);
+        if (!spec) {
+          // Listener not registered (race or bug). Tell gateway to close it.
+          this.send({ type: "tunnel_close", stream_id: sid, reason: "no_local_listener" });
+          return;
+        }
+        if (spec.proto === "tcp") {
+          const sock = net.createConnection({ host: spec.localHost, port: spec.localPort });
+          this.streams.set(sid, { proto: "tcp", sock });
+          sock.on("data", (buf) => {
+            this.send({ type: "tunnel_data", stream_id: sid, data: buf.toString("base64") });
+          });
+          sock.on("close", () => {
+            if (this.streams.delete(sid)) {
+              this.send({ type: "tunnel_close", stream_id: sid });
+            }
+          });
+          sock.on("error", (err) => {
+            if (this.streams.delete(sid)) {
+              this.send({
+                type: "tunnel_close",
+                stream_id: sid,
+                reason: `local_dial_error: ${err.message}`,
+              });
+            }
+          });
+        } else {
+          // UDP reverse: bind a local ephemeral socket to receive replies from the local target.
+          const sock = dgram.createSocket("udp4");
+          sock.bind(0);
+          sock.on("message", (buf) => {
+            this.send({ type: "tunnel_data", stream_id: sid, data: buf.toString("base64") });
+          });
+          sock.on("error", () => {
+            if (this.streams.delete(sid)) {
+              this.send({ type: "tunnel_close", stream_id: sid, reason: "local_udp_error" });
+            }
+          });
+          this.streams.set(sid, {
+            proto: "udp-reverse",
+            sock,
+            target: { addr: spec.localHost, port: spec.localPort },
+          });
+        }
+        return;
+      }
+
       case "tunnel_data": {
         const s = this.streams.get(sid);
         if (!s) return;
         const data =
-          typeof msg.data === "string" ? Buffer.from(msg.data, "base64") : Buffer.alloc(0);
+          typeof msg.data === "string" ? Buffer.from(msg.data as string, "base64") : Buffer.alloc(0);
         if (s.proto === "tcp") {
           // Note: bounded flow control comes in Phase 6 (bandwidth policy).
           // For now we log when the local app's read buffer is full so it's visible.
@@ -350,12 +488,16 @@ export class TunnelSession {
           if (!drained) {
             console.warn(`[tunnel] local TCP write backpressure on stream ${sid}`);
           }
-        } else {
+        } else if (s.proto === "udp") {
           s.localSock.send(data, s.localPeer.port, s.localPeer.addr);
           this.resetUdpIdle(sid);
+        } else {
+          // udp-reverse: forward data to the local target
+          s.sock.send(data, s.target.port, s.target.addr);
         }
         return;
       }
+
       case "tunnel_error":
       case "tunnel_close": {
         const s = this.streams.get(sid);
@@ -363,12 +505,15 @@ export class TunnelSession {
         this.streams.delete(sid);
         if (s.proto === "tcp") {
           s.sock.end();
-        } else {
+        } else if (s.proto === "udp") {
           clearTimeout(s.idleTimer);
           this.udpPeerToStream.delete(`${s.localPeer.addr}:${s.localPeer.port}`);
+        } else {
+          s.sock.close();
         }
         return;
       }
+
       default:
         return;
     }

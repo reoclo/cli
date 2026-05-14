@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "bun:test";
 import net from "node:net";
 import dgram from "node:dgram";
 import { WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
 import { TunnelSession } from "../../../src/client/tunnel-session";
 
 interface MockGateway {
@@ -14,20 +15,34 @@ interface MockGateway {
   received: object[];
   /** Send a frame to whatever CLI is currently connected */
   sendToCli: (msg: object) => void;
+  /** Called for every frame received from the CLI (optional override) */
+  onClientFrame?: (msg: Record<string, unknown>) => void;
 }
 
-async function startMockGateway(opts: { echoData?: boolean } = {}): Promise<MockGateway> {
+interface MockGatewayOpts {
+  echoData?: boolean;
+  /** Called when a tunnel_listen_open frame arrives from the CLI */
+  onListenOpen?: (msg: Record<string, unknown>, ws: WebSocket) => void;
+}
+
+async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway> {
   const wss = new WebSocketServer({ port: 0 });
   const received: object[] = [];
-  let activeWs: import("ws").WebSocket | null = null;
+  let activeWs: WebSocket | null = null;
+  let onClientFrame: ((msg: Record<string, unknown>) => void) | undefined;
+
   wss.on("connection", (ws) => {
     activeWs = ws;
     ws.on("error", () => { /* swallow errors on forced close */ });
     ws.on("message", (raw) => {
-      const msg = JSON.parse(raw.toString()) as { type?: string; stream_id?: string; data?: string };
+      const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
       received.push(msg);
+      onClientFrame?.(msg);
       if (msg.type === "tunnel_open") {
         ws.send(JSON.stringify({ type: "tunnel_opened", stream_id: msg.stream_id }));
+      }
+      if (msg.type === "tunnel_listen_open" && opts.onListenOpen) {
+        opts.onListenOpen(msg, ws);
       }
       if (msg.type === "tunnel_data" && opts.echoData) {
         ws.send(JSON.stringify({ type: "tunnel_data", stream_id: msg.stream_id, data: msg.data }));
@@ -39,7 +54,8 @@ async function startMockGateway(opts: { echoData?: boolean } = {}): Promise<Mock
   });
   await new Promise<void>((r) => wss.on("listening", r));
   const port = (wss.address() as { port: number }).port;
-  return {
+
+  const gw: MockGateway = {
     url: `ws://127.0.0.1:${port}`,
     received,
     sendToCli: (msg) => activeWs?.send(JSON.stringify(msg)),
@@ -55,7 +71,10 @@ async function startMockGateway(opts: { echoData?: boolean } = {}): Promise<Mock
         }
         wss.close(() => r());
       }),
+    get onClientFrame() { return onClientFrame; },
+    set onClientFrame(fn) { onClientFrame = fn; },
   };
+  return gw;
 }
 
 describe("TunnelSession — forward TCP", () => {
@@ -255,5 +274,120 @@ describe("TunnelSession — reconnect", () => {
 
     await session.stop();
     await gw.stop();
+  });
+});
+
+describe("TunnelSession — reverse TCP", () => {
+  let gw: MockGateway;
+  afterEach(async () => { await gw?.stop(); });
+
+  it("sends tunnel_listen_open and awaits tunnel_listen_opened, returning bound port", async () => {
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg.listen_id, port: 9999 }));
+      },
+    });
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 3000, proto: "tcp" }],
+    });
+    const ready = await session.start();
+    expect(ready.reverses).toEqual([{ boundPort: 9999 }]);
+    await session.stop();
+  });
+
+  it("on inbound tunnel_open from gateway, dials local target and pipes bytes", async () => {
+    // Local target — echo server
+    const target = net.createServer((sock) => sock.pipe(sock));
+    await new Promise<void>((r) => target.listen(0, "127.0.0.1", () => r()));
+    const targetPort = (target.address() as net.AddressInfo).port;
+
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg.listen_id, port: 99 }));
+        // Simulate an inbound connection a moment later
+        setTimeout(() => {
+          ws.send(JSON.stringify({
+            type: "tunnel_open",
+            stream_id: "s-rev-1",
+            proto: "tcp",
+            host: "1.2.3.4",
+            port: 12345,
+            listen_id: msg.listen_id,
+          }));
+          setTimeout(() => {
+            ws.send(JSON.stringify({
+              type: "tunnel_data",
+              stream_id: "s-rev-1",
+              data: Buffer.from("hello").toString("base64"),
+            }));
+          }, 30);
+        }, 30);
+      },
+    });
+
+    const echoes: string[] = [];
+    gw.onClientFrame = (msg) => {
+      if (msg.type === "tunnel_data" && msg.stream_id === "s-rev-1") {
+        echoes.push(msg.data as string);
+      }
+    };
+
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 99, localHost: "127.0.0.1", localPort: targetPort, proto: "tcp" }],
+    });
+    await session.start();
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && echoes.length === 0) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(echoes.length).toBeGreaterThan(0);
+    expect(Buffer.from(echoes[0]!, "base64").toString()).toBe("hello");
+
+    await session.stop();
+    await new Promise<void>((r) => target.close(() => r()));
+  });
+
+  it("on tunnel_listen_error from gateway, start() rejects", async () => {
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        ws.send(JSON.stringify({ type: "tunnel_listen_error", listen_id: msg.listen_id, error: "port in use" }));
+      },
+    });
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 8080, localHost: "x", localPort: 3000, proto: "tcp" }],
+    });
+    await expect(session.start()).rejects.toThrow(/port in use/);
+    // Clean up the live WS opened during start() before afterEach destroys the gateway
+    await session.stop();
+  });
+
+  it("stop() sends tunnel_listen_close per active reverse listener", async () => {
+    const closeFrames: string[] = [];
+    gw = await startMockGateway({
+      onListenOpen: (msg, ws) => {
+        ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg.listen_id, port: 100 }));
+      },
+    });
+    gw.onClientFrame = (msg) => {
+      if (msg.type === "tunnel_listen_close") {
+        closeFrames.push(msg.listen_id as string);
+      }
+    };
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      reverses: [{ remoteBind: "127.0.0.1", remotePort: 100, localHost: "x", localPort: 1, proto: "tcp" }],
+    });
+    await session.start();
+    await session.stop();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(closeFrames.length).toBe(1);
   });
 });
