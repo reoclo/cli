@@ -32,12 +32,31 @@ esac
 
 TARGET="${OS}-${ARCH}"
 
+GH_REPO="reoclo/cli"
+
 if [[ "$VERSION" == "latest" ]]; then
-  VERSION=$(curl -sSf "https://get.reoclo.com/cli/${CHANNEL}")
+  if [[ "$CHANNEL" != "stable" ]]; then
+    echo "install.sh only supports --channel stable for auto-resolve." >&2
+    echo "Install stable first, then switch channels with:" >&2
+    echo "  reoclo upgrade --channel ${CHANNEL}" >&2
+    exit 2
+  fi
+  # Query the GitHub Releases API directly. The /releases/latest endpoint
+  # excludes prereleases by GitHub's contract, which is the desired
+  # "stable" channel semantic. tag_name appears once in this single-object
+  # response, so a grep+sed extraction is sufficient (no jq dependency).
+  VERSION=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${GH_REPO}/releases/latest" \
+    | grep -E '"tag_name":' | head -1 \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')
+  if [[ -z "$VERSION" ]]; then
+    echo "failed to resolve latest version from GitHub Releases API" >&2
+    exit 1
+  fi
 fi
 
-URL="https://github.com/reoclo/cli/releases/download/${VERSION}/reoclo-${TARGET}"
-SUMS_URL="https://github.com/reoclo/cli/releases/download/${VERSION}/SHA256SUMS"
+URL="https://github.com/${GH_REPO}/releases/download/${VERSION}/reoclo-${TARGET}"
+SUMS_URL="https://github.com/${GH_REPO}/releases/download/${VERSION}/SHA256SUMS"
 
 # Resolve install dir
 if [[ -n "$INSTALL_DIR_FLAG" ]]; then
