@@ -19,7 +19,7 @@ describe("buildProfileWithCapabilities", () => {
     const profile = await buildProfileWithCapabilities(
       fakeClient as unknown as Parameters<typeof buildProfileWithCapabilities>[0],
       "https://api.example.com",
-      "user",
+      "tenant",
       { tenant_id: "t1", tenant_slug: "tenant-1", email: "u@x.com" },
     );
     expect(profile.capabilities).toEqual(["container:read", "container:exec"]);
@@ -34,7 +34,7 @@ describe("buildProfileWithCapabilities", () => {
     const profile = await buildProfileWithCapabilities(
       fakeClient as unknown as Parameters<typeof buildProfileWithCapabilities>[0],
       "https://api.example.com",
-      "user",
+      "tenant",
       { tenant_id: "t1", tenant_slug: "tenant-1", email: "u@x.com" },
     );
     expect(profile.capabilities).toEqual([]);

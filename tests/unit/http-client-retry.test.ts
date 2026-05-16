@@ -26,7 +26,7 @@ describe("HttpClient 403 retry", () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    globalThis.fetch = mock(() => Promise.resolve(jsonResponse({ ok: true })));
+    globalThis.fetch = mock(() => Promise.resolve(jsonResponse({ ok: true }))) as unknown as typeof fetch;
   });
 
   afterEach(() => {
@@ -48,7 +48,7 @@ describe("HttpClient 403 retry", () => {
       }
       // Third call: retry original → success
       return Promise.resolve(jsonResponse({ data: "ok" }));
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const client = makeClient();
     const result = await client.get<{ data: string }>("/cost/rollup");
@@ -68,7 +68,7 @@ describe("HttpClient 403 retry", () => {
       gatedCalls++;
       // Both the original and retry return 403
       return Promise.resolve(textResponse("forbidden", 403));
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const client = makeClient();
     await expect(client.get("/cost/rollup")).rejects.toBeInstanceOf(PermissionError);
