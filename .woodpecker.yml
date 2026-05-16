@@ -1,0 +1,39 @@
+# Release pipeline for reoclo-cli.
+#
+# Fires on `git push origin vX.Y.Z`. Builds 6 cross-platform binaries via
+# bun's compile target, then publishes a release on both mirrors:
+#   - Gitea  (git.boxpositron.dev/reoclo/reoclo-cli)
+#   - GitHub (github.com/reoclo/cli)
+#
+# Required Woodpecker secrets (set at the repo level):
+#   gitea_release_token  — Gitea PAT with write:repository scope
+#   github_release_token — GitHub PAT with contents:write on reoclo/cli
+#
+# Re-running the same tag is safe: an existing release with the same tag is
+# reused, and assets that are already attached are skipped — a retry after a
+# failed upload only ships what wasn't there yet.
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+steps:
+  - name: release
+    image: oven/bun:1.3.11-debian
+    environment:
+      GITEA_API_URL: https://git.boxpositron.dev/api/v1
+      GITEA_REPO: reoclo/reoclo-cli
+      GITHUB_REPO: reoclo/cli
+      GITEA_TOKEN:
+        from_secret: gitea_release_token
+      GITHUB_TOKEN:
+        from_secret: github_release_token
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends curl jq ca-certificates
+      - bun install --frozen-lockfile
+      - bun test tests/unit/
+      - bun run typecheck
+      - bun run build
+      - cd dist && sha256sum reoclo-* > SHA256SUMS && cd ..
+      - bash scripts/release.sh
