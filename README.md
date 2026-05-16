@@ -37,7 +37,23 @@ Commands:
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/reoclo/cli/releases/latest):
+**One-liner (macOS / Linux):**
+
+```bash
+curl -sSL https://get.reoclo.com/cli | bash
+```
+
+The installer detects your platform, downloads the latest release from GitHub, verifies the SHA256 checksum, and installs to `/usr/local/bin/reoclo` (or `~/.local/bin/reoclo` if the system dir isn't writable). It also creates `rc` as a short alias for `reoclo`.
+
+Equivalent direct URL (handy in environments where the redirect isn't followed):
+
+```bash
+curl -sSL https://github.com/reoclo/cli/releases/latest/download/install.sh | bash
+```
+
+### Manual install
+
+If you'd rather download the binary yourself, every release attaches a binary per platform plus a `SHA256SUMS` file. Pick the right one from [the latest release](https://github.com/reoclo/cli/releases/latest):
 
 ```bash
 # macOS (Apple Silicon)
@@ -63,14 +79,19 @@ chmod +x reoclo && sudo mv reoclo /usr/local/bin/
 
 **Windows (x86_64)**: download [`reoclo-windows-x64.exe`](https://github.com/reoclo/cli/releases/latest/download/reoclo-windows-x64.exe), rename to `reoclo.exe`, and add its directory to your `PATH`.
 
-Each release includes a `SHA256SUMS` file you can verify against:
+Verify against `SHA256SUMS`:
 
 ```bash
 curl -L -o SHA256SUMS https://github.com/reoclo/cli/releases/latest/download/SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
-Once installed, `reoclo upgrade` performs an in-place self-update.
+### Self-update
+
+```bash
+reoclo upgrade          # in-place update to the latest stable
+reoclo upgrade --check  # report current + latest without changing anything
+```
 
 ## Quick start
 
