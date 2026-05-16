@@ -101,6 +101,53 @@ async function fetchText(url: string): Promise<string> {
   return r.text();
 }
 
+const GITHUB_REPO = "reoclo/cli";
+
+interface GitHubRelease {
+  tag_name: string;
+  prerelease: boolean;
+}
+
+/**
+ * Resolve the latest version tag for a given channel by querying the GitHub
+ * Releases API. Returns the tag string (e.g. "v0.19.0") — always prefixed.
+ *
+ *   - "stable" → the release marked as `latest=true` on GitHub (excludes prereleases)
+ *   - "beta"   → the newest release with `prerelease=true` in the last 10 entries
+ *   - "dev"    → same as beta (the historical moving-HEAD "dev" channel doesn't
+ *                map cleanly onto GitHub Releases; treat as a prerelease channel)
+ */
+export async function resolveLatestVersion(channel: string): Promise<string> {
+  const headers = { Accept: "application/vnd.github+json" };
+
+  if (channel === "stable") {
+    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers });
+    if (!r.ok) throw new Error(`HTTP ${r.status} fetching latest release`);
+    const data = (await r.json()) as GitHubRelease;
+    if (typeof data.tag_name !== "string" || !data.tag_name) {
+      throw new Error("latest release response missing tag_name");
+    }
+    return data.tag_name;
+  }
+
+  if (channel === "beta" || channel === "dev") {
+    const r = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`,
+      { headers },
+    );
+    if (!r.ok) throw new Error(`HTTP ${r.status} fetching releases list`);
+    const data = (await r.json()) as GitHubRelease[];
+    if (!Array.isArray(data)) throw new Error("releases list response was not an array");
+    const pre = data.find((rel) => rel.prerelease && typeof rel.tag_name === "string");
+    if (!pre) {
+      throw new Error("no prerelease found in the latest 10 releases on this channel");
+    }
+    return pre.tag_name;
+  }
+
+  throw new Error(`unknown channel: ${channel} (use stable | beta)`);
+}
+
 async function fetchBinary(url: string, progressLabel?: string): Promise<Buffer> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
@@ -230,10 +277,10 @@ export function registerUpgrade(program: Command): void {
         latest = opts.version.startsWith("v") ? opts.version : `v${opts.version}`;
       } else {
         try {
-          latest = (await fetchText(`https://get.reoclo.com/cli/${opts.channel}`)).trim();
+          latest = await resolveLatestVersion(opts.channel);
         } catch (err) {
           const e = err as Error;
-          process.stderr.write(`Error: failed to fetch channel pointer (${e.message})\n`);
+          process.stderr.write(`Error: failed to resolve latest version (${e.message})\n`);
           process.exit(7);
         }
       }
@@ -268,8 +315,19 @@ export function registerUpgrade(program: Command): void {
       } catch (err) {
         const e = err as Error;
         process.stderr.write(`Error: ${e.message}\n`);
-        process.stderr.write("Fallback: re-run the installer:\n");
-        process.stderr.write("  curl -sSL https://get.reoclo.com/cli | bash\n");
+        try {
+          const target = detectTarget();
+          const url = `https://github.com/${GITHUB_REPO}/releases/download/${latest}/${target.binName}`;
+          process.stderr.write("Fallback: download the binary manually and replace it:\n");
+          process.stderr.write(`  curl -L -o reoclo ${url}\n`);
+          if (!target.isWindows) {
+            process.stderr.write("  chmod +x reoclo && sudo mv reoclo /usr/local/bin/reoclo\n");
+          }
+        } catch {
+          process.stderr.write(
+            `Fallback: download the binary for your platform from https://github.com/${GITHUB_REPO}/releases/${latest}\n`,
+          );
+        }
         process.exit(1);
       }
     });
