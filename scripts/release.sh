@@ -34,6 +34,7 @@ ASSETS=(
   "dist/reoclo-linux-x64"
   "dist/reoclo-linux-x64-musl"
   "dist/reoclo-windows-x64.exe"
+  "packaging/install.sh"
 )
 
 for f in "${ASSETS[@]}"; do
