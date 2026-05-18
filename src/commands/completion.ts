@@ -67,7 +67,7 @@ _reoclo() {
     vals+=("\${l%%\$'\\t'*}")
     descs+=("\${l/\$'\\t'/ -- }")
   done
-  compadd -d descs -- "\${vals[@]}"
+  (( \${#vals} )) && compadd -d descs -- "\${vals[@]}"
 }
 compdef _reoclo reoclo rc
 `;
@@ -97,10 +97,10 @@ export function getShimScript(shell: Shell): string {
 
 /** Render candidates for the shell shim. proto>=2 → `value\tdesc`; else plain. */
 export function formatCandidates(cands: Candidate[], proto: number): string {
-  return cands
-    .map((c) => (proto >= 2 && c.desc ? `${c.value}\t${c.desc}` : c.value))
-    .join("\n")
-    .concat(cands.length > 0 ? "\n" : "");
+  const lines = cands.map((c) =>
+    proto >= 2 && c.desc ? `${c.value}\t${c.desc}` : c.value,
+  );
+  return lines.length > 0 ? lines.join("\n") + "\n" : "";
 }
 
 interface InstallTarget {
@@ -290,7 +290,8 @@ export function registerCompletion(program: Command): void {
         let proto = 1;
         const pIdx = raw.indexOf("--proto");
         if (pIdx >= 0 && raw[pIdx + 1]) {
-          proto = Number(raw[pIdx + 1]) || 1;
+          const n = Number(raw[pIdx + 1]);
+          proto = Number.isFinite(n) && n > 0 ? n : 1;
           raw = [...raw.slice(0, pIdx), ...raw.slice(pIdx + 2)];
         }
         const { words, current } = parseCompleteArgs(raw);

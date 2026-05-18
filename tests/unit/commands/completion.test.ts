@@ -79,6 +79,12 @@ import { getShimScript, formatCandidates } from "../../../src/commands/completio
 test("zsh shim passes the --proto 2 marker", () => {
   expect(getShimScript("zsh")).toContain("--proto 2");
 });
+test("bash shim passes the --proto 2 marker", () => {
+  expect(getShimScript("bash")).toContain("--proto 2");
+});
+test("fish shim passes the --proto 2 marker", () => {
+  expect(getShimScript("fish")).toContain("--proto 2");
+});
 
 test("formatCandidates emits value<TAB>desc when proto 2", () => {
   const out = formatCandidates(
