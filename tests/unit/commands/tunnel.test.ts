@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { parseTunnelArgs, buildTunnelWsUrl, formatTunnelTable, formatTunnelDescribe } from "../../../src/commands/tunnel";
+import {
+  parseTunnelArgs,
+  buildTunnelWsUrl,
+  buildTunnelListPath,
+  formatTunnelTable,
+  formatTunnelDescribe,
+} from "../../../src/commands/tunnel";
 import type { TunnelSessionRead } from "../../../src/commands/tunnel";
 
 describe("parseTunnelArgs", () => {
@@ -457,5 +463,29 @@ describe("regression: parseTunnelArgs still works (open-tunnel path unchanged)",
   it("buildTunnelWsUrl still produces correct WebSocket URL", () => {
     expect(buildTunnelWsUrl("https://direct.reoclo.com", "srv-xyz"))
       .toBe("wss://direct.reoclo.com/v1/tunnel?server_id=srv-xyz");
+  });
+});
+
+describe("buildTunnelListPath", () => {
+  // The trailing slash is mandatory — without it the API issues a 307 whose
+  // Location drops the CLI's /mcp proxy prefix and the redirect 404s.
+  it("ends with 'tunnels/' when there is no query string", () => {
+    expect(buildTunnelListPath("t1", "")).toBe("/tenants/t1/tunnels/");
+  });
+
+  it("keeps the slash before the query string", () => {
+    expect(buildTunnelListPath("t1", "active=true")).toBe("/tenants/t1/tunnels/?active=true");
+  });
+
+  it("includes multiple query params after the slash", () => {
+    expect(buildTunnelListPath("t1", "server_id=srv-9&active=true")).toBe(
+      "/tenants/t1/tunnels/?server_id=srv-9&active=true",
+    );
+  });
+
+  it("never produces the no-slash form that triggers the 307", () => {
+    for (const qs of ["", "active=true", "server_id=x"]) {
+      expect(buildTunnelListPath("tenant-abc", qs)).not.toMatch(/\/tunnels(\?|$)/);
+    }
   });
 });
