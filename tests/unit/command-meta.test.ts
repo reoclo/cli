@@ -5,6 +5,7 @@ import {
   getRequiredCapability,
   ensureCapabilityOrExit,
 } from "../../src/client/command-meta";
+import { withCompletion, getCompletionSpec } from "../../src/client/command-meta";
 
 describe("requireCapability", () => {
   test("attaches capability metadata to a command", () => {
@@ -45,5 +46,17 @@ describe("ensureCapabilityOrExit", () => {
       const e = err as Error & { exitCode?: number };
       expect(e.exitCode).toBe(13);
     }
+  });
+});
+
+describe("withCompletion", () => {
+  test("attaches and reads a completion spec", () => {
+    const cmd = new Command("get");
+    withCompletion(cmd, { args: [{ slot: 0, resource: "servers" }] });
+    expect(getCompletionSpec(cmd)).toEqual({ args: [{ slot: 0, resource: "servers" }] });
+  });
+
+  test("returns null when no spec is set", () => {
+    expect(getCompletionSpec(new Command("plain"))).toBeNull();
   });
 });
