@@ -9,7 +9,12 @@ import type { Entry, IndexKind } from "./types";
 
 export interface ResourceDef {
   kind: IndexKind;
-  /** Key under `resources` in the /completion-index response. */
+  /**
+   * Key under `resources` in the /completion-index response.
+   * Intentionally mirrors `kind` today — kept as a seam so the field name can
+   * diverge from the kind string if the API response shape ever changes without
+   * requiring a refactor throughout the codebase.
+   */
   indexField: string;
   /** Map a raw API list object to an Entry. */
   toEntry: (raw: Record<string, unknown>) => Entry;

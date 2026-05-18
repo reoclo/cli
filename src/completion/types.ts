@@ -3,7 +3,10 @@
 // Shared types for the declarative completion subsystem.
 
 /** Resource kinds carried by the /completion-index endpoint. */
-export type IndexKind = "servers" | "apps" | "deployments" | "domains" | "tunnels";
+export const INDEX_KINDS = ["servers", "apps", "deployments", "domains", "tunnels"] as const;
+
+/** Resource kinds carried by the /completion-index endpoint. */
+export type IndexKind = (typeof INDEX_KINDS)[number];
 
 /** All completable kinds: index-backed + two local-only kinds. */
 export type ResourceKind = IndexKind | "envKeys" | "profiles";
@@ -21,5 +24,3 @@ export interface Candidate {
   value: string;
   desc?: string;
 }
-
-export const INDEX_KINDS: IndexKind[] = ["servers", "apps", "deployments", "domains", "tunnels"];
