@@ -16,6 +16,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCompletionCandidates } from "../completion/engine";
 import { withCompletion } from "../client/command-meta";
+import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { fetchCompletionIndex } from "../completion/index-client";
+import { writeAllSlices } from "../completion/cache";
 
 type Shell = "bash" | "zsh" | "fish";
 
@@ -196,6 +199,13 @@ async function runInstall(opts: InstallOpts): Promise<void> {
   } else {
     process.stdout.write(`→ restart your shell to enable completion\n`);
   }
+
+  try {
+    await warmCache(undefined);
+    process.stdout.write("✓ completion cache warmed\n");
+  } catch {
+    // not logged in / offline — warming is optional during install
+  }
 }
 
 function parseCompleteArgs(args: string[]): { words: string[]; current: string } {
@@ -211,6 +221,27 @@ function parseCompleteArgs(args: string[]): { words: string[]; current: string }
   }
   if (args.length === 0) return { words: [], current: "" };
   return { words: args.slice(0, -1), current: args[args.length - 1] ?? "" };
+}
+
+/** Fetch the completion index and write every slice. Returns false (with a
+ *  soft notice) if the API has no /completion-index endpoint yet. */
+async function warmCache(profile?: string): Promise<boolean> {
+  const ctx = await bootstrap({ profile });
+  const tid = requireTenantId(ctx);
+  try {
+    const slices = await fetchCompletionIndex(ctx.client, tid);
+    writeAllSlices(slices);
+    return true;
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 404) {
+      process.stderr.write(
+        "completion: this Reoclo API does not support `completion warm` yet — skipping\n",
+      );
+      return false;
+    }
+    throw err;
+  }
 }
 
 export function registerCompletion(program: Command): void {
@@ -247,7 +278,7 @@ export function registerCompletion(program: Command): void {
   // existing `reoclo completion bash > foo` invocations still work. The
   // single positional accepts a shell name (emit shim) or the literal
   // "install" (write + wire into rc).
-  withCompletion(
+  const completionCmd = withCompletion(
     program
       .command("completion <shellOrInstall> [installArgs...]")
       .description(
@@ -275,4 +306,25 @@ export function registerCompletion(program: Command): void {
       }),
     { flags: { "--shell": { enum: ["bash", "zsh", "fish"] } } },
   );
+
+  completionCmd
+    .command("warm")
+    .description("pre-populate the local completion cache from the server")
+    .option("--profile <name>", "profile name")
+    .action(async (opts: { profile?: string }) => {
+      const ok = await warmCache(opts.profile);
+      if (ok) process.stdout.write("✓ completion cache warmed\n");
+    });
+
+  program
+    .command("__refresh-completion", { hidden: true })
+    .description("internal: silently refresh the completion cache")
+    .option("--profile <name>", "profile name")
+    .action(async (opts: { profile?: string }) => {
+      try {
+        await warmCache(opts.profile);
+      } catch {
+        // silent — background refresh must never surface errors
+      }
+    });
 }

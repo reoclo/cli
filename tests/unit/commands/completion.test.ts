@@ -65,3 +65,11 @@ describe("reoclo completion", () => {
     expect(exitCode).toBe(2);
   });
 });
+
+test("registers completion warm + hidden __refresh-completion", () => {
+  const program = new Command().name("reoclo");
+  registerCompletion(program);
+  const completion = program.commands.find((c) => c.name() === "completion")!;
+  expect(completion.commands.map((c) => c.name())).toContain("warm");
+  expect(program.commands.some((c) => c.name() === "__refresh-completion")).toBe(true);
+});
