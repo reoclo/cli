@@ -6,7 +6,8 @@
 // writers (background refresh, list commands, `warm`) never tear the file.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { dirname, join } from "node:path";
 import { cacheDir } from "../config/paths";
 import { INDEX_KINDS, type Entry, type IndexKind } from "./types";
 
@@ -43,11 +44,13 @@ function readCache(): CompletionCache {
     const parsed = JSON.parse(readFileSync(p, "utf8")) as CompletionCache;
     if (parsed.version !== CACHE_VERSION) return emptyCache();
     // Backfill any missing slice so callers never hit `undefined`.
+    const rawResources =
+      parsed.resources && typeof parsed.resources === "object" ? parsed.resources : {};
     const base = emptyCache();
     return {
       version: CACHE_VERSION,
-      resources: { ...base.resources, ...parsed.resources },
-      envKeys: parsed.envKeys ?? {},
+      resources: { ...base.resources, ...rawResources },
+      envKeys: parsed.envKeys && typeof parsed.envKeys === "object" ? parsed.envKeys : {},
     };
   } catch {
     return emptyCache();
@@ -55,11 +58,12 @@ function readCache(): CompletionCache {
 }
 
 function writeCache(c: CompletionCache): void {
-  const dir = cacheDir();
+  const dest = cachePath();
+  const dir = dirname(dest);
   mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `completion-cache.json.tmp.${process.pid}`);
-  writeFileSync(tmp, JSON.stringify(c), "utf8");
-  renameSync(tmp, cachePath());
+  const tmp = join(dir, `completion-cache.json.tmp.${process.pid}.${randomBytes(4).toString("hex")}`);
+  writeFileSync(tmp, JSON.stringify(c), "utf8"); // compact — internal artifact, not user-facing
+  renameSync(tmp, dest);
 }
 
 /** Replace one resource slice and stamp it with the current time. */
@@ -75,7 +79,7 @@ export function writeAllSlices(slices: Partial<Record<IndexKind, Entry[]>>): voi
   const now = Date.now();
   for (const k of INDEX_KINDS) {
     const entries = slices[k];
-    if (entries) c.resources[k] = { ts: now, entries };
+    if (entries !== undefined) c.resources[k] = { ts: now, entries };
   }
   writeCache(c);
 }

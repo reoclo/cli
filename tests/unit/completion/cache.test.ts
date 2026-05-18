@@ -60,4 +60,25 @@ describe("completion cache", () => {
     writeFileSync(join(tmp, "completion-cache.json"), JSON.stringify({ version: 1 }), "utf8");
     expect(getSlice("servers")).toEqual([]);
   });
+
+  test("writeAllSlices preserves slices not named in its argument", () => {
+    const entry = { id: "s1", value: "srv", name: "Srv", desc: "a server" };
+    writeSlice("servers", [entry]);
+    writeAllSlices({ apps: [] });
+    expect(getSlice("servers")).toEqual([entry]);
+  });
+
+  test("writeAllSlices({}) leaves the cache unchanged", () => {
+    const entry = { id: "s2", value: "srv2", name: "Srv2", desc: "another server" };
+    writeSlice("servers", [entry]);
+    writeAllSlices({});
+    expect(getSlice("servers")).toEqual([entry]);
+  });
+
+  test("a wrong-version file on disk is replaced after the next write", () => {
+    writeFileSync(join(tmp, "completion-cache.json"), JSON.stringify({ version: 1 }), "utf8");
+    const entry = { id: "s3", value: "new", name: "New", desc: "fresh entry" };
+    writeSlice("servers", [entry]);
+    expect(getSlice("servers")).toEqual([entry]);
+  });
 });
