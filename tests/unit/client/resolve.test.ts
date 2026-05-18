@@ -37,7 +37,7 @@ await mock.module("../../../src/completion/cache", () => ({
 }));
 
 // Import the module under test AFTER stubs are registered.
-const { resolveServer } = await import("../../../src/client/resolve");
+const { resolveServer, resolveApp } = await import("../../../src/client/resolve");
 
 // ---------------------------------------------------------------------------
 
@@ -117,6 +117,69 @@ describe("resolveServer", () => {
     let threw = false;
     try {
       await resolveServer(client as never, "t1", "nope");
+    } catch (err) {
+      threw = true;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/not found/);
+      expect((err as Error & { exitCode: number }).exitCode).toBe(5);
+    }
+    expect(threw).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+const fakeAppClient = (items: Array<Record<string, unknown>>) => ({
+  get: <T>(_path: string): Promise<T> =>
+    Promise.resolve({ items, total: items.length, skip: 0, limit: 200 } as unknown as T),
+});
+
+describe("resolveApp", () => {
+  beforeEach(() => {
+    resetCache();
+  });
+
+  test("UUID input short-circuits without an API call", async () => {
+    let called = false;
+    const client = {
+      get: <T>(): Promise<T> => {
+        called = true;
+        return Promise.resolve({ items: [] } as unknown as T);
+      },
+    };
+    const id = await resolveApp(
+      client as never,
+      "tenant-1",
+      "00000000-0000-0000-0000-000000000002",
+    );
+    expect(id).toBe("00000000-0000-0000-0000-000000000002");
+    expect(called).toBe(false);
+  });
+
+  test("cache miss triggers fetch, unwraps res.items, resolves, and writes the slice", async () => {
+    resetCache([]);
+    const client = fakeAppClient([
+      { id: "app-1", slug: "my-api", name: "My API" },
+      { id: "app-2", slug: "my-frontend", name: "My Frontend" },
+    ]);
+    const id = await resolveApp(client as never, "t1", "my-api");
+    expect(id).toBe("app-1");
+    // Verify that writeSlice was called with the entries derived from res.items.
+    expect(_writtenSlice).not.toBeNull();
+    expect(_writtenSlice!.length).toBe(2);
+    const entry = _writtenSlice!.find((e) => e.value === "my-api");
+    expect(entry).toBeDefined();
+    expect(entry?.id).toBe("app-1");
+  });
+
+  test("unknown app identifier throws with exitCode 5", async () => {
+    resetCache([]);
+    const client = fakeAppClient([
+      { id: "app-1", slug: "my-api", name: "My API" },
+    ]);
+    let threw = false;
+    try {
+      await resolveApp(client as never, "t1", "does-not-exist");
     } catch (err) {
       threw = true;
       expect(err).toBeInstanceOf(Error);

@@ -5,8 +5,7 @@ import { resolveServer } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Server } from "../client/types";
 import { withCompletion } from "../client/command-meta";
-import { writeSlice } from "../completion/cache";
-import { RESOURCE_REGISTRY } from "../completion/registry";
+import { cacheList } from "../completion/populate";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -23,7 +22,7 @@ export function registerServers(program: Command): void {
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const list = await ctx.client.get<Server[]>(`/tenants/${tid}/servers/`);
-      writeSlice("servers", list.map((s) => RESOURCE_REGISTRY.servers.toEntry(s as unknown as Record<string, unknown>)));
+      cacheList("servers", list);
       printList(
         list as unknown as Array<Record<string, unknown>>,
         [

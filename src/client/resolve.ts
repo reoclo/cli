@@ -1,8 +1,8 @@
 // src/client/resolve.ts
 import type { HttpClient } from "./http";
 import type { Application, PaginatedResponse, Server } from "./types";
-import { getSlice, writeSlice } from "../completion/cache";
-import { RESOURCE_REGISTRY } from "../completion/registry";
+import { getSlice } from "../completion/cache";
+import { cacheList } from "../completion/populate";
 import type { Entry, IndexKind } from "../completion/types";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -17,7 +17,7 @@ function lookup(entries: Entry[], identifier: string): string | undefined {
 async function resolve(
   kind: IndexKind,
   identifier: string,
-  fetchRaw: () => Promise<Record<string, unknown>[]>,
+  fetchRaw: () => Promise<readonly unknown[]>,
   label: string,
 ): Promise<string> {
   if (UUID.test(identifier)) return identifier;
@@ -26,8 +26,7 @@ async function resolve(
   if (cached) return cached;
 
   const raw = await fetchRaw();
-  const entries = raw.map((o) => RESOURCE_REGISTRY[kind].toEntry(o));
-  writeSlice(kind, entries);
+  const entries = cacheList(kind, raw);
 
   const found = lookup(entries, identifier);
   if (!found) {
@@ -46,10 +45,7 @@ export async function resolveServer(
   return resolve(
     "servers",
     identifier,
-    async () => {
-      const list = await c.get<Server[]>(`/tenants/${tenantId}/servers/`);
-      return list as unknown as Record<string, unknown>[];
-    },
+    () => c.get<Server[]>(`/tenants/${tenantId}/servers/`),
     "server",
   );
 }
@@ -66,7 +62,7 @@ export async function resolveApp(
       const res = await c.get<PaginatedResponse<Application>>(
         `/tenants/${tenantId}/applications/?limit=200`,
       );
-      return res.items as unknown as Record<string, unknown>[];
+      return res.items;
     },
     "application",
   );

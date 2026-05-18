@@ -5,8 +5,7 @@ import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Domain } from "../client/types";
 import type { HttpClient } from "../client/http";
 import { withCompletion } from "../client/command-meta";
-import { writeSlice } from "../completion/cache";
-import { RESOURCE_REGISTRY } from "../completion/registry";
+import { cacheList } from "../completion/populate";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -43,7 +42,7 @@ export function registerDomains(program: Command): void {
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const list = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
-      writeSlice("domains", list.map((d) => RESOURCE_REGISTRY.domains.toEntry(d as unknown as Record<string, unknown>)));
+      cacheList("domains", list);
       printList(
         list as unknown as Array<Record<string, unknown>>,
         [

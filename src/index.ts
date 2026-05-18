@@ -92,15 +92,21 @@ if (import.meta.main) {
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
   ]);
 
+  function isPassthrough(actionCommand: Command): boolean {
+    const leafName = actionCommand.name();
+    const parentName = actionCommand.parent?.name();
+    const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
+    return PASSTHROUGH_COMMANDS.has(topLevel);
+  }
+
   program.hook("preAction", async (_thisCommand, actionCommand) => {
     // For nested commands like `apps deploy`, actionCommand is the leaf
     // ("deploy"), and its parent is the group ("apps"). For top-level
     // commands like `whoami`, parent is the root program.
+    if (isPassthrough(actionCommand)) return;
+
     const leafName = actionCommand.name();
     const parentName = actionCommand.parent?.name();
-    const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
-
-    if (PASSTHROUGH_COMMANDS.has(topLevel)) return;
 
     // Resolve the auth context (token + key type) without making a network call.
     const ctx = await bootstrap();
@@ -121,10 +127,7 @@ if (import.meta.main) {
   });
 
   program.hook("postAction", (_thisCommand, actionCommand) => {
-    const leafName = actionCommand.name();
-    const parentName = actionCommand.parent?.name();
-    const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
-    if (PASSTHROUGH_COMMANDS.has(topLevel)) return;
+    if (isPassthrough(actionCommand)) return;
     maybeSpawnBackgroundRefresh();
   });
 
