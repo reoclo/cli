@@ -73,3 +73,22 @@ test("registers completion warm + hidden __refresh-completion", () => {
   expect(completion.commands.map((c) => c.name())).toContain("warm");
   expect(program.commands.some((c) => c.name() === "__refresh-completion")).toBe(true);
 });
+
+import { getShimScript, formatCandidates } from "../../../src/commands/completion";
+
+test("zsh shim passes the --proto 2 marker", () => {
+  expect(getShimScript("zsh")).toContain("--proto 2");
+});
+
+test("formatCandidates emits value<TAB>desc when proto 2", () => {
+  const out = formatCandidates(
+    [{ value: "web", desc: "Web — ACTIVE" }, { value: "ls" }],
+    2,
+  );
+  expect(out).toBe("web\tWeb — ACTIVE\nls\n");
+});
+
+test("formatCandidates strips desc when proto < 2 (old shim)", () => {
+  const out = formatCandidates([{ value: "web", desc: "Web — ACTIVE" }], 1);
+  expect(out).toBe("web\n");
+});

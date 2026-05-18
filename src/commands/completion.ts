@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCompletionCandidates } from "../completion/engine";
+import type { Candidate } from "../completion/types";
 import { withCompletion } from "../client/command-meta";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { fetchCompletionIndex } from "../completion/index-client";
@@ -30,23 +31,23 @@ type Shell = "bash" | "zsh" | "fish";
 
 const BASH_SHIM = `# reoclo bash completion (also registers for the 'rc' alias)
 _reoclo() {
-  local cur cwords raw line
+  local cur cwords raw val _desc
   cur="\${COMP_WORDS[COMP_CWORD]}"
   if (( COMP_CWORD > 0 )); then
     cwords=("\${COMP_WORDS[@]:1:COMP_CWORD-1}")
   else
     cwords=()
   fi
-  if ! raw=$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
+  if ! raw=$(reoclo __complete --proto 2 "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
     return
   fi
-  # Read newline-separated candidates and backslash-escape spaces so
-  # multi-word names ("Reoclo Production") survive bash's word-split on
+  # Read value<TAB>desc lines; take only the value and backslash-escape spaces
+  # so multi-word names ("Reoclo Production") survive bash's word-split on
   # insertion. The CLI already prefix-filters; no need for compgen.
   COMPREPLY=()
-  while IFS= read -r line; do
-    [ -z "\$line" ] && continue
-    COMPREPLY+=("\${line// /\\\\ }")
+  while IFS=\$'\\t' read -r val _desc; do
+    [ -z "\$val" ] && continue
+    COMPREPLY+=("\${val// /\\\\ }")
   done <<< "\$raw"
 }
 complete -F _reoclo reoclo
@@ -56,11 +57,17 @@ complete -F _reoclo rc
 const ZSH_SHIM = `#compdef reoclo rc
 # reoclo zsh completion (also registers for the 'rc' alias)
 _reoclo() {
-  local cur cwords candidates
+  local cur cwords
   cur="\${words[CURRENT]}"
   cwords=("\${(@)words[2,CURRENT-1]}")
-  candidates=("\${(@f)$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null)}")
-  compadd -- "\${candidates[@]}"
+  local -a lines vals descs
+  lines=("\${(@f)\$(reoclo __complete --proto 2 "\${cwords[@]}" -- "\${cur}" 2>/dev/null)}")
+  for l in "\${lines[@]}"; do
+    [ -z "\$l" ] && continue
+    vals+=("\${l%%\$'\\t'*}")
+    descs+=("\${l/\$'\\t'/ -- }")
+  done
+  compadd -d descs -- "\${vals[@]}"
 }
 compdef _reoclo reoclo rc
 `;
@@ -71,7 +78,7 @@ function __reoclo_complete
   set -l current (commandline -ct)
   # Drop the program name (first token) so we pass only typed args.
   set -e tokens[1]
-  reoclo __complete $tokens -- "$current" 2>/dev/null
+  reoclo __complete --proto 2 $tokens -- "$current" 2>/dev/null
 end
 complete -c reoclo -f -a "(__reoclo_complete)"
 complete -c rc     -f -a "(__reoclo_complete)"
@@ -86,6 +93,14 @@ export function getShimScript(shell: Shell): string {
     case "fish":
       return FISH_SHIM;
   }
+}
+
+/** Render candidates for the shell shim. proto>=2 → `value\tdesc`; else plain. */
+export function formatCandidates(cands: Candidate[], proto: number): string {
+  return cands
+    .map((c) => (proto >= 2 && c.desc ? `${c.value}\t${c.desc}` : c.value))
+    .join("\n")
+    .concat(cands.length > 0 ? "\n" : "");
 }
 
 interface InstallTarget {
@@ -270,10 +285,17 @@ export function registerCompletion(program: Command): void {
         // avoids Commander's `--` munging.
         const argv = process.argv;
         const idx = argv.indexOf("__complete");
-        const raw = idx >= 0 ? argv.slice(idx + 1) : [];
+        let raw = idx >= 0 ? argv.slice(idx + 1) : [];
+        // Extract the optional `--proto N` marker (default proto 1 = old shim).
+        let proto = 1;
+        const pIdx = raw.indexOf("--proto");
+        if (pIdx >= 0 && raw[pIdx + 1]) {
+          proto = Number(raw[pIdx + 1]) || 1;
+          raw = [...raw.slice(0, pIdx), ...raw.slice(pIdx + 2)];
+        }
         const { words, current } = parseCompleteArgs(raw);
         const candidates = getCompletionCandidates(program, words, current);
-        for (const c of candidates) process.stdout.write(c.value + "\n");
+        process.stdout.write(formatCandidates(candidates, proto));
       } catch {
         // Silent failure — completion must never surface errors.
       }
