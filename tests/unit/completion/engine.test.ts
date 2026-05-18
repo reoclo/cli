@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { getCompletionCandidates } from "../../../src/completion/engine";
 import { withCompletion } from "../../../src/client/command-meta";
-import { writeSlice } from "../../../src/completion/cache";
+import { writeSlice, writeEnvKeys } from "../../../src/completion/cache";
 
 let tmp: string;
 beforeEach(() => {
@@ -14,6 +14,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.REOCLO_CACHE_DIR;
+  delete process.env.REOCLO_CONFIG_DIR;
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -72,5 +73,73 @@ describe("getCompletionCandidates", () => {
 
   test("never throws on garbage input", () => {
     expect(() => getCompletionCandidates(program(), ["nonsense", "--"], "x")).not.toThrow();
+    expect(getCompletionCandidates(program(), ["nonsense", "--"], "x")).toEqual([]);
+    expect(getCompletionCandidates(program(), ["\x00", null as unknown as string], "")).toEqual([]);
+  });
+
+  // --- new tests ---
+
+  test("flagsOf merge: returns both Commander-registered and spec-only flags", () => {
+    const p = new Command().name("reoclo");
+    const cmd = p.command("deploy");
+    cmd.option("--foo <v>", "a commander option");
+    withCompletion(cmd, { flags: { "--bar": "servers" } });
+    const cands = getCompletionCandidates(p, ["deploy"], "--");
+    const names = values(cands);
+    expect(names).toContain("--foo");
+    expect(names).toContain("--bar");
+    // each appears exactly once
+    expect(names.filter((n) => n === "--foo")).toHaveLength(1);
+    expect(names.filter((n) => n === "--bar")).toHaveLength(1);
+  });
+
+  test("profiles: completes profile names from config.json", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "reoclo-cfg-"));
+    process.env.REOCLO_CONFIG_DIR = configDir;
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({ active_profile: "prod", profiles: { prod: {}, staging: {} } }),
+      "utf8",
+    );
+    const p = new Command().name("reoclo");
+    withCompletion(p.command("switch <profile>"), { args: [{ slot: 0, resource: "profiles" }] });
+    const cands = getCompletionCandidates(p, ["switch"], "");
+    expect(values(cands).sort()).toEqual(["prod", "staging"]);
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("envKeys without --app: returns []", () => {
+    const p = new Command().name("reoclo");
+    const envGet = p.command("env:get <key>");
+    envGet.option("--app <id>", "app id");
+    withCompletion(envGet, { args: [{ slot: 0, resource: "envKeys" }] });
+    const cands = getCompletionCandidates(p, ["env:get"], "");
+    expect(cands).toEqual([]);
+  });
+
+  test("envKeys with --app: returns cached keys for that app", () => {
+    writeEnvKeys("app-xyz", ["DATABASE_URL", "SECRET_KEY"]);
+    const p = new Command().name("reoclo");
+    // Register --app as a known value-taking option so walk() skips it and
+    // its value, leaving the key slot as positional 0.
+    const envGet = p.command("env:get <key>");
+    envGet.option("--app <id>", "app id");
+    withCompletion(envGet, { args: [{ slot: 0, resource: "envKeys" }] });
+    const cands = getCompletionCandidates(p, ["env:get", "--app", "app-xyz"], "");
+    expect(values(cands).sort()).toEqual(["DATABASE_URL", "SECRET_KEY"]);
+  });
+
+  test("hidden commands are filtered from subcommand completion", () => {
+    const p = new Command().name("reoclo");
+    p.command("visible");
+    // Register the internal hidden commands (they are excluded by the HIDDEN set
+    // in the engine regardless of Commander's hidden flag).
+    p.command("__complete", { hidden: true });
+    p.command("__refresh-completion", { hidden: true });
+    const cands = getCompletionCandidates(p, [], "");
+    const names = values(cands);
+    expect(names).toContain("visible");
+    expect(names).not.toContain("__complete");
+    expect(names).not.toContain("__refresh-completion");
   });
 });

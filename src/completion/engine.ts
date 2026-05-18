@@ -2,13 +2,12 @@
 //
 // Pure, tag-driven completion engine. Walks a Commander tree, reads the
 // `withCompletion` tag on the resolved command, and produces candidates from
-// the local completion cache. Zero network. Never throws — returns [] on any
-// error.
+// the local completion cache and the config file (for profile names). Zero
+// network. Never throws — returns [] on any error.
 
-import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { getCompletionSpec, type ResourceRef } from "../client/command-meta";
-import { configFile } from "../config/paths";
+import { loadConfigSync } from "../config/store";
 import { getEnvKeys, getSlice } from "./cache";
 import type { Candidate, ResourceKind } from "./types";
 
@@ -46,6 +45,8 @@ function walk(program: Command, words: string[]): Walked {
         continue;
       }
       const opt = cmd.options.find((o) => o.long === w || o.short === w);
+      // Best-effort heuristic: an unrecognised value-taking flag will only
+      // consume 1 token here, so its value may be misread as a positional.
       i += opt && (opt.required || opt.optional) ? 2 : 1;
       continue;
     }
@@ -67,24 +68,8 @@ function findFlag(words: string[], flag: string): string | undefined {
   return undefined;
 }
 
-// loadConfig is async; completion must stay sync + offline, so read the
-// config file directly. configFile() is network-free.
-function loadConfigSync(): { profiles: Record<string, unknown> } {
-  try {
-    return JSON.parse(readFileSync(configFile(), "utf8")) as { profiles: Record<string, unknown> };
-  } catch {
-    return { profiles: {} };
-  }
-}
-
 function resourceCandidates(kind: ResourceKind, words: string[]): Candidate[] {
-  if (kind === "profiles") {
-    try {
-      return Object.keys(loadConfigSync().profiles).map((p) => ({ value: p }));
-    } catch {
-      return [];
-    }
-  }
+  if (kind === "profiles") return Object.keys(loadConfigSync().profiles).map((p) => ({ value: p }));
   if (kind === "envKeys") {
     const app = findFlag(words, "--app");
     if (!app) return [];
