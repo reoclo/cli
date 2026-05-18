@@ -21,6 +21,7 @@ import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
+import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { getActiveProfile } from "./config/store";
@@ -117,6 +118,14 @@ if (import.meta.main) {
     if (verb !== null) {
       ensureCapabilityOrExit(capabilities, verb);
     }
+  });
+
+  program.hook("postAction", (_thisCommand, actionCommand) => {
+    const leafName = actionCommand.name();
+    const parentName = actionCommand.parent?.name();
+    const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
+    if (PASSTHROUGH_COMMANDS.has(topLevel)) return;
+    maybeSpawnBackgroundRefresh();
   });
 
   try {

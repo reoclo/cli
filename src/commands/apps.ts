@@ -5,6 +5,8 @@ import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
+import { writeSlice } from "../completion/cache";
+import { RESOURCE_REGISTRY } from "../completion/registry";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -23,6 +25,7 @@ export function registerApps(program: Command): void {
       const res = await ctx.client.get<PaginatedResponse<Application>>(
         `/tenants/${tid}/applications/?limit=200`,
       );
+      writeSlice("apps", res.items.map((a) => RESOURCE_REGISTRY.apps.toEntry(a as unknown as Record<string, unknown>)));
       printList(
         res.items as unknown as Array<Record<string, unknown>>,
         [

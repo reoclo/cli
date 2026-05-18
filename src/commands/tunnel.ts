@@ -6,6 +6,8 @@ import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tun
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { OutputFormat } from "../ui/output";
 import { withCompletion } from "../client/command-meta";
+import { writeSlice } from "../completion/cache";
+import { RESOURCE_REGISTRY } from "../completion/registry";
 
 // ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
 
@@ -423,6 +425,7 @@ export function registerTunnel(program: Command): void {
 
           const path = buildTunnelListPath(tid, params.toString());
           const list = await ctx.client.get<TunnelSessionRead[]>(path);
+          writeSlice("tunnels", list.map((t) => RESOURCE_REGISTRY.tunnels.toEntry(t as unknown as Record<string, unknown>)));
           formatTunnelTable(list, fmt);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

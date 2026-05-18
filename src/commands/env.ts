@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
+import { writeEnvKeys } from "../completion/cache";
 
 interface EnvVarRead {
   key: string;
@@ -36,6 +37,7 @@ export function registerEnv(program: Command): void {
         const list = await ctx.client.get<EnvVarRead[]>(
           `/tenants/${tid}/applications/${appId}/env/`,
         );
+        writeEnvKeys(appId, list.map((e) => e.key));
         printList(
           list as unknown as Array<Record<string, unknown>>,
           [

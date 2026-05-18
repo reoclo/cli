@@ -5,6 +5,8 @@ import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Deployment } from "../client/types";
 import { withCompletion } from "../client/command-meta";
+import { writeSlice } from "../completion/cache";
+import { RESOURCE_REGISTRY } from "../completion/registry";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -56,6 +58,7 @@ export function registerDeployments(program: Command): void {
         const qs = params.toString();
         const path = `/tenants/${tid}/deployments/${qs ? `?${qs}` : ""}`;
         const res = await ctx.client.get<PaginatedDeployments>(path);
+        writeSlice("deployments", res.items.map((d) => RESOURCE_REGISTRY.deployments.toEntry(d as unknown as Record<string, unknown>)));
         printList(
           res.items,
           [
