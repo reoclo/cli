@@ -236,7 +236,7 @@ export function registerCompletion(program: Command): void {
         const raw = idx >= 0 ? argv.slice(idx + 1) : [];
         const { words, current } = parseCompleteArgs(raw);
         const candidates = getCompletionCandidates(program, words, current);
-        for (const c of candidates) process.stdout.write(c + "\n");
+        for (const c of candidates) process.stdout.write(c.value + "\n");
       } catch {
         // Silent failure — completion must never surface errors.
       }

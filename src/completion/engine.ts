@@ -1,246 +1,160 @@
 // src/completion/engine.ts
 //
-// Pure completion engine. Walks a Commander tree to compute candidate
-// completions for the current cursor position. Has zero side effects beyond
-// the cache reads in resources.ts (which themselves never block on the
-// network). Easy to unit-test by passing a fake Command.
+// Pure, tag-driven completion engine. Walks a Commander tree, reads the
+// `withCompletion` tag on the resolved command, and produces candidates from
+// the local completion cache. Zero network. Never throws — returns [] on any
+// error.
 
+import { readFileSync } from "node:fs";
 import type { Command } from "commander";
-import {
-  getCachedApps,
-  getCachedDeployments,
-  getCachedDomains,
-  getCachedEnvKeys,
-  getCachedServers,
-} from "./resources";
+import { getCompletionSpec, type ResourceRef } from "../client/command-meta";
+import { configFile } from "../config/paths";
+import { getEnvKeys, getSlice } from "./cache";
+import type { Candidate, ResourceKind } from "./types";
 
-// Resource arg → resource type mapping. Keys are full command paths joined by
-// space ("apps deploy", "exec"); the value describes which positional slot to
-// fill and where the candidates come from. Slot is 0-indexed *after* the
-// last subcommand in the path.
-type ResourceKind = "apps" | "servers" | "deployments" | "domains" | "envKeys";
-
-interface ResourceSlot {
-  slot: number;
-  kind: ResourceKind;
-}
-
-const RESOURCE_SLOTS: Record<string, ResourceSlot> = {
-  "apps get": { slot: 0, kind: "apps" },
-  "apps deploy": { slot: 0, kind: "apps" },
-  "apps logs": { slot: 0, kind: "apps" },
-  "apps restart": { slot: 0, kind: "apps" },
-  "servers get": { slot: 0, kind: "servers" },
-  "servers metrics": { slot: 0, kind: "servers" },
-  "exec": { slot: 0, kind: "servers" },
-  "shell": { slot: 0, kind: "servers" },
-  "deployments get": { slot: 0, kind: "deployments" },
-  "deployments logs": { slot: 0, kind: "deployments" },
-  "domains verify": { slot: 0, kind: "domains" },
-  "env rm": { slot: 0, kind: "envKeys" },
-  "env get": { slot: 0, kind: "envKeys" },
-};
-
-// Per-command flag → dynamic resource. When the user types `cmd --flag <TAB>`,
-// the value gets completed from the corresponding cached resource list.
-const FLAG_RESOURCES: Record<string, Record<string, ResourceKind>> = {
-  "logs tail": { "--server": "servers" },
-  "env ls": { "--app": "apps" },
-  "env set": { "--app": "apps" },
-  "env rm": { "--app": "apps" },
-  "env get": { "--app": "apps" },
-  "deployments ls": { "--app": "apps" },
-};
-
-// Per-command flag → fixed candidate set. Useful for enums and small closed
-// vocabularies where the API doesn't change the valid values.
-const STATIC_FLAG_VALUES: Record<string, Record<string, string[]>> = {
-  "logs tail": {
-    "--source": ["container", "system", "docker_daemon", "runner", "kernel", "auth"],
-  },
-  "exec": {
-    "--scope": ["host", "rootless"],
-  },
-  "upgrade": {
-    "--channel": ["stable", "beta", "dev"],
-  },
-  "completion": {
-    "--shell": ["bash", "zsh", "fish"],
-  },
-};
-
-// Commands that should never appear in completion output. These are hidden
-// (e.g. internal helpers) or otherwise inappropriate for tab-completion
-// surfaces.
-const HIDDEN_COMMANDS = new Set(["__complete"]);
+const HIDDEN = new Set(["__complete", "__refresh-completion"]);
 
 function commandsOf(cmd: Command): Command[] {
-  return cmd.commands.filter((c) => !HIDDEN_COMMANDS.has(c.name()));
-}
-
-function subcommandNames(cmd: Command): string[] {
-  return commandsOf(cmd).map((c) => c.name());
+  return cmd.commands.filter((c) => !HIDDEN.has(c.name()));
 }
 
 function flagsOf(cmd: Command): string[] {
-  // Long flags only — these are what tab completion is most useful for.
-  // Short flags (`-o`) are usually too terse to want as candidates after `-`.
-  const out: string[] = [];
-  for (const o of cmd.options) {
-    if (o.long) out.push(o.long);
-  }
-  return out;
+  const fromOptions = cmd.options.filter((o) => o.long).map((o) => o.long as string);
+  const spec = getCompletionSpec(cmd);
+  if (!spec?.flags) return fromOptions;
+  const fromSpec = Object.keys(spec.flags);
+  // Merge: spec flags may be registered without a Commander .option() call.
+  const merged = new Set([...fromOptions, ...fromSpec]);
+  return Array.from(merged);
 }
 
-/**
- * Walk the program tree following the supplied words until we reach a leaf
- * subcommand or an argument slot. Returns the resolved command and the words
- * that were *not* consumed (i.e. trailing positional args / partial input
- * for the current slot).
- */
-function walk(program: Command, words: string[]): { cmd: Command; rest: string[]; path: string[] } {
+interface Walked {
+  cmd: Command;
+  rest: string[];
+}
+
+/** Walk the program tree consuming subcommands; return the resolved command
+ *  and the trailing tokens that were not consumed. */
+function walk(program: Command, words: string[]): Walked {
   let cmd: Command = program;
-  const path: string[] = [];
   let i = 0;
   while (i < words.length) {
     const w = words[i] ?? "";
     if (w.startsWith("-")) {
-      // Skip flags and (best-effort) their values. We don't have full
-      // knowledge of which flags take values, so consume one extra token if
-      // it doesn't look like a flag itself.
       if (w.includes("=")) {
         i += 1;
         continue;
       }
-      // If the option is known and takes an arg, skip its value.
       const opt = cmd.options.find((o) => o.long === w || o.short === w);
-      if (opt && (opt.required || opt.optional)) {
-        i += 2;
-        continue;
-      }
-      i += 1;
+      i += opt && (opt.required || opt.optional) ? 2 : 1;
       continue;
     }
     const sub = commandsOf(cmd).find((c) => c.name() === w);
     if (!sub) break;
     cmd = sub;
-    path.push(w);
     i += 1;
   }
-  return { cmd, rest: words.slice(i), path };
+  return { cmd, rest: words.slice(i) };
 }
 
-/**
- * Find the value of `--app` (or `--app=...`) anywhere in the prior words,
- * for env-key lookups that need an app context.
- */
-function findAppOption(words: string[]): string | undefined {
+/** Read `--app` (or `--app=x`) from earlier words — env-key completion needs it. */
+function findFlag(words: string[], flag: string): string | undefined {
   for (let i = 0; i < words.length; i++) {
     const w = words[i] ?? "";
-    if (w === "--app") {
-      return words[i + 1];
-    }
-    if (w.startsWith("--app=")) {
-      return w.slice("--app=".length);
-    }
+    if (w === flag) return words[i + 1];
+    if (w.startsWith(`${flag}=`)) return w.slice(flag.length + 1);
   }
   return undefined;
 }
 
-function resourceCandidates(kind: ResourceKind, words: string[]): string[] {
-  switch (kind) {
-    case "apps":
-      return getCachedApps();
-    case "servers":
-      return getCachedServers();
-    case "deployments":
-      return getCachedDeployments();
-    case "domains":
-      return getCachedDomains();
-    case "envKeys": {
-      const appId = findAppOption(words);
-      if (!appId) return [];
-      return getCachedEnvKeys(appId);
-    }
+// loadConfig is async; completion must stay sync + offline, so read the
+// config file directly. configFile() is network-free.
+function loadConfigSync(): { profiles: Record<string, unknown> } {
+  try {
+    return JSON.parse(readFileSync(configFile(), "utf8")) as { profiles: Record<string, unknown> };
+  } catch {
+    return { profiles: {} };
   }
 }
 
-function filterByPrefix(candidates: string[], current: string): string[] {
-  if (!current) return candidates;
-  return candidates.filter((c) => c.startsWith(current));
+function resourceCandidates(kind: ResourceKind, words: string[]): Candidate[] {
+  if (kind === "profiles") {
+    try {
+      return Object.keys(loadConfigSync().profiles).map((p) => ({ value: p }));
+    } catch {
+      return [];
+    }
+  }
+  if (kind === "envKeys") {
+    const app = findFlag(words, "--app");
+    if (!app) return [];
+    return getEnvKeys(app).map((k) => ({ value: k }));
+  }
+  return getSlice(kind).map((e) => ({ value: e.value, desc: e.desc }));
+}
+
+function byPrefix(cands: Candidate[], current: string): Candidate[] {
+  if (!current) return cands;
+  return cands.filter((c) => c.value.startsWith(current));
+}
+
+function refCandidates(ref: ResourceRef, words: string[]): Candidate[] {
+  if (typeof ref === "object") return ref.enum.map((v) => ({ value: v }));
+  return resourceCandidates(ref, words);
 }
 
 /**
- * Compute completion candidates for a given Commander program, the words
- * that have been typed so far (after `reoclo`), and the partial current
- * word the user is completing.
- *
- * Pure function. Never throws on bad input — returns [] on any error.
+ * Compute completion candidates. Pure; never throws.
  */
 export function getCompletionCandidates(
   program: Command,
   words: string[],
   current: string,
-): string[] {
+): Candidate[] {
   try {
-    // 1. Flag completion: when the user has typed `--`, just emit the flags
-    //    of the deepest command we can resolve.
+    // 1. Flag-name completion.
     if (current.startsWith("-")) {
       const { cmd } = walk(program, words);
-      return filterByPrefix(flagsOf(cmd), current);
+      return byPrefix(
+        flagsOf(cmd).map((f) => ({ value: f })),
+        current,
+      );
     }
 
-    // 1.5 Flag-value completion: if the last typed word is a long flag that
-    //     takes a value, complete the value (static enum or dynamic resource).
-    //     Skip --flag=value (already terminated) and boolean flags.
-    const lastWord = words.at(-1);
-    if (lastWord && lastWord.startsWith("--") && !lastWord.includes("=")) {
-      const wordsBeforeFlag = words.slice(0, -1);
-      const { cmd, path } = walk(program, wordsBeforeFlag);
-      const opt = cmd.options.find((o) => o.long === lastWord);
+    // 2. Flag-value completion: last word is a value-taking long flag.
+    const last = words.at(-1);
+    if (last && last.startsWith("--") && !last.includes("=")) {
+      const { cmd } = walk(program, words.slice(0, -1));
+      const spec = getCompletionSpec(cmd);
+      const ref = spec?.flags?.[last];
+      if (ref) return byPrefix(refCandidates(ref, words), current);
+      // Fall back to Commander-registered options that take a value.
+      const opt = cmd.options.find((o) => o.long === last);
       if (opt && (opt.required || opt.optional)) {
-        const pathKey = path.join(" ");
-        const staticVals = STATIC_FLAG_VALUES[pathKey]?.[lastWord];
-        if (staticVals) return filterByPrefix(staticVals, current);
-        const flagRes = FLAG_RESOURCES[pathKey]?.[lastWord];
-        if (flagRes) {
-          return filterByPrefix(resourceCandidates(flagRes, words), current);
-        }
         return [];
       }
     }
 
-    // 2. Resolve the current command from the words.
-    const { cmd, rest, path } = walk(program, words);
+    // 3. Resolve the command.
+    const { cmd, rest } = walk(program, words);
+    const spec = getCompletionSpec(cmd);
 
-    // 3. Resource arg slot: check if the resolved command has a registered
-    //    resource slot at the current positional index.
-    const pathKey = path.join(" ");
-    const slot = RESOURCE_SLOTS[pathKey];
-    if (slot) {
-      // `rest` is the positional args (and unrecognised tokens) after the
-      // last consumed subcommand. Count *non-flag* tokens to find the
-      // current positional index. The "current" word is what the user is
-      // completing right now and is not part of `words`, so its slot is
-      // restPositionals.length.
-      const restPositionals = rest.filter((w) => !w.startsWith("-"));
-      if (restPositionals.length === slot.slot) {
-        return filterByPrefix(resourceCandidates(slot.kind, words), current);
-      }
-    }
+    // 4. Resource arg slot.
+    const positionals = rest.filter((w) => !w.startsWith("-"));
+    const argSpec = spec?.args?.find((a) => a.slot === positionals.length);
+    const argCands = argSpec
+      ? byPrefix(resourceCandidates(argSpec.resource, words), current)
+      : [];
 
-    // 4. Subcommand slot: emit the children of the resolved command.
-    const subs = subcommandNames(cmd);
-    if (subs.length > 0 && rest.length === 0) {
-      return filterByPrefix(subs, current);
-    }
+    // 5. Subcommand slot (merged with arg candidates — `tunnel` has both
+    //    subcommands and a server positional at slot 0).
+    const subs = rest.length === 0 ? commandsOf(cmd).map((c) => c.name()) : [];
+    const subCands = byPrefix(
+      subs.map((s) => ({ value: s })),
+      current,
+    );
 
-    // 5. Top-level fallback at empty input.
-    if (words.length === 0) {
-      return filterByPrefix(subcommandNames(program), current);
-    }
-
-    return [];
+    return [...subCands, ...argCands];
   } catch {
     return [];
   }
