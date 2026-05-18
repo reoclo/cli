@@ -2,15 +2,10 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
-import { printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import type { Deployment } from "../client/types";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
 
 interface DeploymentStageDetail {
   name?: string;

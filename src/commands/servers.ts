@@ -2,15 +2,10 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
-import { printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import type { Server } from "../client/types";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
 
 export function registerServers(program: Command): void {
   const g = program.command("servers").description("manage servers");

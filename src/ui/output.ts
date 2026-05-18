@@ -1,4 +1,5 @@
 // src/ui/output.ts
+import type { Command } from "commander";
 import { isTTY } from "./tty";
 
 export type OutputFormat = "text" | "json" | "yaml";
@@ -58,4 +59,10 @@ export function printObject(obj: Record<string, unknown>, fmt: OutputFormat): vo
     const val = v == null ? "" : String(v);
     process.stdout.write(`${k.padEnd(w)}  ${val}\n`);
   }
+}
+
+/** Read the global `--output` flag off the root program. */
+export function globalOutput(program: Command): string | undefined {
+  const opts: Record<string, unknown> = program.opts();
+  return typeof opts["output"] === "string" ? opts["output"] : undefined;
 }

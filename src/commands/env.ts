@@ -2,7 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
-import { printList, resolveFormat } from "../ui/output";
+import { globalOutput, printList, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheEnvKeys } from "../completion/populate";
 
@@ -14,11 +14,6 @@ interface EnvVarRead {
 interface EnvVarEntry {
   key: string;
   value: string;
-}
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
 }
 
 export function registerEnv(program: Command): void {

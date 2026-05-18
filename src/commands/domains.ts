@@ -1,18 +1,13 @@
 // src/commands/domains.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
-import { printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import type { Domain } from "../client/types";
 import type { HttpClient } from "../client/http";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
 
 interface VerifyResponse {
   txt_name: string;

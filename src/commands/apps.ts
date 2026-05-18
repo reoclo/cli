@@ -2,15 +2,10 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
-import { printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
 
 export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
