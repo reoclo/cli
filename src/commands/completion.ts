@@ -256,31 +256,23 @@ export function registerCompletion(program: Command): void {
       .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
       .option("--force", "(install only) overwrite an existing completion file without prompting")
       .option("--print", "(install only) print what would happen; don't write anything")
-      .action(
-        async (
-          shellOrInstall: string,
-          _installArgs: string[],
-          opts: InstallOpts,
-        ) => {
-          const arg = shellOrInstall.toLowerCase();
-          if (arg === "install") {
-            await runInstall(opts);
-            return;
-          }
-          if (arg === "bash" || arg === "zsh" || arg === "fish") {
-            process.stdout.write(getShimScript(arg));
-            return;
-          }
-          process.stderr.write(
-            `unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`,
-          );
-          const err = new Error(`unsupported shell: ${shellOrInstall}`) as Error & {
-            exitCode: number;
-          };
-          err.exitCode = 2;
-          throw err;
-        },
-      ),
+      .action(async (shellOrInstall: string, _installArgs: string[], opts: InstallOpts) => {
+        const arg = shellOrInstall.toLowerCase();
+        if (arg === "install") {
+          await runInstall(opts);
+          return;
+        }
+        if (arg === "bash" || arg === "zsh" || arg === "fish") {
+          process.stdout.write(getShimScript(arg));
+          return;
+        }
+        process.stderr.write(`unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`);
+        const err = new Error(`unsupported shell: ${shellOrInstall}`) as Error & {
+          exitCode: number;
+        };
+        err.exitCode = 2;
+        throw err;
+      }),
     { flags: { "--shell": { enum: ["bash", "zsh", "fish"] } } },
   );
 }

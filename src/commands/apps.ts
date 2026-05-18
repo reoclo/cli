@@ -36,7 +36,8 @@ export function registerApps(program: Command): void {
     });
 
   withCompletion(
-    g.command("get <idOrSlug>")
+    g
+      .command("get <idOrSlug>")
       .description("show details for one application")
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
@@ -49,10 +50,9 @@ export function registerApps(program: Command): void {
     { args: [{ slot: 0, resource: "apps" }] },
   );
 
-  const deployCmd = withCompletion(
-    g.command("deploy <idOrSlug>"),
-    { args: [{ slot: 0, resource: "apps" }] },
-  );
+  const deployCmd = withCompletion(g.command("deploy <idOrSlug>"), {
+    args: [{ slot: 0, resource: "apps" }],
+  });
   requireCapability(deployCmd, "app:deploy");
   deployCmd
     .description("trigger a deployment for an application")
@@ -98,57 +98,56 @@ export function registerApps(program: Command): void {
     });
 
   withCompletion(
-    g.command("logs <idOrSlug>")
-    .description("fetch container logs for an application")
-    .option("--tail <n>", "number of lines to return", "200")
-    .option("--search <term>", "substring filter applied server-side")
-    .option("--since <ts>", "RFC 3339 timestamp; only return lines after this time")
-    .action(
-      async (
-        idOrSlug: string,
-        opts: { tail?: string; search?: string; since?: string },
-      ) => {
-        const fmt = resolveFormat(globalOutput(program));
-        const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
-        const appId = await resolveApp(ctx.client, tid, idOrSlug);
+    g
+      .command("logs <idOrSlug>")
+      .description("fetch container logs for an application")
+      .option("--tail <n>", "number of lines to return", "200")
+      .option("--search <term>", "substring filter applied server-side")
+      .option("--since <ts>", "RFC 3339 timestamp; only return lines after this time")
+      .action(
+        async (idOrSlug: string, opts: { tail?: string; search?: string; since?: string }) => {
+          const fmt = resolveFormat(globalOutput(program));
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
+          const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
-        const qs = new URLSearchParams();
-        if (opts.tail) qs.set("tail", opts.tail);
-        if (opts.search) qs.set("search", opts.search);
-        if (opts.since) qs.set("since", opts.since);
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+          const qs = new URLSearchParams();
+          if (opts.tail) qs.set("tail", opts.tail);
+          if (opts.search) qs.set("search", opts.search);
+          if (opts.since) qs.set("since", opts.since);
+          const suffix = qs.toString() ? `?${qs.toString()}` : "";
 
-        interface LogEntry {
-          timestamp?: string;
-          level?: string;
-          message: string;
-        }
-        interface LiveLogResponse {
-          entries: LogEntry[];
-          server_id: string;
-          source_name: string;
-        }
-        const res = await ctx.client.get<LiveLogResponse>(
-          `/tenants/${tid}/applications/${appId}/logs${suffix}`,
-        );
+          interface LogEntry {
+            timestamp?: string;
+            level?: string;
+            message: string;
+          }
+          interface LiveLogResponse {
+            entries: LogEntry[];
+            server_id: string;
+            source_name: string;
+          }
+          const res = await ctx.client.get<LiveLogResponse>(
+            `/tenants/${tid}/applications/${appId}/logs${suffix}`,
+          );
 
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(res as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        for (const e of res.entries) {
-          const ts = e.timestamp ?? "";
-          const lvl = e.level ? `[${e.level}] ` : "";
-          process.stdout.write(`${ts} ${lvl}${e.message}\n`);
-        }
-      },
-    ),
+          if (fmt === "json" || fmt === "yaml") {
+            printObject(res as unknown as Record<string, unknown>, fmt);
+            return;
+          }
+          for (const e of res.entries) {
+            const ts = e.timestamp ?? "";
+            const lvl = e.level ? `[${e.level}] ` : "";
+            process.stdout.write(`${ts} ${lvl}${e.message}\n`);
+          }
+        },
+      ),
     { args: [{ slot: 0, resource: "apps" }] },
   );
 
   withCompletion(
-    g.command("restart <idOrSlug>")
+    g
+      .command("restart <idOrSlug>")
       .description("restart the container backing an application")
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));

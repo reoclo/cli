@@ -60,9 +60,7 @@ function resolveSelfPath(): string {
       return realpathSync(candidate);
     }
   }
-  throw new Error(
-    `cannot resolve running CLI binary path (argv0=${argv0}, execPath=${execPath})`,
-  );
+  throw new Error(`cannot resolve running CLI binary path (argv0=${argv0}, execPath=${execPath})`);
 }
 
 function detectTarget(): BuildTarget {
@@ -122,7 +120,9 @@ export async function resolveLatestVersion(channel: string): Promise<string> {
   const headers = { Accept: "application/vnd.github+json" };
 
   if (channel === "stable") {
-    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers });
+    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+      headers,
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status} fetching latest release`);
     const data = (await r.json()) as GitHubRelease;
     if (typeof data.tag_name !== "string" || !data.tag_name) {
@@ -132,10 +132,9 @@ export async function resolveLatestVersion(channel: string): Promise<string> {
   }
 
   if (channel === "beta" || channel === "dev") {
-    const r = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`,
-      { headers },
-    );
+    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`, {
+      headers,
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status} fetching releases list`);
     const data = (await r.json()) as GitHubRelease[];
     if (!Array.isArray(data)) throw new Error("releases list response was not an array");
@@ -159,7 +158,10 @@ async function fetchBinary(url: string, progressLabel?: string): Promise<Buffer>
   if (!r.body || !progressLabel) {
     return Buffer.from(await r.arrayBuffer());
   }
-  const progress = createProgress(Number.isFinite(total) && total > 0 ? total : null, progressLabel);
+  const progress = createProgress(
+    Number.isFinite(total) && total > 0 ? total : null,
+    progressLabel,
+  );
   const reader = r.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
@@ -271,68 +273,68 @@ export function registerUpgrade(program: Command): void {
       .option("--version <ver>", "pin to a specific version (overrides --channel)")
       .option("--check", "only check, do not upgrade")
       .action(async (opts: UpgradeOpts) => {
-      const current = VERSION;
+        const current = VERSION;
 
-      // Resolve the version we want.
-      let latest: string;
-      if (opts.version) {
-        latest = opts.version.startsWith("v") ? opts.version : `v${opts.version}`;
-      } else {
+        // Resolve the version we want.
+        let latest: string;
+        if (opts.version) {
+          latest = opts.version.startsWith("v") ? opts.version : `v${opts.version}`;
+        } else {
+          try {
+            latest = await resolveLatestVersion(opts.channel);
+          } catch (err) {
+            const e = err as Error;
+            process.stderr.write(`Error: failed to resolve latest version (${e.message})\n`);
+            process.exit(7);
+          }
+        }
+
+        if (opts.check) {
+          process.stdout.write(`current: ${current}\n`);
+          process.stdout.write(`latest:  ${latest}\n`);
+          return;
+        }
+
+        if (!opts.version && latest === `v${current}`) {
+          process.stdout.write(`✓ already on latest (${current})\n`);
+          return;
+        }
+
+        const self = resolveSelfPath();
+
+        if (self.includes("/node_modules/")) {
+          process.stdout.write("Installed via npm. Upgrade with:\n");
+          process.stdout.write(`  npm i -g @reoclo/cli@${latest.replace(/^v/, "")}\n`);
+          return;
+        }
+        if (self.includes("/Cellar/") || self.toLowerCase().includes("/homebrew/")) {
+          process.stdout.write("Installed via Homebrew. Upgrade with:\n");
+          process.stdout.write("  brew upgrade reoclo/tap/reoclo\n");
+          return;
+        }
+
+        // Raw-binary install — perform the in-place swap.
         try {
-          latest = await resolveLatestVersion(opts.channel);
+          await selfUpgradeRawBinary(self, latest);
         } catch (err) {
           const e = err as Error;
-          process.stderr.write(`Error: failed to resolve latest version (${e.message})\n`);
-          process.exit(7);
-        }
-      }
-
-      if (opts.check) {
-        process.stdout.write(`current: ${current}\n`);
-        process.stdout.write(`latest:  ${latest}\n`);
-        return;
-      }
-
-      if (!opts.version && latest === `v${current}`) {
-        process.stdout.write(`✓ already on latest (${current})\n`);
-        return;
-      }
-
-      const self = resolveSelfPath();
-
-      if (self.includes("/node_modules/")) {
-        process.stdout.write("Installed via npm. Upgrade with:\n");
-        process.stdout.write(`  npm i -g @reoclo/cli@${latest.replace(/^v/, "")}\n`);
-        return;
-      }
-      if (self.includes("/Cellar/") || self.toLowerCase().includes("/homebrew/")) {
-        process.stdout.write("Installed via Homebrew. Upgrade with:\n");
-        process.stdout.write("  brew upgrade reoclo/tap/reoclo\n");
-        return;
-      }
-
-      // Raw-binary install — perform the in-place swap.
-      try {
-        await selfUpgradeRawBinary(self, latest);
-      } catch (err) {
-        const e = err as Error;
-        process.stderr.write(`Error: ${e.message}\n`);
-        try {
-          const target = detectTarget();
-          const url = `https://github.com/${GITHUB_REPO}/releases/download/${latest}/${target.binName}`;
-          process.stderr.write("Fallback: download the binary manually and replace it:\n");
-          process.stderr.write(`  curl -L -o reoclo ${url}\n`);
-          if (!target.isWindows) {
-            process.stderr.write("  chmod +x reoclo && sudo mv reoclo /usr/local/bin/reoclo\n");
+          process.stderr.write(`Error: ${e.message}\n`);
+          try {
+            const target = detectTarget();
+            const url = `https://github.com/${GITHUB_REPO}/releases/download/${latest}/${target.binName}`;
+            process.stderr.write("Fallback: download the binary manually and replace it:\n");
+            process.stderr.write(`  curl -L -o reoclo ${url}\n`);
+            if (!target.isWindows) {
+              process.stderr.write("  chmod +x reoclo && sudo mv reoclo /usr/local/bin/reoclo\n");
+            }
+          } catch {
+            process.stderr.write(
+              `Fallback: download the binary for your platform from https://github.com/${GITHUB_REPO}/releases/${latest}\n`,
+            );
           }
-        } catch {
-          process.stderr.write(
-            `Fallback: download the binary for your platform from https://github.com/${GITHUB_REPO}/releases/${latest}\n`,
-          );
+          process.exit(1);
         }
-        process.exit(1);
-      }
-    }),
+      }),
     { flags: { "--channel": { enum: ["stable", "beta", "dev"] } } },
   );
 }

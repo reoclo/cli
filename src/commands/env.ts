@@ -24,7 +24,8 @@ export function registerEnv(program: Command): void {
   const g = program.command("env").description("application environment variables");
 
   withCompletion(
-    g.command("ls")
+    g
+      .command("ls")
       .description("list env var keys (values are write-only and not returned by the API)")
       .requiredOption("--app <idOrSlug>", "application id or slug")
       .action(async (opts: { app: string }) => {
@@ -47,10 +48,7 @@ export function registerEnv(program: Command): void {
     { flags: { "--app": "apps" } },
   );
 
-  const setCmd = withCompletion(
-    g.command("set"),
-    { flags: { "--app": "apps" } },
-  );
+  const setCmd = withCompletion(g.command("set"), { flags: { "--app": "apps" } });
   requireCapability(setCmd, "app:env:write");
   setCmd
     .description("set or update env vars (KEY=VAL one or more)")
@@ -73,15 +71,13 @@ export function registerEnv(program: Command): void {
         vars.push({ key, value });
       }
 
-      await ctx.client.patch<EnvVarRead[]>(
-        `/tenants/${tid}/applications/${appId}/env/`,
-        { vars },
-      );
+      await ctx.client.patch<EnvVarRead[]>(`/tenants/${tid}/applications/${appId}/env/`, { vars });
       for (const v of vars) console.log(`✓ set ${v.key}`);
     });
 
   withCompletion(
-    g.command("rm")
+    g
+      .command("rm")
       .description("remove an env var")
       .requiredOption("--app <idOrSlug>", "application id or slug")
       .argument("<key>", "the env var key to remove")
@@ -89,7 +85,9 @@ export function registerEnv(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);
-        await ctx.client.del(`/tenants/${tid}/applications/${appId}/env/${encodeURIComponent(key)}`);
+        await ctx.client.del(
+          `/tenants/${tid}/applications/${appId}/env/${encodeURIComponent(key)}`,
+        );
         console.log(`✓ removed ${key}`);
       }),
     { args: [{ slot: 0, resource: "envKeys" }], flags: { "--app": "apps" } },
@@ -97,7 +95,8 @@ export function registerEnv(program: Command): void {
 
   // env get is intentionally NOT implemented: the API never returns values.
   withCompletion(
-    g.command("get")
+    g
+      .command("get")
       .description("(unsupported — values are write-only via the API; view in the dashboard)")
       .requiredOption("--app <idOrSlug>", "application id or slug")
       .argument("<key>", "the env var key")

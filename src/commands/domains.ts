@@ -19,11 +19,7 @@ interface VerifyResponse {
   expires_at: string;
 }
 
-async function resolveDomainId(
-  client: HttpClient,
-  tid: string,
-  fqdnOrId: string,
-): Promise<string> {
+async function resolveDomainId(client: HttpClient, tid: string, fqdnOrId: string): Promise<string> {
   if (UUID.test(fqdnOrId)) return fqdnOrId;
   const list = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
   const found = list.find((d) => d.fqdn === fqdnOrId);
@@ -64,13 +60,16 @@ export function registerDomains(program: Command): void {
       const tid = requireTenantId(ctx);
       const d = await ctx.client.post<Domain>(`/tenants/${tid}/domains/`, { fqdn });
       console.log(`✓ added ${d.fqdn} (id: ${d.id}, status: ${d.status})`);
-      console.log("Run 'reoclo domains verify <fqdn>' to fetch the TXT record needed for verification.");
+      console.log(
+        "Run 'reoclo domains verify <fqdn>' to fetch the TXT record needed for verification.",
+      );
       // For -o json, also dump the full record
       if (fmt === "json") printObject(d as unknown as Record<string, unknown>, fmt);
     });
 
   withCompletion(
-    g.command("verify <fqdnOrId>")
+    g
+      .command("verify <fqdnOrId>")
       .description("fetch the TXT record needed to verify a domain")
       .action(async (fqdnOrId: string) => {
         const ctx = await bootstrap();

@@ -36,7 +36,8 @@ export function registerDeployments(program: Command): void {
   const g = program.command("deployments").description("deployment history");
 
   withCompletion(
-    g.command("ls")
+    g
+      .command("ls")
       .description("list deployments for the organization")
       .option("--app <idOrSlug>", "filter by application")
       .option("--skip <n>", "pagination skip", "0")
@@ -72,7 +73,8 @@ export function registerDeployments(program: Command): void {
   );
 
   withCompletion(
-    g.command("get <id>")
+    g
+      .command("get <id>")
       .description("show full deployment details (including build stages)")
       .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
       .action(async (id: string, opts: { app: string }) => {
@@ -89,43 +91,46 @@ export function registerDeployments(program: Command): void {
   );
 
   withCompletion(
-    g.command("logs <id>")
-      .description("show deployment build stage logs (--build) or runtime logs (--runtime, not yet available)")
+    g
+      .command("logs <id>")
+      .description(
+        "show deployment build stage logs (--build) or runtime logs (--runtime, not yet available)",
+      )
       .option("--build", "show build stage logs (concatenated by stage)")
       .option("--runtime", "show runtime logs (not yet available)")
       .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
       .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app: string }) => {
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
 
-      if (opts.runtime) {
-        process.stderr.write(
-          "runtime logs are not yet available via this endpoint; use the dashboard or check container logs\n",
+        if (opts.runtime) {
+          process.stderr.write(
+            "runtime logs are not yet available via this endpoint; use the dashboard or check container logs\n",
+          );
+          process.exit(1);
+        }
+
+        // Default: build stage logs (also explicit --build)
+        const appId = await resolveApp(ctx.client, tid, opts.app);
+        const dep = await ctx.client.get<DeploymentWithStages>(
+          `/tenants/${tid}/applications/${appId}/deployments/${id}`,
         );
-        process.exit(1);
-      }
-
-      // Default: build stage logs (also explicit --build)
-      const appId = await resolveApp(ctx.client, tid, opts.app);
-      const dep = await ctx.client.get<DeploymentWithStages>(
-        `/tenants/${tid}/applications/${appId}/deployments/${id}`,
-      );
-      const stages = dep.stages ?? [];
-      if (stages.length === 0) {
-        process.stderr.write("no build stages found for this deployment\n");
-        process.exit(0);
-      }
-      for (const stage of stages) {
-        process.stdout.write(`=== ${stage.name ?? "stage"} (${stage.status ?? "?"}) ===\n`);
-        const lines = stage.log_tail ?? [];
-        for (const line of lines) {
-          process.stdout.write(line + "\n");
+        const stages = dep.stages ?? [];
+        if (stages.length === 0) {
+          process.stderr.write("no build stages found for this deployment\n");
+          process.exit(0);
         }
-        if (stage.error_message) {
-          process.stdout.write(`ERROR: ${stage.error_message}\n`);
+        for (const stage of stages) {
+          process.stdout.write(`=== ${stage.name ?? "stage"} (${stage.status ?? "?"}) ===\n`);
+          const lines = stage.log_tail ?? [];
+          for (const line of lines) {
+            process.stdout.write(line + "\n");
+          }
+          if (stage.error_message) {
+            process.stdout.write(`ERROR: ${stage.error_message}\n`);
+          }
         }
-      }
-    }),
+      }),
     { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
   );
 }

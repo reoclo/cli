@@ -36,7 +36,8 @@ export function registerServers(program: Command): void {
     });
 
   withCompletion(
-    g.command("get <idOrSlug>")
+    g
+      .command("get <idOrSlug>")
       .description("show details for one server")
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
@@ -50,7 +51,8 @@ export function registerServers(program: Command): void {
   );
 
   withCompletion(
-    g.command("metrics <idOrSlug>")
+    g
+      .command("metrics <idOrSlug>")
       .description("show CPU/RAM/disk metrics for a server")
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
@@ -66,7 +68,8 @@ export function registerServers(program: Command): void {
   );
 
   withCompletion(
-    g.command("set-slug <idOrSlug> <newSlug>")
+    g
+      .command("set-slug <idOrSlug> <newSlug>")
       .description("change a server's slug (URL- and CLI-safe identifier)")
       .action(async (idOrSlug: string, newSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
@@ -75,10 +78,9 @@ export function registerServers(program: Command): void {
         const id = await resolveServer(ctx.client, tid, idOrSlug);
 
         const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
-        const updated = await ctx.client.patch<Server>(
-          `/tenants/${tid}/servers/${id}`,
-          { slug: newSlug },
-        );
+        const updated = await ctx.client.patch<Server>(`/tenants/${tid}/servers/${id}`, {
+          slug: newSlug,
+        });
 
         if (fmt === "json") {
           printObject(updated as unknown as Record<string, unknown>, fmt);

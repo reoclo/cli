@@ -18,10 +18,10 @@ interface ExecResponse {
 }
 
 export function registerExec(program: Command): void {
-  const execCmd = withCompletion(
-    program.command("exec <serverIdOrName> [command...]"),
-    { args: [{ slot: 0, resource: "servers" }], flags: { "--scope": { enum: ["host", "rootless"] } } },
-  );
+  const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
+    args: [{ slot: 0, resource: "servers" }],
+    flags: { "--scope": { enum: ["host", "rootless"] } },
+  });
   requireCapability(execCmd, "server:exec");
   execCmd
     .description(
@@ -42,11 +42,7 @@ export function registerExec(program: Command): void {
       },
       {} as Record<string, string>,
     )
-    .option(
-      "--scope <scope>",
-      "execution scope: host or rootless (default host)",
-      "host",
-    )
+    .option("--scope <scope>", "execution scope: host or rootless (default host)", "host")
     .action(
       async (
         serverIdOrName: string,
