@@ -1,11 +1,16 @@
 // src/commands/completion.ts
 //
-// Tab completion for the Reoclo CLI. Two surfaces:
+// Tab completion for the Reoclo CLI. Four surfaces:
 //
 //   1. `reoclo completion <shell>` — emit the shell shim (a tiny script that
 //      defers all completion logic back to `reoclo __complete`).
 //   2. `reoclo completion install` — write the shim to disk and wire it into
 //      the user's rc file.
+//   3. `reoclo completion warm` — pre-populate the local completion cache from
+//      the server index endpoint.
+//   4. `reoclo __refresh-completion` (hidden) — silently refresh the cache in
+//      the background; invoked automatically after commands that mutate
+//      resources.
 //
 // The actual candidate computation lives in src/completion/engine.ts. The
 // hidden `__complete` command (registered here) is what the shim invokes.
@@ -19,6 +24,7 @@ import { withCompletion } from "../client/command-meta";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { fetchCompletionIndex } from "../completion/index-client";
 import { writeAllSlices } from "../completion/cache";
+import { NotFoundError } from "../client/errors";
 
 type Shell = "bash" | "zsh" | "fish";
 
@@ -201,8 +207,8 @@ async function runInstall(opts: InstallOpts): Promise<void> {
   }
 
   try {
-    await warmCache(undefined);
-    process.stdout.write("✓ completion cache warmed\n");
+    const warmed = await warmCache(undefined);
+    if (warmed) process.stdout.write("✓ completion cache warmed\n");
   } catch {
     // not logged in / offline — warming is optional during install
   }
@@ -225,7 +231,7 @@ function parseCompleteArgs(args: string[]): { words: string[]; current: string }
 
 /** Fetch the completion index and write every slice. Returns false (with a
  *  soft notice) if the API has no /completion-index endpoint yet. */
-async function warmCache(profile?: string): Promise<boolean> {
+export async function warmCache(profile?: string): Promise<boolean> {
   const ctx = await bootstrap({ profile });
   const tid = requireTenantId(ctx);
   try {
@@ -233,8 +239,7 @@ async function warmCache(profile?: string): Promise<boolean> {
     writeAllSlices(slices);
     return true;
   } catch (err) {
-    const status = (err as { status?: number }).status;
-    if (status === 404) {
+    if (err instanceof NotFoundError) {
       process.stderr.write(
         "completion: this Reoclo API does not support `completion warm` yet — skipping\n",
       );
