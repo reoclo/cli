@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { printObject, resolveFormat } from "../ui/output";
-import { requireCapability } from "../client/command-meta";
+import { requireCapability, withCompletion } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -18,8 +18,10 @@ interface ExecResponse {
 }
 
 export function registerExec(program: Command): void {
-  const execCmd = program
-    .command("exec <serverIdOrName> [command...]");
+  const execCmd = withCompletion(
+    program.command("exec <serverIdOrName> [command...]"),
+    { args: [{ slot: 0, resource: "servers" }], flags: { "--scope": { enum: ["host", "rootless"] } } },
+  );
   requireCapability(execCmd, "server:exec");
   execCmd
     .description(

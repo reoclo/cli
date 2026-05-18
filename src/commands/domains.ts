@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Domain } from "../client/types";
 import type { HttpClient } from "../client/http";
+import { withCompletion } from "../client/command-meta";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,18 +69,21 @@ export function registerDomains(program: Command): void {
       if (fmt === "json") printObject(d as unknown as Record<string, unknown>, fmt);
     });
 
-  g.command("verify <fqdnOrId>")
-    .description("fetch the TXT record needed to verify a domain")
-    .action(async (fqdnOrId: string) => {
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
-      const r = await ctx.client.post<VerifyResponse>(`/tenants/${tid}/domains/${id}/verify`);
-      console.log("Add this DNS TXT record to verify the domain:");
-      console.log(`  Name:    ${r.txt_name}`);
-      console.log(`  Value:   ${r.txt_value}`);
-      console.log(`  Expires: ${r.expires_at}`);
-      console.log("\nThe verification job runs every few minutes; once the TXT is observed,");
-      console.log("the domain status will update from 'pending' to 'verified'.");
-    });
+  withCompletion(
+    g.command("verify <fqdnOrId>")
+      .description("fetch the TXT record needed to verify a domain")
+      .action(async (fqdnOrId: string) => {
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
+        const r = await ctx.client.post<VerifyResponse>(`/tenants/${tid}/domains/${id}/verify`);
+        console.log("Add this DNS TXT record to verify the domain:");
+        console.log(`  Name:    ${r.txt_name}`);
+        console.log(`  Value:   ${r.txt_value}`);
+        console.log(`  Expires: ${r.expires_at}`);
+        console.log("\nThe verification job runs every few minutes; once the TXT is observed,");
+        console.log("the domain status will update from 'pending' to 'verified'.");
+      }),
+    { args: [{ slot: 0, resource: "domains" }] },
+  );
 }

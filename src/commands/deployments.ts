@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Deployment } from "../client/types";
+import { withCompletion } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -34,59 +35,66 @@ interface PaginatedDeployments {
 export function registerDeployments(program: Command): void {
   const g = program.command("deployments").description("deployment history");
 
-  g.command("ls")
-    .description("list deployments for the organization")
-    .option("--app <idOrSlug>", "filter by application")
-    .option("--skip <n>", "pagination skip", "0")
-    .option("--limit <n>", "pagination limit", "20")
-    .action(async (opts: { app?: string; skip?: string; limit?: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const params = new URLSearchParams();
-      if (opts.skip) params.set("skip", opts.skip);
-      if (opts.limit) params.set("limit", opts.limit);
-      if (opts.app) {
+  withCompletion(
+    g.command("ls")
+      .description("list deployments for the organization")
+      .option("--app <idOrSlug>", "filter by application")
+      .option("--skip <n>", "pagination skip", "0")
+      .option("--limit <n>", "pagination limit", "20")
+      .action(async (opts: { app?: string; skip?: string; limit?: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const params = new URLSearchParams();
+        if (opts.skip) params.set("skip", opts.skip);
+        if (opts.limit) params.set("limit", opts.limit);
+        if (opts.app) {
+          const appId = await resolveApp(ctx.client, tid, opts.app);
+          params.set("application_id", appId);
+        }
+        const qs = params.toString();
+        const path = `/tenants/${tid}/deployments/${qs ? `?${qs}` : ""}`;
+        const res = await ctx.client.get<PaginatedDeployments>(path);
+        printList(
+          res.items,
+          [
+            { key: "id", label: "ID" },
+            { key: "application_name", label: "APP" },
+            { key: "deployment_number", label: "#" },
+            { key: "status", label: "STATUS" },
+            { key: "commit_sha", label: "COMMIT" },
+            { key: "started_at", label: "STARTED" },
+          ],
+          fmt,
+        );
+      }),
+    { flags: { "--app": "apps" } },
+  );
+
+  withCompletion(
+    g.command("get <id>")
+      .description("show full deployment details (including build stages)")
+      .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
+      .action(async (id: string, opts: { app: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);
-        params.set("application_id", appId);
-      }
-      const qs = params.toString();
-      const path = `/tenants/${tid}/deployments/${qs ? `?${qs}` : ""}`;
-      const res = await ctx.client.get<PaginatedDeployments>(path);
-      printList(
-        res.items,
-        [
-          { key: "id", label: "ID" },
-          { key: "application_name", label: "APP" },
-          { key: "deployment_number", label: "#" },
-          { key: "status", label: "STATUS" },
-          { key: "commit_sha", label: "COMMIT" },
-          { key: "started_at", label: "STARTED" },
-        ],
-        fmt,
-      );
-    });
+        const dep = await ctx.client.get<DeploymentWithStages>(
+          `/tenants/${tid}/applications/${appId}/deployments/${id}`,
+        );
+        printObject(dep as unknown as Record<string, unknown>, fmt);
+      }),
+    { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
+  );
 
-  g.command("get <id>")
-    .description("show full deployment details (including build stages)")
-    .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
-    .action(async (id: string, opts: { app: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const appId = await resolveApp(ctx.client, tid, opts.app);
-      const dep = await ctx.client.get<DeploymentWithStages>(
-        `/tenants/${tid}/applications/${appId}/deployments/${id}`,
-      );
-      printObject(dep as unknown as Record<string, unknown>, fmt);
-    });
-
-  g.command("logs <id>")
-    .description("show deployment build stage logs (--build) or runtime logs (--runtime, not yet available)")
-    .option("--build", "show build stage logs (concatenated by stage)")
-    .option("--runtime", "show runtime logs (not yet available)")
-    .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
-    .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app: string }) => {
+  withCompletion(
+    g.command("logs <id>")
+      .description("show deployment build stage logs (--build) or runtime logs (--runtime, not yet available)")
+      .option("--build", "show build stage logs (concatenated by stage)")
+      .option("--runtime", "show runtime logs (not yet available)")
+      .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
+      .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app: string }) => {
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
 
@@ -117,5 +125,7 @@ export function registerDeployments(program: Command): void {
           process.stdout.write(`ERROR: ${stage.error_message}\n`);
         }
       }
-    });
+    }),
+    { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
+  );
 }

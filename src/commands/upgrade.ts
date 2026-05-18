@@ -15,6 +15,7 @@ import { argv0, execPath, platform as nodePlatform, arch as nodeArch } from "nod
 import { createHash } from "node:crypto";
 import { VERSION } from "../index";
 import { createProgress } from "../ui/progress";
+import { withCompletion } from "../client/command-meta";
 
 interface UpgradeOpts {
   channel: string;
@@ -262,13 +263,14 @@ async function selfUpgradeRawBinary(currentPath: string, tag: string): Promise<v
 }
 
 export function registerUpgrade(program: Command): void {
-  program
-    .command("upgrade")
-    .description("self-update the CLI (or print upgrade instructions for managed installs)")
-    .option("--channel <name>", "stable | beta | dev", "stable")
-    .option("--version <ver>", "pin to a specific version (overrides --channel)")
-    .option("--check", "only check, do not upgrade")
-    .action(async (opts: UpgradeOpts) => {
+  withCompletion(
+    program
+      .command("upgrade")
+      .description("self-update the CLI (or print upgrade instructions for managed installs)")
+      .option("--channel <name>", "stable | beta | dev", "stable")
+      .option("--version <ver>", "pin to a specific version (overrides --channel)")
+      .option("--check", "only check, do not upgrade")
+      .action(async (opts: UpgradeOpts) => {
       const current = VERSION;
 
       // Resolve the version we want.
@@ -330,5 +332,7 @@ export function registerUpgrade(program: Command): void {
         }
         process.exit(1);
       }
-    });
+    }),
+    { flags: { "--channel": { enum: ["stable", "beta", "dev"] } } },
+  );
 }

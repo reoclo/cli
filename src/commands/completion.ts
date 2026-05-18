@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCompletionCandidates } from "../completion/engine";
+import { withCompletion } from "../client/command-meta";
 
 type Shell = "bash" | "zsh" | "fish";
 
@@ -246,37 +247,40 @@ export function registerCompletion(program: Command): void {
   // existing `reoclo completion bash > foo` invocations still work. The
   // single positional accepts a shell name (emit shim) or the literal
   // "install" (write + wire into rc).
-  program
-    .command("completion <shellOrInstall> [installArgs...]")
-    .description(
-      "emit a shell completion shim (bash | zsh | fish), or `install` to write + wire it",
-    )
-    .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
-    .option("--force", "(install only) overwrite an existing completion file without prompting")
-    .option("--print", "(install only) print what would happen; don't write anything")
-    .action(
-      async (
-        shellOrInstall: string,
-        _installArgs: string[],
-        opts: InstallOpts,
-      ) => {
-        const arg = shellOrInstall.toLowerCase();
-        if (arg === "install") {
-          await runInstall(opts);
-          return;
-        }
-        if (arg === "bash" || arg === "zsh" || arg === "fish") {
-          process.stdout.write(getShimScript(arg));
-          return;
-        }
-        process.stderr.write(
-          `unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`,
-        );
-        const err = new Error(`unsupported shell: ${shellOrInstall}`) as Error & {
-          exitCode: number;
-        };
-        err.exitCode = 2;
-        throw err;
-      },
-    );
+  withCompletion(
+    program
+      .command("completion <shellOrInstall> [installArgs...]")
+      .description(
+        "emit a shell completion shim (bash | zsh | fish), or `install` to write + wire it",
+      )
+      .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
+      .option("--force", "(install only) overwrite an existing completion file without prompting")
+      .option("--print", "(install only) print what would happen; don't write anything")
+      .action(
+        async (
+          shellOrInstall: string,
+          _installArgs: string[],
+          opts: InstallOpts,
+        ) => {
+          const arg = shellOrInstall.toLowerCase();
+          if (arg === "install") {
+            await runInstall(opts);
+            return;
+          }
+          if (arg === "bash" || arg === "zsh" || arg === "fish") {
+            process.stdout.write(getShimScript(arg));
+            return;
+          }
+          process.stderr.write(
+            `unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`,
+          );
+          const err = new Error(`unsupported shell: ${shellOrInstall}`) as Error & {
+            exitCode: number;
+          };
+          err.exitCode = 2;
+          throw err;
+        },
+      ),
+    { flags: { "--shell": { enum: ["bash", "zsh", "fish"] } } },
+  );
 }

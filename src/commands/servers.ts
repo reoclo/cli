@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Server } from "../client/types";
+import { withCompletion } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -34,48 +35,57 @@ export function registerServers(program: Command): void {
       );
     });
 
-  g.command("get <idOrSlug>")
-    .description("show details for one server")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveServer(ctx.client, tid, idOrSlug);
-      const srv = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
-      printObject(srv as unknown as Record<string, unknown>, fmt);
-    });
+  withCompletion(
+    g.command("get <idOrSlug>")
+      .description("show details for one server")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveServer(ctx.client, tid, idOrSlug);
+        const srv = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
+        printObject(srv as unknown as Record<string, unknown>, fmt);
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 
-  g.command("metrics <idOrSlug>")
-    .description("show CPU/RAM/disk metrics for a server")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveServer(ctx.client, tid, idOrSlug);
-      const m = await ctx.client.get<Record<string, unknown>>(
-        `/tenants/${tid}/servers/${id}/metrics`,
-      );
-      printObject(m, fmt);
-    });
+  withCompletion(
+    g.command("metrics <idOrSlug>")
+      .description("show CPU/RAM/disk metrics for a server")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveServer(ctx.client, tid, idOrSlug);
+        const m = await ctx.client.get<Record<string, unknown>>(
+          `/tenants/${tid}/servers/${id}/metrics`,
+        );
+        printObject(m, fmt);
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 
-  g.command("set-slug <idOrSlug> <newSlug>")
-    .description("change a server's slug (URL- and CLI-safe identifier)")
-    .action(async (idOrSlug: string, newSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveServer(ctx.client, tid, idOrSlug);
+  withCompletion(
+    g.command("set-slug <idOrSlug> <newSlug>")
+      .description("change a server's slug (URL- and CLI-safe identifier)")
+      .action(async (idOrSlug: string, newSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveServer(ctx.client, tid, idOrSlug);
 
-      const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
-      const updated = await ctx.client.patch<Server>(
-        `/tenants/${tid}/servers/${id}`,
-        { slug: newSlug },
-      );
+        const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
+        const updated = await ctx.client.patch<Server>(
+          `/tenants/${tid}/servers/${id}`,
+          { slug: newSlug },
+        );
 
-      if (fmt === "json") {
-        printObject(updated as unknown as Record<string, unknown>, fmt);
-        return;
-      }
-      process.stdout.write(`✓ slug updated: ${before.slug} → ${updated.slug}\n`);
-    });
+        if (fmt === "json") {
+          printObject(updated as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        process.stdout.write(`✓ slug updated: ${before.slug} → ${updated.slug}\n`);
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 }

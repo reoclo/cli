@@ -5,6 +5,7 @@ import { resolveServer } from "../client/resolve";
 import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tunnel-session";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { OutputFormat } from "../ui/output";
+import { withCompletion } from "../client/command-meta";
 
 // ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
 
@@ -273,9 +274,10 @@ export function buildTunnelListPath(tenantId: string, qs: string): string {
 }
 
 export function registerTunnel(program: Command): void {
-  const tunnelCmd = program
-    .command("tunnel [serverIdOrName]")
-    .description(
+  const tunnelCmd = withCompletion(
+    program
+      .command("tunnel [serverIdOrName]")
+      .description(
       "open a TCP/UDP tunnel through a Reoclo runner (forward -L or reverse -R), or manage existing sessions",
     )
     .option(
@@ -387,10 +389,13 @@ export function registerTunnel(program: Command): void {
         console.error(`tunnel: ${msg}`);
         process.exit(1);
       }
-    });
+    }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 
   // ── tunnel ls ──────────────────────────────────────────────────────────────
-  tunnelCmd
+  withCompletion(
+    tunnelCmd
     .command("ls")
     .description("list tunnel sessions in the organization")
     .option("--server <slug>", "filter by server slug or ID")
@@ -418,69 +423,77 @@ export function registerTunnel(program: Command): void {
         console.error(`tunnel: ${msg}`);
         process.exit(1);
       }
-    });
+    }),
+    { flags: { "--server": "servers" } },
+  );
 
   // ── tunnel describe <tunnel_id> ────────────────────────────────────────────
-  tunnelCmd
-    .command("describe <tunnelId>")
-    .description("show full details for a tunnel session")
-    .action(async (tunnelId: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      try {
-        const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
-        const session = await ctx.client.get<TunnelSessionRead>(`/tenants/${tid}/tunnels/${tunnelId}`);
-        formatTunnelDescribe(session, fmt);
-      } catch (err) {
-        if (err instanceof Error && err.name === "NotFoundError") {
-          console.error(`tunnel: no session "${tunnelId}" found in your organization`);
+  withCompletion(
+    tunnelCmd
+      .command("describe <tunnelId>")
+      .description("show full details for a tunnel session")
+      .action(async (tunnelId: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        try {
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
+          const session = await ctx.client.get<TunnelSessionRead>(`/tenants/${tid}/tunnels/${tunnelId}`);
+          formatTunnelDescribe(session, fmt);
+        } catch (err) {
+          if (err instanceof Error && err.name === "NotFoundError") {
+            console.error(`tunnel: no session "${tunnelId}" found in your organization`);
+            process.exit(1);
+          }
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`tunnel: ${msg}`);
           process.exit(1);
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`tunnel: ${msg}`);
-        process.exit(1);
-      }
-    });
+      }),
+    { args: [{ slot: 0, resource: "tunnels" }] },
+  );
 
   // ── tunnel close <tunnel_id> ───────────────────────────────────────────────
-  tunnelCmd
-    .command("close <tunnelId>")
-    .description("request graceful close of a live tunnel session")
-    .action(async (tunnelId: string) => {
-      try {
-        const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
-
-        let result: TunnelCloseResponse;
+  withCompletion(
+    tunnelCmd
+      .command("close <tunnelId>")
+      .description("request graceful close of a live tunnel session")
+      .action(async (tunnelId: string) => {
         try {
-          result = await ctx.client.post<TunnelCloseResponse>(`/tenants/${tid}/tunnels/${tunnelId}/close`);
-        } catch (err) {
-          if (err instanceof Error) {
-            if (err.name === "NotFoundError") {
-              console.error(`tunnel: no session "${tunnelId}" found in your organization`);
-              process.exit(1);
-            }
-            // 409 Conflict — session already closed
-            if ("status" in err && (err as { status: number }).status === 409) {
-              console.error(`tunnel: ${tunnelId} is already closed`);
-              process.exit(1);
-            }
-          }
-          throw err;
-        }
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
 
-        process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
-        if (!result.gateway_found) {
-          process.stdout.write(
-            "tunnel: note — gateway-ws had no live tunnel for this session; the audit record may be stale\n",
-          );
+          let result: TunnelCloseResponse;
+          try {
+            result = await ctx.client.post<TunnelCloseResponse>(`/tenants/${tid}/tunnels/${tunnelId}/close`);
+          } catch (err) {
+            if (err instanceof Error) {
+              if (err.name === "NotFoundError") {
+                console.error(`tunnel: no session "${tunnelId}" found in your organization`);
+                process.exit(1);
+              }
+              // 409 Conflict — session already closed
+              if ("status" in err && (err as { status: number }).status === 409) {
+                console.error(`tunnel: ${tunnelId} is already closed`);
+                process.exit(1);
+              }
+            }
+            throw err;
+          }
+
+          process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
+          if (!result.gateway_found) {
+            process.stdout.write(
+              "tunnel: note — gateway-ws had no live tunnel for this session; the audit record may be stale\n",
+            );
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`tunnel: ${msg}`);
+          process.exit(1);
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`tunnel: ${msg}`);
-        process.exit(1);
-      }
-    });
+      }),
+    { args: [{ slot: 0, resource: "tunnels" }] },
+  );
 }
 
 function deriveDirectUrl(streamsUrl: string): string {

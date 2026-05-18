@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
+import { withCompletion } from "../client/command-meta";
 
 export const SUBPROTOCOL_VERSION = "v1";
 
@@ -28,7 +29,8 @@ interface ShellOptions {
 }
 
 export function registerShell(program: Command): void {
-  program
+  withCompletion(
+    program
     .command("shell <serverIdOrName>")
     .description("open an interactive shell on a server via the runner")
     .option(
@@ -178,5 +180,7 @@ export function registerShell(program: Command): void {
         e.exitCode = exitCode;
         throw e;
       }
-    });
+    }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 }

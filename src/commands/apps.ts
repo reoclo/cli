@@ -4,7 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { printList, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
-import { requireCapability } from "../client/command-meta";
+import { requireCapability, withCompletion } from "../client/command-meta";
 
 function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
@@ -35,18 +35,24 @@ export function registerApps(program: Command): void {
       );
     });
 
-  g.command("get <idOrSlug>")
-    .description("show details for one application")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveApp(ctx.client, tid, idOrSlug);
-      const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
-      printObject(app as unknown as Record<string, unknown>, fmt);
-    });
+  withCompletion(
+    g.command("get <idOrSlug>")
+      .description("show details for one application")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveApp(ctx.client, tid, idOrSlug);
+        const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
+        printObject(app as unknown as Record<string, unknown>, fmt);
+      }),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 
-  const deployCmd = g.command("deploy <idOrSlug>");
+  const deployCmd = withCompletion(
+    g.command("deploy <idOrSlug>"),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
   requireCapability(deployCmd, "app:deploy");
   deployCmd
     .description("trigger a deployment for an application")
@@ -91,7 +97,8 @@ export function registerApps(program: Command): void {
       }
     });
 
-  g.command("logs <idOrSlug>")
+  withCompletion(
+    g.command("logs <idOrSlug>")
     .description("fetch container logs for an application")
     .option("--tail <n>", "number of lines to return", "200")
     .option("--search <term>", "substring filter applied server-side")
@@ -136,42 +143,47 @@ export function registerApps(program: Command): void {
           process.stdout.write(`${ts} ${lvl}${e.message}\n`);
         }
       },
-    );
+    ),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 
-  g.command("restart <idOrSlug>")
-    .description("restart the container backing an application")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const appId = await resolveApp(ctx.client, tid, idOrSlug);
+  withCompletion(
+    g.command("restart <idOrSlug>")
+      .description("restart the container backing an application")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
-      interface RestartResponse {
-        application_id: string;
-        container_name: string;
-        exit_code: number;
-        stdout: string;
-        stderr: string;
-      }
-      const res = await ctx.client.post<RestartResponse>(
-        `/tenants/${tid}/applications/${appId}/restart`,
-        {},
-      );
-
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(res as unknown as Record<string, unknown>, fmt);
-        return;
-      }
-      if (res.exit_code === 0) {
-        console.log(`✓ restarted ${res.container_name}`);
-      } else {
-        process.stderr.write(
-          `✗ restart of ${res.container_name} failed (exit ${res.exit_code})\n`,
+        interface RestartResponse {
+          application_id: string;
+          container_name: string;
+          exit_code: number;
+          stdout: string;
+          stderr: string;
+        }
+        const res = await ctx.client.post<RestartResponse>(
+          `/tenants/${tid}/applications/${appId}/restart`,
+          {},
         );
-        if (res.stderr) process.stderr.write(`  ${res.stderr.trim()}\n`);
-        const err = new Error("restart failed") as Error & { exitCode: number };
-        err.exitCode = 1;
-        throw err;
-      }
-    });
+
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(res as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        if (res.exit_code === 0) {
+          console.log(`✓ restarted ${res.container_name}`);
+        } else {
+          process.stderr.write(
+            `✗ restart of ${res.container_name} failed (exit ${res.exit_code})\n`,
+          );
+          if (res.stderr) process.stderr.write(`  ${res.stderr.trim()}\n`);
+          const err = new Error("restart failed") as Error & { exitCode: number };
+          err.exitCode = 1;
+          throw err;
+        }
+      }),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 }

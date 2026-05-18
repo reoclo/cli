@@ -1,6 +1,7 @@
 // src/commands/profile.ts
 import type { Command } from "commander";
 import { loadConfig, deleteProfile, setActiveProfile } from "../config/store";
+import { withCompletion } from "../client/command-meta";
 
 export function registerProfile(program: Command): void {
   const g = program.command("profile").description("manage named profiles");
@@ -18,13 +19,19 @@ export function registerProfile(program: Command): void {
     console.table(rows);
   });
 
-  g.command("use <name>").description("set active profile").action(async (name: string) => {
-    await setActiveProfile(name);
-    console.log(`✓ active profile: ${name}`);
-  });
+  withCompletion(
+    g.command("use <name>").description("set active profile").action(async (name: string) => {
+      await setActiveProfile(name);
+      console.log(`✓ active profile: ${name}`);
+    }),
+    { args: [{ slot: 0, resource: "profiles" }] },
+  );
 
-  g.command("rm <name>").description("remove a profile").action(async (name: string) => {
-    await deleteProfile(name);
-    console.log(`✓ removed: ${name}`);
-  });
+  withCompletion(
+    g.command("rm <name>").description("remove a profile").action(async (name: string) => {
+      await deleteProfile(name);
+      console.log(`✓ removed: ${name}`);
+    }),
+    { args: [{ slot: 0, resource: "profiles" }] },
+  );
 }
