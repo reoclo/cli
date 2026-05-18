@@ -43,17 +43,17 @@ export interface CompletionSpec {
   flags?: Record<string, ResourceRef>;
 }
 
-interface CommandWithCompletion {
+interface CommandWithCompletion extends Command {
   [COMPLETION_KEY]?: CompletionSpec;
 }
 
 /** Tag a command with its completion metadata. */
 export function withCompletion(cmd: Command, spec: CompletionSpec): Command {
-  (cmd as Command & CommandWithCompletion)[COMPLETION_KEY] = spec;
+  (cmd as CommandWithCompletion)[COMPLETION_KEY] = spec;
   return cmd;
 }
 
 /** Read the completion spec (null if untagged). */
 export function getCompletionSpec(cmd: Command): CompletionSpec | null {
-  return (cmd as Command & CommandWithCompletion)[COMPLETION_KEY] ?? null;
+  return (cmd as CommandWithCompletion)[COMPLETION_KEY] ?? null;
 }

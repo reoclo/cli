@@ -4,8 +4,9 @@ import {
   requireCapability,
   getRequiredCapability,
   ensureCapabilityOrExit,
+  withCompletion,
+  getCompletionSpec,
 } from "../../src/client/command-meta";
-import { withCompletion, getCompletionSpec } from "../../src/client/command-meta";
 
 describe("requireCapability", () => {
   test("attaches capability metadata to a command", () => {
@@ -58,5 +59,15 @@ describe("withCompletion", () => {
 
   test("returns null when no spec is set", () => {
     expect(getCompletionSpec(new Command("plain"))).toBeNull();
+  });
+
+  test("reads back a spec with both args and flags", () => {
+    const cmd = new Command("deploy");
+    const spec = {
+      args: [{ slot: 0, resource: "apps" as const }],
+      flags: { "--source": { enum: ["a", "b"] } },
+    };
+    withCompletion(cmd, spec);
+    expect(getCompletionSpec(cmd)).toEqual(spec);
   });
 });
