@@ -8,6 +8,7 @@ import { INDEX_KINDS } from "./types";
 import { sliceAge } from "./cache";
 
 const STALE_MS = 60_000;
+const REFRESH_SENTINEL = "__refresh-completion";
 
 /**
  * Given a process argv, return [executable, args] to re-invoke the CLI with
@@ -17,13 +18,17 @@ const STALE_MS = 60_000;
 export function reinvokeArgv(argv: string[]): [string, string[]] {
   const exe = argv[0] ?? process.execPath;
   const maybeScript = argv[1] ?? "";
-  if (/\.(ts|js|mjs)$/.test(maybeScript)) {
-    return [exe, [maybeScript, "__refresh-completion"]];
+  if (/\.(ts|js|mjs|cjs)$/.test(maybeScript)) {
+    return [exe, [maybeScript, REFRESH_SENTINEL]];
   }
-  return [exe, ["__refresh-completion"]];
+  return [exe, [REFRESH_SENTINEL]];
 }
 
-/** True if any index slice is older than the staleness threshold. */
+/**
+ * True if any index slice is older than the staleness threshold.
+ * Note: sliceAge reads the cache file once per kind, which is intentionally
+ * acceptable here because indexIsStale runs at most once per CLI invocation.
+ */
 export function indexIsStale(): boolean {
   return INDEX_KINDS.some((k) => sliceAge(k) > STALE_MS);
 }
