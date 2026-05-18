@@ -262,6 +262,16 @@ export function buildTunnelWsUrl(directUrl: string, serverId: string): string {
   return `${wsBase}/v1/tunnel?server_id=${encodeURIComponent(serverId)}`;
 }
 
+/**
+ * Build the path for `tunnel ls`. The trailing slash is mandatory: the API
+ * route is registered at "/", so the no-slash form triggers a 307 redirect
+ * whose Location drops the CLI's /mcp proxy prefix — the redirect then
+ * escapes Caddy's /mcp route and 404s.
+ */
+export function buildTunnelListPath(tenantId: string, qs: string): string {
+  return `/tenants/${tenantId}/tunnels/${qs ? `?${qs}` : ""}`;
+}
+
 export function registerTunnel(program: Command): void {
   const tunnelCmd = program
     .command("tunnel [serverIdOrName]")
@@ -400,8 +410,7 @@ export function registerTunnel(program: Command): void {
           params.set("active", "true");
         }
 
-        const qs = params.toString();
-        const path = `/tenants/${tid}/tunnels${qs ? `?${qs}` : ""}`;
+        const path = buildTunnelListPath(tid, params.toString());
         const list = await ctx.client.get<TunnelSessionRead[]>(path);
         formatTunnelTable(list, fmt);
       } catch (err) {
