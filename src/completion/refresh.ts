@@ -30,6 +30,9 @@ export function reinvokeArgv(argv: string[]): [string, string[]] {
  * acceptable here because indexIsStale runs at most once per CLI invocation.
  */
 export function indexIsStale(): boolean {
+  // sliceAge returns Infinity for a never-populated slice, so a fresh install
+  // where `completion warm` has never succeeded intentionally counts as stale
+  // and triggers a background refresh — do not "optimise" this away.
   return INDEX_KINDS.some((k) => sliceAge(k) > STALE_MS);
 }
 

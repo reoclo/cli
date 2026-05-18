@@ -129,6 +129,24 @@ describe("getCompletionCandidates", () => {
     expect(values(cands).sort()).toEqual(["DATABASE_URL", "SECRET_KEY"]);
   });
 
+  test("tunnel-style: merges subcommand names and resource arg candidates at slot 0", () => {
+    writeSlice("servers", [{ id: "1", value: "prod-web", name: "p", desc: "" }]);
+    const p = new Command().name("reoclo");
+    const tunnel = p.command("tunnel");
+    withCompletion(tunnel, { args: [{ slot: 0, resource: "servers" }] });
+    tunnel.command("ls");
+    tunnel.command("describe");
+    tunnel.command("close");
+    const cands = getCompletionCandidates(p, ["tunnel"], "");
+    const names = values(cands);
+    // subcommand names
+    expect(names).toContain("ls");
+    expect(names).toContain("describe");
+    expect(names).toContain("close");
+    // resource arg at slot 0
+    expect(names).toContain("prod-web");
+  });
+
   test("hidden commands are filtered from subcommand completion", () => {
     const p = new Command().name("reoclo");
     p.command("visible");
