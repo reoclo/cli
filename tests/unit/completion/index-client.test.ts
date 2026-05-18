@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseIndexResponse } from "../../../src/completion/index-client";
+import type { HttpClient } from "../../../src/client/http";
+import { fetchCompletionIndex, parseIndexResponse } from "../../../src/completion/index-client";
 
 describe("parseIndexResponse", () => {
   // The /completion-index endpoint already returns Entry-shaped objects
@@ -19,10 +20,29 @@ describe("parseIndexResponse", () => {
   });
 
   test("drops entries missing a required string field", () => {
-    const slices = parseIndexResponse({
-      resources: { servers: [{ id: "s1", value: "web", name: "Web" }] },
-    });
-    expect(slices.servers).toEqual([]);
+    // missing desc
+    expect(
+      parseIndexResponse({ resources: { servers: [{ id: "s1", value: "web", name: "Web" }] } })
+        .servers,
+    ).toEqual([]);
+
+    // missing name
+    expect(
+      parseIndexResponse({ resources: { servers: [{ id: "s1", value: "web", desc: "d" }] } })
+        .servers,
+    ).toEqual([]);
+
+    // empty-string id
+    expect(
+      parseIndexResponse({ resources: { servers: [{ id: "", value: "web", name: "Web", desc: "d" }] } })
+        .servers,
+    ).toEqual([]);
+
+    // empty-string value
+    expect(
+      parseIndexResponse({ resources: { servers: [{ id: "s1", value: "", name: "Web", desc: "d" }] } })
+        .servers,
+    ).toEqual([]);
   });
 
   test("ignores unknown resource keys", () => {
@@ -33,5 +53,26 @@ describe("parseIndexResponse", () => {
   test("returns {} on a malformed payload", () => {
     expect(parseIndexResponse(null)).toEqual({});
     expect(parseIndexResponse({ nope: 1 })).toEqual({});
+  });
+});
+
+describe("fetchCompletionIndex", () => {
+  test("requests the correct path and returns parsed slices", async () => {
+    const validEntry = { id: "s1", value: "web", name: "Web", desc: "Web — ACTIVE" };
+    const cannedPayload = { resources: { servers: [validEntry] } };
+    let calledPath = "";
+
+    const mockClient = {
+      get: (p: string) => {
+        calledPath = p;
+        return Promise.resolve(cannedPayload);
+      },
+    } as unknown as HttpClient;
+
+    const tenantId = "tenant-abc";
+    const result = await fetchCompletionIndex(mockClient, tenantId);
+
+    expect(calledPath).toBe(`/tenants/${tenantId}/completion-index`);
+    expect(result.servers).toEqual([validEntry]);
   });
 });

@@ -13,13 +13,18 @@ interface RawIndex {
   resources?: Record<string, unknown>;
 }
 
-/** True if `o` is an Entry — every required field a string. */
+/**
+ * True if `o` is an Entry.
+ * `id` and `value` must be non-empty strings (they are used as identifiers and
+ * TAB-completion values respectively). `name` and `desc` may be empty strings
+ * (e.g. a deployment's `desc` is its status, which can legitimately be "").
+ */
 function isEntry(o: unknown): o is Entry {
   if (!o || typeof o !== "object") return false;
   const r = o as Record<string, unknown>;
   return (
-    typeof r.id === "string" &&
-    typeof r.value === "string" &&
+    typeof r.id === "string" && r.id.length > 0 &&
+    typeof r.value === "string" && r.value.length > 0 &&
     typeof r.name === "string" &&
     typeof r.desc === "string"
   );
