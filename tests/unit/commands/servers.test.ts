@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
 import { registerServers } from "../../../src/commands/servers";
+import { getRequiredCapability } from "../../../src/client/command-meta";
 
 describe("reoclo servers", () => {
   test("set-slug subcommand is registered", () => {
@@ -40,4 +41,12 @@ test("servers reboot has a --yes flag", () => {
   const g = p.commands.find((c) => c.name() === "servers")!;
   const reboot = g.commands.find((c) => c.name() === "reboot")!;
   expect(reboot.options.map((o) => o.long)).toContain("--yes");
+});
+
+test("servers containers is gated by container:read", () => {
+  const p = new Command();
+  registerServers(p);
+  const g = p.commands.find((c) => c.name() === "servers")!;
+  const ctr = g.commands.find((c) => c.name() === "containers")!;
+  expect(getRequiredCapability(ctr)).toBe("container:read");
 });

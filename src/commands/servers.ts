@@ -4,7 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import type { Server } from "../client/types";
-import { withCompletion } from "../client/command-meta";
+import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { promptYesNo } from "../ui/prompt";
 
@@ -91,36 +91,35 @@ export function registerServers(program: Command): void {
     { args: [{ slot: 0, resource: "servers" }] },
   );
 
-  withCompletion(
-    g
-      .command("containers <idOrSlug>")
-      .description("list containers running on a server")
-      .option("--status <status>", "filter by container status")
-      .action(async (idOrSlug: string, opts: { status?: string }) => {
-        const fmt = resolveFormat(globalOutput(program));
-        const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
-        const sid = await resolveServer(ctx.client, tid, idOrSlug);
-        const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
-        const res = await ctx.client.get<{ containers: Array<Record<string, unknown>> }>(
-          `/tenants/${tid}/servers/${sid}/containers${qs}`,
-        );
-        printList(
-          res.containers,
-          [
-            { key: "name", label: "NAME" },
-            { key: "image", label: "IMAGE" },
-            { key: "status", label: "STATUS" },
-            { key: "state", label: "STATE" },
-          ],
-          fmt,
-        );
-      }),
-    {
-      args: [{ slot: 0, resource: "servers" }],
-      flags: { "--status": { enum: SERVER_CONTAINER_STATES } },
-    },
-  );
+  const serversContainersCmd = g
+    .command("containers <idOrSlug>")
+    .description("list containers running on a server")
+    .option("--status <status>", "filter by container status")
+    .action(async (idOrSlug: string, opts: { status?: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, idOrSlug);
+      const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+      const res = await ctx.client.get<{ containers: Array<Record<string, unknown>> }>(
+        `/tenants/${tid}/servers/${sid}/containers${qs}`,
+      );
+      printList(
+        res.containers,
+        [
+          { key: "name", label: "NAME" },
+          { key: "image", label: "IMAGE" },
+          { key: "status", label: "STATUS" },
+          { key: "state", label: "STATE" },
+        ],
+        fmt,
+      );
+    });
+  withCompletion(serversContainersCmd, {
+    args: [{ slot: 0, resource: "servers" }],
+    flags: { "--status": { enum: SERVER_CONTAINER_STATES } },
+  });
+  requireCapability(serversContainersCmd, "container:read");
 
   withCompletion(
     g
@@ -217,6 +216,7 @@ export function registerServers(program: Command): void {
       .description("reboot a server")
       .option("--yes", "skip the confirmation prompt")
       .action(async (idOrSlug: string, opts: { yes?: boolean }) => {
+        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
@@ -229,9 +229,13 @@ export function registerServers(program: Command): void {
             throw err;
           }
         }
-        const res = await ctx.client.post<{ message?: string }>(
+        const res = await ctx.client.post<{ message?: string } & Record<string, unknown>>(
           `/tenants/${tid}/servers/${sid}/reboot`,
         );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(res, fmt);
+          return;
+        }
         process.stdout.write(`✓ reboot signaled: ${idOrSlug}\n`);
         if (res.message) process.stdout.write(`  ${res.message}\n`);
       }),

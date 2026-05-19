@@ -40,7 +40,7 @@ function collectArr(value: string, prev: string[]): string[] {
 /** Parse `host:container[/proto]` into a port spec object. */
 function parsePort(spec: string): { host: number; container: number; protocol: string } {
   const slash = spec.split("/");
-  const protocol = slash[1] ?? "tcp";
+  const protocol = slash[1] || "tcp";
   const parts = (slash[0] ?? "").split(":");
   const host = Number(parts[0]);
   const container = Number(parts[1]);
