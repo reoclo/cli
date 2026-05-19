@@ -124,9 +124,9 @@ if (import.meta.main) {
     const ctx = await bootstrap();
 
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
-      const cmd = parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
+      const cmd = commandPath;
       const err = new Error(
-        `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec/shell.`,
+        `'${cmd}' requires a tenant key; automation keys can only run 'apps deploy', 'apps restart', 'exec', or 'shell'.`,
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;
