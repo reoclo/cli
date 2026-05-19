@@ -63,3 +63,22 @@ test("logs search --limit abc exits non-zero with validation message", async () 
   expect(r.exitCode).not.toBe(0);
   expect(r.stderr.toString()).toContain("invalid --limit");
 });
+
+test("logs search --limit 1.5 exits 2 with the documented message", async () => {
+  const r = await $`bun run src/index.ts logs search --limit 1.5`.env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("invalid --limit");
+  expect(r.stderr.toString()).toContain("1.5");
+});
+
+test("logs search --level potato exits non-zero with enum message", async () => {
+  const r = await $`bun run src/index.ts logs search --level potato`.env(env()).nothrow().quiet();
+  expect(r.exitCode).not.toBe(0);
+  const errOut = r.stderr.toString() + r.stdout.toString();
+  expect(errOut).toMatch(/Invalid|expected|enum|debug|info|warn|error|fatal/);
+});
+
+test("logs search --source-type bogus exits non-zero", async () => {
+  const r = await $`bun run src/index.ts logs search --source-type bogus`.env(env()).nothrow().quiet();
+  expect(r.exitCode).not.toBe(0);
+});
