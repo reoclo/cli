@@ -66,3 +66,24 @@ export function globalOutput(program: Command): string | undefined {
   const opts: Record<string, unknown> = program.opts();
   return typeof opts["output"] === "string" ? opts["output"] : undefined;
 }
+
+/**
+ * Print the result of a mutating command. Under `-o json` / `-o yaml`, dumps
+ * the response object via printObject. Otherwise writes the human-readable
+ * text line (a `✓ ...` summary) to stdout.
+ *
+ * Use this in every mutating command's success path so format-flag handling
+ * stays consistent.
+ */
+export function printMutation(
+  program: Command,
+  obj: Record<string, unknown>,
+  textLine: string,
+): void {
+  const fmt = resolveFormat(globalOutput(program));
+  if (fmt === "json" || fmt === "yaml") {
+    printObject(obj, fmt);
+    return;
+  }
+  process.stdout.write(textLine + "\n");
+}
