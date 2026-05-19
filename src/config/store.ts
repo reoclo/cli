@@ -42,6 +42,20 @@ export function loadConfig(): Promise<ConfigFile> {
   }
 }
 
+/** Synchronous variant used by the completion engine (must remain offline/total).
+ *  Returns the same defaulted shape as loadConfig; never throws — on any
+ *  read or parse error returns the EMPTY defaults. */
+export function loadConfigSync(): ConfigFile {
+  try {
+    const path = configFile();
+    if (!existsSync(path)) return structuredClone(EMPTY);
+    const raw = readFileSync(path, "utf8");
+    return { ...EMPTY, ...(JSON.parse(raw) as ConfigFile) };
+  } catch {
+    return structuredClone(EMPTY);
+  }
+}
+
 function writeConfig(cfg: ConfigFile): Promise<void> {
   const path = configFile();
   mkdirSync(dirname(path), { recursive: true });

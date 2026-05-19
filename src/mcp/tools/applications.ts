@@ -18,7 +18,7 @@ export function registerApplicationTools(
 
   server.tool(
     "list_applications",
-    "List all applications in your tenant",
+    "List all applications in your organization",
     {},
     async () => {
       try {

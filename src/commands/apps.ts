@@ -2,14 +2,12 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
-import { printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
-import { requireCapability } from "../client/command-meta";
+import { requireCapability, withCompletion } from "../client/command-meta";
+import { cacheList } from "../completion/populate";
+import { parseSetFlags } from "../util/parse-set";
 
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
 
 export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
@@ -23,6 +21,7 @@ export function registerApps(program: Command): void {
       const res = await ctx.client.get<PaginatedResponse<Application>>(
         `/tenants/${tid}/applications/?limit=200`,
       );
+      cacheList("apps", res.items);
       printList(
         res.items as unknown as Array<Record<string, unknown>>,
         [
@@ -35,18 +34,24 @@ export function registerApps(program: Command): void {
       );
     });
 
-  g.command("get <idOrSlug>")
-    .description("show details for one application")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const id = await resolveApp(ctx.client, tid, idOrSlug);
-      const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
-      printObject(app as unknown as Record<string, unknown>, fmt);
-    });
+  withCompletion(
+    g
+      .command("get <idOrSlug>")
+      .description("show details for one application")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const id = await resolveApp(ctx.client, tid, idOrSlug);
+        const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
+        printObject(app as unknown as Record<string, unknown>, fmt);
+      }),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 
-  const deployCmd = g.command("deploy <idOrSlug>");
+  const deployCmd = withCompletion(g.command("deploy <idOrSlug>"), {
+    args: [{ slot: 0, resource: "apps" }],
+  });
   requireCapability(deployCmd, "app:deploy");
   deployCmd
     .description("trigger a deployment for an application")
@@ -91,87 +96,210 @@ export function registerApps(program: Command): void {
       }
     });
 
-  g.command("logs <idOrSlug>")
-    .description("fetch container logs for an application")
-    .option("--tail <n>", "number of lines to return", "200")
-    .option("--search <term>", "substring filter applied server-side")
-    .option("--since <ts>", "RFC 3339 timestamp; only return lines after this time")
-    .action(
-      async (
-        idOrSlug: string,
-        opts: { tail?: string; search?: string; since?: string },
-      ) => {
+  withCompletion(
+    g
+      .command("logs <idOrSlug>")
+      .description("fetch container logs for an application")
+      .option("--tail <n>", "number of lines to return", "200")
+      .option("--search <term>", "substring filter applied server-side")
+      .option("--since <ts>", "RFC 3339 timestamp; only return lines after this time")
+      .action(
+        async (idOrSlug: string, opts: { tail?: string; search?: string; since?: string }) => {
+          const fmt = resolveFormat(globalOutput(program));
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
+          const appId = await resolveApp(ctx.client, tid, idOrSlug);
+
+          const qs = new URLSearchParams();
+          if (opts.tail) qs.set("tail", opts.tail);
+          if (opts.search) qs.set("search", opts.search);
+          if (opts.since) qs.set("since", opts.since);
+          const suffix = qs.toString() ? `?${qs.toString()}` : "";
+
+          interface LogEntry {
+            timestamp?: string;
+            level?: string;
+            message: string;
+          }
+          interface LiveLogResponse {
+            entries: LogEntry[];
+            server_id: string;
+            source_name: string;
+          }
+          const res = await ctx.client.get<LiveLogResponse>(
+            `/tenants/${tid}/applications/${appId}/logs${suffix}`,
+          );
+
+          if (fmt === "json" || fmt === "yaml") {
+            printObject(res as unknown as Record<string, unknown>, fmt);
+            return;
+          }
+          for (const e of res.entries) {
+            const ts = e.timestamp ?? "";
+            const lvl = e.level ? `[${e.level}] ` : "";
+            process.stdout.write(`${ts} ${lvl}${e.message}\n`);
+          }
+        },
+      ),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
+
+  withCompletion(
+    g
+      .command("restart <idOrSlug>")
+      .description("restart the container backing an application")
+      .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
-        const qs = new URLSearchParams();
-        if (opts.tail) qs.set("tail", opts.tail);
-        if (opts.search) qs.set("search", opts.search);
-        if (opts.since) qs.set("since", opts.since);
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-
-        interface LogEntry {
-          timestamp?: string;
-          level?: string;
-          message: string;
+        interface RestartResponse {
+          application_id: string;
+          container_name: string;
+          exit_code: number;
+          stdout: string;
+          stderr: string;
         }
-        interface LiveLogResponse {
-          entries: LogEntry[];
-          server_id: string;
-          source_name: string;
-        }
-        const res = await ctx.client.get<LiveLogResponse>(
-          `/tenants/${tid}/applications/${appId}/logs${suffix}`,
+        const res = await ctx.client.post<RestartResponse>(
+          `/tenants/${tid}/applications/${appId}/restart`,
+          {},
         );
 
         if (fmt === "json" || fmt === "yaml") {
           printObject(res as unknown as Record<string, unknown>, fmt);
           return;
         }
-        for (const e of res.entries) {
-          const ts = e.timestamp ?? "";
-          const lvl = e.level ? `[${e.level}] ` : "";
-          process.stdout.write(`${ts} ${lvl}${e.message}\n`);
+        if (res.exit_code === 0) {
+          console.log(`✓ restarted ${res.container_name}`);
+        } else {
+          process.stderr.write(
+            `✗ restart of ${res.container_name} failed (exit ${res.exit_code})\n`,
+          );
+          if (res.stderr) process.stderr.write(`  ${res.stderr.trim()}\n`);
+          const err = new Error("restart failed") as Error & { exitCode: number };
+          err.exitCode = 1;
+          throw err;
         }
-      },
-    );
+      }),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 
-  g.command("restart <idOrSlug>")
-    .description("restart the container backing an application")
-    .action(async (idOrSlug: string) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const appId = await resolveApp(ctx.client, tid, idOrSlug);
+  const configCmd = g.command("config").description("manage application deployment config");
 
-      interface RestartResponse {
-        application_id: string;
-        container_name: string;
-        exit_code: number;
-        stdout: string;
-        stderr: string;
-      }
-      const res = await ctx.client.post<RestartResponse>(
-        `/tenants/${tid}/applications/${appId}/restart`,
-        {},
-      );
-
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(res as unknown as Record<string, unknown>, fmt);
-        return;
-      }
-      if (res.exit_code === 0) {
-        console.log(`✓ restarted ${res.container_name}`);
-      } else {
-        process.stderr.write(
-          `✗ restart of ${res.container_name} failed (exit ${res.exit_code})\n`,
+  withCompletion(
+    configCmd
+      .command("get <idOrSlug>")
+      .description("show app deployment config (build + deploy settings)")
+      .action(async (idOrSlug: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const aid = await resolveApp(ctx.client, tid, idOrSlug);
+        const r = await ctx.client.get<Record<string, unknown>>(
+          `/tenants/${tid}/applications/${aid}/config`,
         );
-        if (res.stderr) process.stderr.write(`  ${res.stderr.trim()}\n`);
-        const err = new Error("restart failed") as Error & { exitCode: number };
-        err.exitCode = 1;
-        throw err;
-      }
-    });
+        printObject(r, fmt);
+      }),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
+
+  withCompletion(
+    configCmd
+      .command("set <idOrSlug>")
+      .description("update app deployment config")
+      .option("--buildpack <name>", "buildpack name")
+      .option("--docker-image <ref>", "docker image reference")
+      .option("--container-port <n>", "container port (numeric)")
+      .option("--host-port <n>", "host port (numeric)")
+      .option("--replicas <n>", "replica count (numeric)")
+      .option(
+        "--env <KEY=VAL>",
+        "env var (repeatable)",
+        (val: string, prev?: string[]) => [...(prev ?? []), val],
+      )
+      .option(
+        "--set <KEY=VAL>",
+        "set arbitrary field (dot-paths supported; repeatable)",
+        (val: string, prev?: string[]) => [...(prev ?? []), val],
+      )
+      .action(
+        async (
+          idOrSlug: string,
+          opts: {
+            buildpack?: string;
+            dockerImage?: string;
+            containerPort?: string;
+            hostPort?: string;
+            replicas?: string;
+            env?: string[];
+            set?: string[];
+          },
+        ) => {
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
+          const aid = await resolveApp(ctx.client, tid, idOrSlug);
+
+          // Start with --set first (typed flags overwrite on conflict).
+          const cfg: Record<string, unknown> = parseSetFlags(opts.set ?? []);
+
+          function setPath(path: string[], value: unknown): void {
+            let cur: Record<string, unknown> = cfg;
+            for (let i = 0; i < path.length - 1; i++) {
+              const segment = path[i] as string;
+              const next = cur[segment];
+              if (typeof next !== "object" || next === null || Array.isArray(next)) {
+                cur[segment] = {};
+              }
+              cur = cur[segment] as Record<string, unknown>;
+            }
+            cur[path[path.length - 1] as string] = value;
+          }
+
+          if (opts.buildpack !== undefined) setPath(["build", "buildpack"], opts.buildpack);
+          if (opts.dockerImage !== undefined) setPath(["build", "docker_image"], opts.dockerImage);
+          if (opts.containerPort !== undefined)
+            setPath(["deploy", "container_port"], Number(opts.containerPort));
+          if (opts.hostPort !== undefined)
+            setPath(["deploy", "host_port"], Number(opts.hostPort));
+          if (opts.replicas !== undefined)
+            setPath(["deploy", "replicas"], Number(opts.replicas));
+          if (opts.env && opts.env.length > 0) {
+            const envMap: Record<string, string> = {};
+            for (const kv of opts.env) {
+              const eq = kv.indexOf("=");
+              if (eq === -1) {
+                const e = new Error(
+                  `invalid --env value: '${kv}' (expected KEY=VAL)`,
+                ) as Error & { exitCode: number };
+                e.exitCode = 4;
+                throw e;
+              }
+              envMap[kv.slice(0, eq)] = kv.slice(eq + 1);
+            }
+            const existing = (cfg["deploy"] as Record<string, unknown> | undefined)?.["env"];
+            const merged = {
+              ...(typeof existing === "object" && existing !== null
+                ? (existing as Record<string, string>)
+                : {}),
+              ...envMap,
+            };
+            setPath(["deploy", "env"], merged);
+          }
+
+          if (Object.keys(cfg).length === 0) {
+            const e = new Error("no fields to update") as Error & { exitCode: number };
+            e.exitCode = 4;
+            throw e;
+          }
+
+          const r = await ctx.client.patch<Record<string, unknown>>(
+            `/tenants/${tid}/applications/${aid}/config`,
+            { config: cfg },
+          );
+          printMutation(program, r, `✓ config updated: ${aid}`);
+        },
+      ),
+    { args: [{ slot: 0, resource: "apps" }] },
+  );
 }

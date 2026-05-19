@@ -2,13 +2,8 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
-import { printObject, resolveFormat } from "../ui/output";
-import { requireCapability } from "../client/command-meta";
-
-function globalOutput(program: Command): string | undefined {
-  const opts: Record<string, unknown> = program.opts();
-  return typeof opts["output"] === "string" ? opts["output"] : undefined;
-}
+import { globalOutput, printObject, resolveFormat } from "../ui/output";
+import { requireCapability, withCompletion } from "../client/command-meta";
 
 interface ExecResponse {
   exit_code: number;
@@ -18,8 +13,10 @@ interface ExecResponse {
 }
 
 export function registerExec(program: Command): void {
-  const execCmd = program
-    .command("exec <serverIdOrName> [command...]");
+  const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
+    args: [{ slot: 0, resource: "servers" }],
+    flags: { "--scope": { enum: ["host", "rootless"] } },
+  });
   requireCapability(execCmd, "server:exec");
   execCmd
     .description(
@@ -40,11 +37,7 @@ export function registerExec(program: Command): void {
       },
       {} as Record<string, string>,
     )
-    .option(
-      "--scope <scope>",
-      "execution scope: host or rootless (default host)",
-      "host",
-    )
+    .option("--scope <scope>", "execution scope: host or rootless (default host)", "host")
     .action(
       async (
         serverIdOrName: string,

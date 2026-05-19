@@ -23,7 +23,7 @@ export function registerRuntimeTools(
   // ---------------------------------------------------------------------------
   server.tool(
     "list_tenant_containers",
-    "List containers across the tenant fleet (cache-backed; pass refresh=true to force a live fan-out before reading).",
+    "List containers across the organization fleet (cache-backed; pass refresh=true to force a live fan-out before reading).",
     {
       server_id: z.string().uuid().optional().describe("Filter to a single server"),
       application_id: z.string().uuid().optional().describe("Filter to a single application"),

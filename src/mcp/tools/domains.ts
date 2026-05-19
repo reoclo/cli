@@ -18,7 +18,7 @@ export function registerDomainTools(
 
   server.tool(
     "list_domains",
-    "List all domains for your tenant",
+    "List all domains for your organization",
     {},
     async () => {
       try {
@@ -76,7 +76,7 @@ export function registerDomainTools(
 
   server.tool(
     "add_domain",
-    "Register a new domain for your tenant",
+    "Register a new domain for your organization",
     { domain_name: z.string().min(1).describe("Fully qualified domain name") },
     async ({ domain_name }) => {
       try {

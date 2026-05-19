@@ -18,7 +18,7 @@ export function registerServerTools(
 
   server.tool(
     "list_servers",
-    "List all servers in your tenant",
+    "List all servers in your organization",
     {},
     async () => {
       try {

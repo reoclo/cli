@@ -59,6 +59,7 @@ describe("resolveLatestVersion", () => {
       Promise.resolve(jsonResponse({ tag_name: "v0.19.0", prerelease: false })),
     ) as unknown as typeof fetch;
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun types expect().rejects.toThrow() as void but it is a Promise at runtime; await is required to settle the rejection before afterEach cleanup
     await expect(resolveLatestVersion("nightly")).rejects.toThrow(/unknown channel: nightly/);
   });
 
@@ -67,6 +68,7 @@ describe("resolveLatestVersion", () => {
       Promise.resolve(new Response("not found", { status: 404 })),
     ) as unknown as typeof fetch;
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun types expect().rejects.toThrow() as void but it is a Promise at runtime; await is required to settle the rejection before afterEach cleanup
     await expect(resolveLatestVersion("stable")).rejects.toThrow(/HTTP 404/);
   });
 
@@ -75,12 +77,14 @@ describe("resolveLatestVersion", () => {
       Promise.resolve(jsonResponse([{ tag_name: "v0.19.0", prerelease: false }])),
     ) as unknown as typeof fetch;
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun types expect().rejects.toThrow() as void but it is a Promise at runtime; await is required to settle the rejection before afterEach cleanup
     await expect(resolveLatestVersion("beta")).rejects.toThrow(/no prerelease found/);
   });
 
   test("stable missing tag_name → throws", async () => {
     globalThis.fetch = mock(() => Promise.resolve(jsonResponse({}))) as unknown as typeof fetch;
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun types expect().rejects.toThrow() as void but it is a Promise at runtime; await is required to settle the rejection before afterEach cleanup
     await expect(resolveLatestVersion("stable")).rejects.toThrow(/missing tag_name/);
   });
 });

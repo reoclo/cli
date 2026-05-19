@@ -263,7 +263,7 @@ describe("formatTunnelTable", () => {
     } finally {
       process.stdout.write = origWrite;
     }
-    const parsed = JSON.parse(captured.trim());
+    const parsed = JSON.parse(captured.trim()) as unknown as { id: string; server_id: string };
     expect(parsed.id).toBe("tun-abc123");
     expect(parsed.server_id).toBe("srv-aaa");
   });
@@ -388,7 +388,7 @@ describe("formatTunnelDescribe", () => {
     } finally {
       process.stdout.write = origWrite;
     }
-    const parsed = JSON.parse(captured);
+    const parsed = JSON.parse(captured) as unknown as { id: string; interruptions: unknown[] };
     expect(parsed.id).toBe("tun-abc123");
     expect(parsed.interruptions).toEqual([]);
   });

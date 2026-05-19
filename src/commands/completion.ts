@@ -1,11 +1,16 @@
 // src/commands/completion.ts
 //
-// Tab completion for the Reoclo CLI. Two surfaces:
+// Tab completion for the Reoclo CLI. Four surfaces:
 //
 //   1. `reoclo completion <shell>` — emit the shell shim (a tiny script that
 //      defers all completion logic back to `reoclo __complete`).
 //   2. `reoclo completion install` — write the shim to disk and wire it into
 //      the user's rc file.
+//   3. `reoclo completion warm` — pre-populate the local completion cache from
+//      the server index endpoint.
+//   4. `reoclo __refresh-completion` (hidden) — silently refresh the cache in
+//      the background; invoked automatically after commands that mutate
+//      resources.
 //
 // The actual candidate computation lives in src/completion/engine.ts. The
 // hidden `__complete` command (registered here) is what the shim invokes.
@@ -15,28 +20,35 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCompletionCandidates } from "../completion/engine";
+import type { Candidate } from "../completion/types";
+import { withCompletion } from "../client/command-meta";
+import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { fetchCompletionIndex } from "../completion/index-client";
+import { writeAllSlices } from "../completion/cache";
+import { NotFoundError } from "../client/errors";
+import { promptYesNo } from "../ui/prompt";
 
 type Shell = "bash" | "zsh" | "fish";
 
 const BASH_SHIM = `# reoclo bash completion (also registers for the 'rc' alias)
 _reoclo() {
-  local cur cwords raw line
+  local cur cwords raw val _desc
   cur="\${COMP_WORDS[COMP_CWORD]}"
   if (( COMP_CWORD > 0 )); then
     cwords=("\${COMP_WORDS[@]:1:COMP_CWORD-1}")
   else
     cwords=()
   fi
-  if ! raw=$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
+  if ! raw=$(reoclo __complete --proto 2 "\${cwords[@]}" -- "\${cur}" 2>/dev/null); then
     return
   fi
-  # Read newline-separated candidates and backslash-escape spaces so
-  # multi-word names ("Reoclo Production") survive bash's word-split on
+  # Read value<TAB>desc lines; take only the value and backslash-escape spaces
+  # so multi-word names ("Reoclo Production") survive bash's word-split on
   # insertion. The CLI already prefix-filters; no need for compgen.
   COMPREPLY=()
-  while IFS= read -r line; do
-    [ -z "\$line" ] && continue
-    COMPREPLY+=("\${line// /\\\\ }")
+  while IFS=\$'\\t' read -r val _desc; do
+    [ -z "\$val" ] && continue
+    COMPREPLY+=("\${val// /\\\\ }")
   done <<< "\$raw"
 }
 complete -F _reoclo reoclo
@@ -46,11 +58,17 @@ complete -F _reoclo rc
 const ZSH_SHIM = `#compdef reoclo rc
 # reoclo zsh completion (also registers for the 'rc' alias)
 _reoclo() {
-  local cur cwords candidates
+  local cur cwords
   cur="\${words[CURRENT]}"
   cwords=("\${(@)words[2,CURRENT-1]}")
-  candidates=("\${(@f)$(reoclo __complete "\${cwords[@]}" -- "\${cur}" 2>/dev/null)}")
-  compadd -- "\${candidates[@]}"
+  local -a lines vals descs
+  lines=("\${(@f)\$(reoclo __complete --proto 2 "\${cwords[@]}" -- "\${cur}" 2>/dev/null)}")
+  for l in "\${lines[@]}"; do
+    [ -z "\$l" ] && continue
+    vals+=("\${l%%\$'\\t'*}")
+    descs+=("\${l/\$'\\t'/ -- }")
+  done
+  (( \${#vals} )) && compadd -d descs -- "\${vals[@]}"
 }
 compdef _reoclo reoclo rc
 `;
@@ -61,7 +79,7 @@ function __reoclo_complete
   set -l current (commandline -ct)
   # Drop the program name (first token) so we pass only typed args.
   set -e tokens[1]
-  reoclo __complete $tokens -- "$current" 2>/dev/null
+  reoclo __complete --proto 2 $tokens -- "$current" 2>/dev/null
 end
 complete -c reoclo -f -a "(__reoclo_complete)"
 complete -c rc     -f -a "(__reoclo_complete)"
@@ -76,6 +94,14 @@ export function getShimScript(shell: Shell): string {
     case "fish":
       return FISH_SHIM;
   }
+}
+
+/** Render candidates for the shell shim. proto>=2 → `value\tdesc`; else plain. */
+export function formatCandidates(cands: Candidate[], proto: number): string {
+  const lines = cands.map((c) =>
+    proto >= 2 && c.desc ? `${c.value}\t${c.desc}` : c.value,
+  );
+  return lines.length > 0 ? lines.join("\n") + "\n" : "";
 }
 
 interface InstallTarget {
@@ -114,22 +140,6 @@ function detectShell(): Shell {
   if (sh.includes("zsh")) return "zsh";
   if (sh.includes("fish")) return "fish";
   return "bash";
-}
-
-async function promptYesNo(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
-  const { createInterface } = await import("node:readline");
-  return new Promise((resolve) => {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
 }
 
 interface InstallOpts {
@@ -195,6 +205,13 @@ async function runInstall(opts: InstallOpts): Promise<void> {
   } else {
     process.stdout.write(`→ restart your shell to enable completion\n`);
   }
+
+  try {
+    const warmed = await warmCache(undefined);
+    if (warmed) process.stdout.write("✓ completion cache warmed\n");
+  } catch {
+    // not logged in / offline — warming is optional during install
+  }
 }
 
 function parseCompleteArgs(args: string[]): { words: string[]; current: string } {
@@ -210,6 +227,26 @@ function parseCompleteArgs(args: string[]): { words: string[]; current: string }
   }
   if (args.length === 0) return { words: [], current: "" };
   return { words: args.slice(0, -1), current: args[args.length - 1] ?? "" };
+}
+
+/** Fetch the completion index and write every slice. Returns false (with a
+ *  soft notice) if the API has no /completion-index endpoint yet. */
+export async function warmCache(profile?: string): Promise<boolean> {
+  const ctx = await bootstrap({ profile });
+  const tid = requireTenantId(ctx);
+  try {
+    const slices = await fetchCompletionIndex(ctx.client, tid);
+    writeAllSlices(slices);
+    return true;
+  } catch (err) {
+    if (err instanceof NotFoundError) {
+      process.stderr.write(
+        "completion: this Reoclo API does not support `completion warm` yet — skipping\n",
+      );
+      return false;
+    }
+    throw err;
+  }
 }
 
 export function registerCompletion(program: Command): void {
@@ -233,10 +270,18 @@ export function registerCompletion(program: Command): void {
         // avoids Commander's `--` munging.
         const argv = process.argv;
         const idx = argv.indexOf("__complete");
-        const raw = idx >= 0 ? argv.slice(idx + 1) : [];
+        let raw = idx >= 0 ? argv.slice(idx + 1) : [];
+        // Extract the optional `--proto N` marker (default proto 1 = old shim).
+        let proto = 1;
+        const pIdx = raw.indexOf("--proto");
+        if (pIdx >= 0 && raw[pIdx + 1]) {
+          const n = Number(raw[pIdx + 1]);
+          proto = Number.isFinite(n) && n > 0 ? n : 1;
+          raw = [...raw.slice(0, pIdx), ...raw.slice(pIdx + 2)];
+        }
         const { words, current } = parseCompleteArgs(raw);
         const candidates = getCompletionCandidates(program, words, current);
-        for (const c of candidates) process.stdout.write(c + "\n");
+        process.stdout.write(formatCandidates(candidates, proto));
       } catch {
         // Silent failure — completion must never surface errors.
       }
@@ -246,20 +291,16 @@ export function registerCompletion(program: Command): void {
   // existing `reoclo completion bash > foo` invocations still work. The
   // single positional accepts a shell name (emit shim) or the literal
   // "install" (write + wire into rc).
-  program
-    .command("completion <shellOrInstall> [installArgs...]")
-    .description(
-      "emit a shell completion shim (bash | zsh | fish), or `install` to write + wire it",
-    )
-    .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
-    .option("--force", "(install only) overwrite an existing completion file without prompting")
-    .option("--print", "(install only) print what would happen; don't write anything")
-    .action(
-      async (
-        shellOrInstall: string,
-        _installArgs: string[],
-        opts: InstallOpts,
-      ) => {
+  const completionCmd = withCompletion(
+    program
+      .command("completion <shellOrInstall> [installArgs...]")
+      .description(
+        "emit a shell completion shim (bash | zsh | fish), or `install` to write + wire it",
+      )
+      .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
+      .option("--force", "(install only) overwrite an existing completion file without prompting")
+      .option("--print", "(install only) print what would happen; don't write anything")
+      .action(async (shellOrInstall: string, _installArgs: string[], opts: InstallOpts) => {
         const arg = shellOrInstall.toLowerCase();
         if (arg === "install") {
           await runInstall(opts);
@@ -269,14 +310,34 @@ export function registerCompletion(program: Command): void {
           process.stdout.write(getShimScript(arg));
           return;
         }
-        process.stderr.write(
-          `unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`,
-        );
+        process.stderr.write(`unsupported shell: ${shellOrInstall}\nuse one of: bash, zsh, fish\n`);
         const err = new Error(`unsupported shell: ${shellOrInstall}`) as Error & {
           exitCode: number;
         };
         err.exitCode = 2;
         throw err;
-      },
-    );
+      }),
+    { flags: { "--shell": { enum: ["bash", "zsh", "fish"] } } },
+  );
+
+  completionCmd
+    .command("warm")
+    .description("pre-populate the local completion cache from the server")
+    .option("--profile <name>", "profile name")
+    .action(async (opts: { profile?: string }) => {
+      const ok = await warmCache(opts.profile);
+      if (ok) process.stdout.write("✓ completion cache warmed\n");
+    });
+
+  program
+    .command("__refresh-completion", { hidden: true })
+    .description("internal: silently refresh the completion cache")
+    .option("--profile <name>", "profile name")
+    .action(async (opts: { profile?: string }) => {
+      try {
+        await warmCache(opts.profile);
+      } catch {
+        // silent — background refresh must never surface errors
+      }
+    });
 }

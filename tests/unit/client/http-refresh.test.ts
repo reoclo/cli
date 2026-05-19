@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 import { HttpClient } from "../../../src/client/http";
 import { AuthError } from "../../../src/client/errors";
 
@@ -28,6 +28,7 @@ describe("HttpClient 401 refresh", () => {
       token: "eyJold.token",
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toBeInstanceOf() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(client.get("/auth/me")).rejects.toBeInstanceOf(AuthError);
   });
 
@@ -50,9 +51,9 @@ describe("HttpClient 401 refresh", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.com",
       token: "eyJold.token",
-      refreshToken: async () => {
+      refreshToken: () => {
         refreshCalled = true;
-        return "eyJnew.token";
+        return Promise.resolve("eyJnew.token");
       },
     });
 
@@ -70,9 +71,10 @@ describe("HttpClient 401 refresh", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.com",
       token: "eyJold.token",
-      refreshToken: async () => null,
+      refreshToken: () => Promise.resolve(null),
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toBeInstanceOf() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(client.get("/auth/me")).rejects.toBeInstanceOf(AuthError);
   });
 
@@ -86,9 +88,10 @@ describe("HttpClient 401 refresh", () => {
     const client = new HttpClient({
       baseUrl: "https://api.example.com",
       token: "eyJold.token",
-      refreshToken: async () => { throw new Error("refresh failed"); },
+      refreshToken: () => { throw new Error("refresh failed"); },
     });
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toBeInstanceOf() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(client.get("/auth/me")).rejects.toBeInstanceOf(AuthError);
     // Only the original fetch — no retry since refresh threw
     expect(fetchCount).toBe(1);

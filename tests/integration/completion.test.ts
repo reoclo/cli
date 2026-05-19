@@ -1,6 +1,58 @@
 // tests/integration/completion.test.ts
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { $ } from "bun";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Command } from "commander";
+import { getCompletionCandidates } from "../../src/completion/engine";
+import { writeSlice } from "../../src/completion/cache";
+import { registerServers } from "../../src/commands/servers";
+import { registerApps } from "../../src/commands/apps";
+import { registerDeployments } from "../../src/commands/deployments";
+import { registerLogs } from "../../src/commands/logs";
+import { registerEnv } from "../../src/commands/env";
+import { registerDomains } from "../../src/commands/domains";
+import { registerUpgrade } from "../../src/commands/upgrade";
+import { registerCompletion } from "../../src/commands/completion";
+import { registerExec } from "../../src/commands/exec";
+import { registerShell } from "../../src/commands/shell";
+import { registerTunnel } from "../../src/commands/tunnel";
+import { registerProfile } from "../../src/commands/profile";
+
+let tmp: string;
+beforeEach(() => {
+  tmp = mkdtempSync(join(tmpdir(), "reoclo-integ-"));
+  process.env.REOCLO_CACHE_DIR = tmp;
+});
+afterEach(() => {
+  delete process.env.REOCLO_CACHE_DIR;
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+function buildProgram(): Command {
+  const p = new Command().name("reoclo");
+  registerServers(p);
+  registerApps(p);
+  registerDeployments(p);
+  registerLogs(p);
+  registerEnv(p);
+  registerDomains(p);
+  registerUpgrade(p);
+  registerCompletion(p);
+  registerExec(p);
+  registerShell(p);
+  registerTunnel(p);
+  registerProfile(p);
+  return p;
+}
+
+test("tunnel completes servers and subcommands together", () => {
+  writeSlice("servers", [{ id: "1", value: "prod-web", name: "p", desc: "" }]);
+  const vals = getCompletionCandidates(buildProgram(), ["tunnel"], "").map((c) => c.value);
+  expect(vals).toContain("ls");
+  expect(vals).toContain("prod-web");
+});
 
 test("__complete with no args emits top-level commands", async () => {
   const r = await $`bun run src/index.ts __complete -- ""`.quiet();

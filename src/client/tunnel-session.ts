@@ -294,7 +294,7 @@ export class TunnelSession {
   private scheduleReconnect(): void {
     const startedAt = this.reconnectStartedAt ?? Date.now();
     const deadline = startedAt + this.opts.reconnectDeadlineMs;
-    const tryAgain = async (): Promise<void> => {
+    const tryAgain = (): void => {
       if (this.stopped) return;
       if (Date.now() > deadline) {
         // Give up — emit closed and propagate via stop() so the CLI can exit non-zero.
@@ -309,15 +309,17 @@ export class TunnelSession {
         BACKOFF_MAX_MS,
         BACKOFF_BASE_MS * 2 ** Math.min(this.reconnectAttempt, 6),
       );
-      this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = undefined;
-        try {
-          await this.connect();
-          // Re-arm reverse listeners so the runner re-binds its server-side ports
-          this.rearmReverseListeners();
-        } catch {
-          void tryAgain();
-        }
+        void (async () => {
+          try {
+            await this.connect();
+            // Re-arm reverse listeners so the runner re-binds its server-side ports
+            this.rearmReverseListeners();
+          } catch {
+            tryAgain();
+          }
+        })();
       }, backoff);
     };
     void tryAgain();
@@ -358,7 +360,7 @@ export class TunnelSession {
           sock.bind(f.localPort, f.localBind, () => r());
         });
         sock.on("message", (buf, rinfo) => this.onLocalUdpDatagram(buf, rinfo, f, sock));
-        out.push({ boundPort: (sock.address() as net.AddressInfo).port });
+        out.push({ boundPort: sock.address().port });
         this.udpListeners.push(sock);
       }
     }
@@ -434,7 +436,13 @@ export class TunnelSession {
   private onWsMessage(raw: WebSocket.RawData): void {
     let msg: Record<string, unknown>;
     try {
-      msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+      msg = JSON.parse(
+        Array.isArray(raw)
+          ? Buffer.concat(raw).toString()
+          : Buffer.isBuffer(raw)
+            ? raw.toString()
+            : Buffer.from(raw).toString(),
+      ) as Record<string, unknown>;
     } catch {
       return;
     }
@@ -538,7 +546,7 @@ export class TunnelSession {
         const s = this.streams.get(sid);
         if (!s) return;
         const data =
-          typeof msg.data === "string" ? Buffer.from(msg.data as string, "base64") : Buffer.alloc(0);
+          typeof msg.data === "string" ? Buffer.from(msg.data, "base64") : Buffer.alloc(0);
         if (s.proto === "tcp") {
           // Note: bounded flow control comes in Phase 6 (bandwidth policy).
           // For now we log when the local app's read buffer is full so it's visible.

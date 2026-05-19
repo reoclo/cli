@@ -17,7 +17,7 @@ export function registerStatusPageTools(
 
   server.tool(
     "list_status_pages",
-    "List all status pages for your tenant",
+    "List all status pages for your organization",
     {},
     async () => {
       try {

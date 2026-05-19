@@ -19,7 +19,7 @@ export function registerScheduledOperationTools(
 
   server.tool(
     "list_scheduled_operations",
-    "List scheduled operations for your tenant",
+    "List scheduled operations for your organization",
     {
       status: z
         .enum(["ACTIVE", "PAUSED"])

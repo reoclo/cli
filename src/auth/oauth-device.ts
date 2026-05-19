@@ -99,7 +99,6 @@ export async function pollForToken(
   const url = `${authBaseUrl.replace(/\/$/, "")}/oauth/token`;
   let intervalSec = initialInterval;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     if (options?.abortSignal?.aborted) {
       throw new DeviceFlowError("access_denied", "polling aborted");
