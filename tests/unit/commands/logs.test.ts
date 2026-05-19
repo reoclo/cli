@@ -24,3 +24,26 @@ describe("logs command group", () => {
     }
   });
 });
+
+describe("logs system + sources", () => {
+  test("system subcommand registered with --unit --tail --since --search --level", () => {
+    const program = new Command().name("reoclo");
+    registerLogs(program);
+    const system = program.commands
+      .find((c) => c.name() === "logs")!
+      .commands.find((c) => c.name() === "system")!;
+    const longs = system.options.map((o) => o.long);
+    for (const flag of ["--unit", "--tail", "--since", "--search", "--level"]) {
+      expect(longs).toContain(flag);
+    }
+  });
+
+  test("sources subcommand registered", () => {
+    const program = new Command().name("reoclo");
+    registerLogs(program);
+    const sources = program.commands
+      .find((c) => c.name() === "logs")!
+      .commands.find((c) => c.name() === "sources")!;
+    expect(sources).toBeDefined();
+  });
+});

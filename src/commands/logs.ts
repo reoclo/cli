@@ -242,4 +242,89 @@ export function registerLogs(program: Command): void {
       },
     },
   );
+
+  withCompletion(
+    g
+      .command("system <server>")
+      .description("fetch systemd journal logs from a server")
+      .option("--unit <unit>", "systemd unit (default: kernel)", "kernel")
+      .option("--tail <n>", "lines to fetch (default 200)", "200")
+      .option("--since <spec>", "earliest time (e.g. 1h, 24h, ISO)")
+      .option("--search <pattern>", "regex to filter messages")
+      .option("--level <level>", "filter by level")
+      .action(
+        async (
+          server: string,
+          opts: { unit: string; tail: string; since?: string; search?: string; level?: string },
+        ) => {
+          const ctx = await bootstrap();
+          const tid = requireTenantId(ctx);
+          const sid = await resolveServer(ctx.client, tid, server);
+
+          const q = new URLSearchParams({
+            server_id: sid,
+            source_type: "system",
+            source_name: opts.unit,
+            tail: opts.tail,
+          });
+          if (opts.since) q.set("since", parseTimeSpec(opts.since).toISOString());
+          if (opts.search) q.set("search", opts.search);
+          if (opts.level) q.set("level", opts.level);
+
+          const res = await ctx.client.get<LiveLogResponse>(
+            `/tenants/${tid}/logs/live?${q.toString()}`,
+          );
+          for (const e of res.entries) {
+            process.stdout.write(`${e.ts} [${e.level}] ${e.message}\n`);
+          }
+        },
+      ),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
+
+  withCompletion(
+    g
+      .command("sources <server>")
+      .description("list log sources (containers + systemd units) on a server")
+      .action(async (server: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const sid = await resolveServer(ctx.client, tid, server);
+
+        interface LogSources {
+          containers: Array<{ name: string; image: string; status: string }>;
+          journal_units: Array<{ unit: string; description: string }>;
+        }
+        const res = await ctx.client.get<LogSources>(
+          `/tenants/${tid}/logs/sources?server_id=${sid}`,
+        );
+
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(res as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+
+        process.stdout.write("Containers\n");
+        printList(
+          res.containers as unknown as Array<Record<string, unknown>>,
+          [
+            { key: "name", label: "NAME" },
+            { key: "image", label: "IMAGE" },
+            { key: "status", label: "STATUS" },
+          ],
+          "text",
+        );
+        process.stdout.write("\nJournal units\n");
+        printList(
+          res.journal_units as unknown as Array<Record<string, unknown>>,
+          [
+            { key: "unit", label: "UNIT" },
+            { key: "description", label: "DESCRIPTION" },
+          ],
+          "text",
+        );
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
 }

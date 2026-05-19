@@ -1063,6 +1063,36 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
+      // /mcp/tenants/{tid}/logs/sources
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/sources`) {
+        return Response.json({
+          containers: [
+            { name: "app-container", image: "myapp:latest", status: "running" },
+            { name: "db-container", image: "postgres:15", status: "running" },
+          ],
+          journal_units: [
+            { unit: "kernel", description: "Linux kernel ring buffer" },
+            { unit: "docker.service", description: "Docker daemon" },
+            { unit: "sshd.service", description: "OpenSSH server" },
+          ],
+        });
+      }
+
+      // /mcp/tenants/{tid}/logs/live
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/live`) {
+        return Response.json({
+          server_id: url.searchParams.get("server_id") ?? "srv-1",
+          server_name: "web-1",
+          source_type: url.searchParams.get("source_type") ?? "system",
+          source_name: url.searchParams.get("source_name") ?? "kernel",
+          entries: [
+            { ts: "2026-05-19T10:00:00Z", level: "info", message: "system log line 1" },
+            { ts: "2026-05-19T10:00:01Z", level: "warn", message: "system log line 2" },
+          ],
+          fetched_at: "2026-05-19T10:00:02Z",
+        });
+      }
+
       // /mcp/tenants/{tid}/logs   (paginated query)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs`) {
         const search = url.searchParams.get("search");
