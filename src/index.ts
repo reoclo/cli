@@ -17,6 +17,7 @@ import { registerDomains } from "./commands/domains";
 import { registerMonitors } from "./commands/monitors";
 import { registerStatusPages } from "./commands/status-pages";
 import { registerIncidents } from "./commands/incidents";
+import { registerRepos } from "./commands/repos";
 import { registerSchedule } from "./commands/schedule";
 import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
@@ -68,6 +69,7 @@ if (import.meta.main) {
   registerMonitors(program);
   registerStatusPages(program);
   registerIncidents(program);
+  registerRepos(program);
   registerSchedule(program);
   registerMcp(program);
   registerUpgrade(program);

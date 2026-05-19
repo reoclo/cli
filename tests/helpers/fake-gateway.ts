@@ -37,6 +37,37 @@ export function startFakeGateway(): FakeGateway {
     scheme_hint: string | null;
   }> = [];
   const deployments: Array<{ id: string; status: string }> = [];
+  const repositories = [
+    {
+      id: "11111111-1111-1111-1111-111111111111",
+      tenant_id: TENANT_ID,
+      full_name: "acme/web",
+      name: "web",
+      owner_login: "acme",
+      is_private: false,
+      default_branch: "main",
+      status: "active",
+      last_push_at: "2026-05-19T00:00:00Z",
+    },
+    {
+      id: "22222222-2222-2222-2222-222222222222",
+      tenant_id: TENANT_ID,
+      full_name: "acme/api",
+      name: "api",
+      owner_login: "acme",
+      is_private: true,
+      default_branch: "develop",
+      status: "active",
+      last_push_at: "2026-05-18T00:00:00Z",
+    },
+  ];
+  const repoBranches: Record<string, Array<{ name: string; is_default: boolean }>> = {
+    "11111111-1111-1111-1111-111111111111": [
+      { name: "main", is_default: true },
+      { name: "feat/x", is_default: false },
+    ],
+    "22222222-2222-2222-2222-222222222222": [{ name: "develop", is_default: true }],
+  };
   const fleetContainers: Array<Record<string, unknown>> = [
     {
       server_id: "00000000-0000-0000-0000-00000000bbbb",
@@ -745,6 +776,38 @@ export function startFakeGateway(): FakeGateway {
       );
       if (rebootMatch && req.method === "POST") {
         return Response.json({ success: true, message: "reboot job queued", job_id: "job-1" });
+      }
+
+      // /mcp/tenants/{tid}/repositories  (paginated; honors ?search=)
+      if (
+        url.pathname === `/mcp/tenants/${TENANT_ID}/repositories` ||
+        url.pathname === `/mcp/tenants/${TENANT_ID}/repositories/`
+      ) {
+        const search = url.searchParams.get("search") ?? "";
+        const items = search
+          ? repositories.filter((r) => r.full_name.includes(search) || r.name.includes(search))
+          : repositories;
+        return Response.json({ items, total: items.length, skip: 0, limit: items.length });
+      }
+
+      // /mcp/tenants/{tid}/repositories/{id}/branches
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/repositories\/([^/]+)\/branches$/);
+        if (m) {
+          const branches = repoBranches[m[1] ?? ""];
+          if (!branches) return new Response("not found", { status: 404 });
+          return Response.json(branches);
+        }
+      }
+
+      // /mcp/tenants/{tid}/repositories/{id}
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/repositories\/([^/]+)$/);
+        if (m) {
+          const repo = repositories.find((r) => r.id === m[1]);
+          if (!repo) return new Response("not found", { status: 404 });
+          return Response.json(repo);
+        }
       }
 
       return new Response("not found", { status: 404 });
