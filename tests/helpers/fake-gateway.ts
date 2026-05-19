@@ -280,6 +280,18 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({ ...dep, status: "succeeded" });
       }
 
+      // /mcp/tenants/{tid}/deployments/{did}/stages
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/deployments\/([^/]+)\/stages$/);
+        if (m) {
+          return Response.json([
+            { name: "build", status: "succeeded", started_at: "2026-05-19T10:00:00Z", ended_at: "2026-05-19T10:01:30Z", exit_code: 0 },
+            { name: "push", status: "succeeded", started_at: "2026-05-19T10:01:30Z", ended_at: "2026-05-19T10:02:00Z", exit_code: 0 },
+            { name: "deploy", status: "succeeded", started_at: "2026-05-19T10:02:00Z", ended_at: "2026-05-19T10:02:45Z", exit_code: 0 },
+          ]);
+        }
+      }
+
       // /mcp/tenants/{tid}/applications/{app_id}/env/
       const envCollectionMatch = url.pathname.match(
         new RegExp(`^/mcp/tenants/${TENANT_ID}/applications/([^/]+)/env/$`),

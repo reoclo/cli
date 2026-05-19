@@ -130,4 +130,66 @@ export function registerDeployments(program: Command): void {
       }),
     { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
   );
+
+  interface DeploymentStage {
+    name: string;
+    status: string;
+    started_at?: string | null;
+    ended_at?: string | null;
+    exit_code?: number | null;
+  }
+
+  function formatDuration(start?: string | null, end?: string | null): string {
+    if (!start || !end) return "";
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}h${m}m`;
+    if (m > 0) return `${m}m${s}s`;
+    return `${s}s`;
+  }
+
+  withCompletion(
+    g
+      .command("stages <id>")
+      .description("show deployment pipeline stages (build/push/deploy)")
+      .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const stages = await ctx.client.get<DeploymentStage[]>(
+          `/tenants/${tid}/deployments/${id}/stages`,
+        );
+
+        if (fmt === "json" || fmt === "yaml") {
+          for (const stage of stages) {
+            printObject(stage as unknown as Record<string, unknown>, fmt);
+          }
+          return;
+        }
+
+        const rows = stages.map((s) => ({
+          stage: s.name,
+          status: s.status,
+          started: s.started_at ? s.started_at.replace("T", " ").replace("Z", "") : "",
+          duration: formatDuration(s.started_at, s.ended_at),
+          exit: s.exit_code == null ? "" : String(s.exit_code),
+        }));
+        printList(
+          rows as unknown as Array<Record<string, unknown>>,
+          [
+            { key: "stage", label: "STAGE" },
+            { key: "status", label: "STATUS" },
+            { key: "started", label: "STARTED" },
+            { key: "duration", label: "DURATION" },
+            { key: "exit", label: "EXIT" },
+          ],
+          fmt,
+        );
+      }),
+    { args: [{ slot: 0, resource: "deployments" }] },
+  );
 }
