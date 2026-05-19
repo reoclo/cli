@@ -32,6 +32,16 @@ interface ScheduledOp {
   state?: { next_run_at?: string | null; last_run_status?: string | null };
 }
 
+interface ScheduledRun {
+  id: string;
+  status: string;
+  scheduled_for: string;
+  started_at: string | null;
+  duration_seconds: number | null;
+  attempt: number;
+  output?: string | null;
+}
+
 /** Accumulate a repeatable `--param key=value` flag into a dict. */
 function collectParam(value: string, prev: Record<string, string>): Record<string, string> {
   const eq = value.indexOf("=");
@@ -310,14 +320,14 @@ export function registerSchedule(program: Command): void {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        const run = await ctx.client.post<Record<string, unknown>>(
+        const run = await ctx.client.post<ScheduledRun>(
           `/tenants/${tid}/scheduled-operations/${id}/trigger`,
         );
         if (fmt === "json" || fmt === "yaml") {
-          printObject(run, fmt);
+          printObject(run as unknown as Record<string, unknown>, fmt);
           return;
         }
-        process.stdout.write(`✓ triggered: run ${String(run.id)}\n`);
+        process.stdout.write(`✓ triggered: run ${run.id}\n`);
       }),
     { args: [{ slot: 0, resource: "schedule" }] },
   );
@@ -332,11 +342,11 @@ export function registerSchedule(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
-        const list = await ctx.client.get<Array<Record<string, unknown>>>(
+        const list = await ctx.client.get<ScheduledRun[]>(
           `/tenants/${tid}/scheduled-operations/${id}/runs${qs}`,
         );
         printList(
-          list,
+          list as unknown as Array<Record<string, unknown>>,
           [
             { key: "id", label: "ID" },
             { key: "status", label: "STATUS" },

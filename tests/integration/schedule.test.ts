@@ -67,6 +67,23 @@ test("schedule ls --type filters by operation_type", async () => {
   expect(out).not.toContain("reboot-op");
 });
 
+test("schedule runs --status filter", async () => {
+  const created = await $`bun run src/index.ts schedule create --name filter-test --type RESTART --schedule CRON --cron "0 1 * * *" --server srv-1`
+    .env(env()).quiet();
+  const id = created.stdout.toString().trim().split(": ")[1]!;
+
+  const triggered = await $`bun run src/index.ts schedule trigger ${id}`.env(env()).quiet();
+  const runId = triggered.stdout.toString().trim().split("run ")[1]!;
+
+  // SUCCEEDED filter should exclude the RUNNING run
+  const filteredOut = await $`bun run src/index.ts schedule runs ${id} --status SUCCEEDED`.env(env()).quiet();
+  expect(filteredOut.stdout.toString()).not.toContain(runId);
+
+  // RUNNING filter should include it
+  const filteredIn = await $`bun run src/index.ts schedule runs ${id} --status RUNNING`.env(env()).quiet();
+  expect(filteredIn.stdout.toString()).toContain(runId);
+});
+
 test("schedule pause → resume → trigger → runs → run", async () => {
   const created = await $`bun run src/index.ts schedule create --name lifecycle --type RESTART --schedule CRON --cron "0 1 * * *" --server srv-1`
     .env(env()).quiet();
