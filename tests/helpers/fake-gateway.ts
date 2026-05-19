@@ -22,6 +22,8 @@ export function startFakeGateway(): FakeGateway {
   const envVars = new Map<string, Map<string, string>>();
   const monitors = new Map<string, Record<string, unknown>>();
   const statusPages = new Map<string, Record<string, unknown>>();
+  const incidents = new Map<string, Record<string, unknown>>();
+  const incidentUpdates = new Map<string, Array<Record<string, unknown>>>();
   const domains: Array<{
     id: string;
     tenant_id: string;
@@ -369,6 +371,63 @@ export function startFakeGateway(): FakeGateway {
         if (req.method === "DELETE") {
           statusPages.delete(id);
           return new Response(null, { status: 204 });
+        }
+      }
+
+      // /mcp/tenants/{tid}/incidents/  (collection, WITH trailing slash)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/incidents/`) {
+        if (req.method === "GET") return Response.json([...incidents.values()]);
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+          const inc = {
+            id,
+            title: body.title,
+            summary: body.summary ?? null,
+            severity: body.severity ?? "major",
+            state: "investigating",
+            started_at: "2026-01-01T00:00:00Z",
+            status_page_id: body.status_page_id ?? null,
+          };
+          incidents.set(id, inc);
+          incidentUpdates.set(id, []);
+          return Response.json(inc);
+        }
+      }
+      // /mcp/tenants/{tid}/incidents/{id}/updates
+      const incUpdMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/incidents/([^/]+)/updates$`),
+      );
+      if (incUpdMatch) {
+        const id = incUpdMatch[1] ?? "";
+        if (!incidents.has(id)) return new Response("not found", { status: 404 });
+        const ups = incidentUpdates.get(id) ?? [];
+        if (req.method === "GET") return Response.json(ups);
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const u = {
+            message: body.message,
+            state: body.state ?? null,
+            created_at: "2026-01-02T00:00:00Z",
+          };
+          ups.push(u);
+          incidentUpdates.set(id, ups);
+          if (body.state) (incidents.get(id) as Record<string, unknown>).state = body.state;
+          return Response.json(u);
+        }
+      }
+      // /mcp/tenants/{tid}/incidents/{id}
+      const incMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/incidents/([^/]+)$`),
+      );
+      if (incMatch) {
+        const id = incMatch[1] ?? "";
+        const inc = incidents.get(id);
+        if (!inc) return new Response("not found", { status: 404 });
+        if (req.method === "GET") return Response.json(inc);
+        if (req.method === "PATCH") {
+          Object.assign(inc, (await req.json()) as Record<string, unknown>);
+          return Response.json(inc);
         }
       }
 
