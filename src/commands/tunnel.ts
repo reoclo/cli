@@ -3,8 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tunnel-session";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
-import type { OutputFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat, type OutputFormat } from "../ui/output";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 
