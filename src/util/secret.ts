@@ -5,6 +5,8 @@
 // reader directly; the public `readSecret` orchestrates the TTY-vs-stdin
 // decision.
 
+import type { Interface as ReadLineInterface } from "node:readline";
+
 export class MissingSecretError extends Error {
   exitCode = 5;
   constructor(message = "password required: pass --password-stdin or run interactively") {
@@ -27,24 +29,66 @@ export async function readSecretFromStream(stream: NodeJS.ReadableStream): Promi
   return trimmed;
 }
 
-/** Masked TTY prompt — bun-friendly readline with output suppressed. */
-async function promptMasked(label: string): Promise<string> {
-  const { createInterface } = await import("node:readline");
+export interface PromptDeps {
+  /** Inject for testing; defaults to node:readline's createInterface. */
+  createInterface?: (opts: {
+    input: NodeJS.ReadableStream;
+    output: NodeJS.WritableStream;
+    terminal: boolean;
+  }) => ReadLineInterface;
+}
+
+/** Masked TTY prompt — readline with stdout muted during input. Exported for tests. */
+export async function promptMasked(label: string, deps: PromptDeps = {}): Promise<string> {
+  const createInterface: PromptDeps["createInterface"] =
+    deps.createInterface ??
+    (await import("node:readline").then((m) => m.createInterface));
+
   return new Promise((resolve, reject) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    const origWrite = process.stdout.write.bind(process.stdout);
+    const rl = createInterface!({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const origWrite = process.stdout.write;
+    let restored = false;
+    const restore = (): void => {
+      if (restored) return;
+      restored = true;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout.write as any) = origWrite;
+    };
+
+    let answered = false;
     let muted = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (process.stdout.write as any) = (chunk: unknown, ...args: unknown[]): boolean => {
       if (!muted) {
-        return origWrite(chunk as Buffer | string, ...(args as []));
+        return origWrite.call(process.stdout, chunk as Buffer | string, ...(args as []));
       }
       return true;
     };
+
+    rl.on("close", () => {
+      restore();
+      if (!answered) {
+        reject(new MissingSecretError("password prompt closed before input"));
+      }
+    });
+
+    rl.on("error", (err: Error) => {
+      restore();
+      if (!answered) {
+        reject(err);
+      }
+    });
+
     rl.question(`${label}: `, (answer) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout.write as any) = origWrite;
-      origWrite("\n");
+      answered = true;
+      restore();
+      origWrite.call(process.stdout, "\n");
       rl.close();
       const trimmed = answer.trim();
       if (trimmed.length === 0) {

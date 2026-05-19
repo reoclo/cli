@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import type { Interface as ReadlineInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { readSecretFromStream, MissingSecretError } from "../../../src/util/secret";
 
@@ -36,4 +38,40 @@ describe("readSecretFromStream", () => {
     // eslint-disable-next-line @typescript-eslint/await-thenable
     await expect(readSecretFromStream(streamFrom("\n"))).rejects.toBeInstanceOf(MissingSecretError);
   });
+});
+
+test("promptMasked restores process.stdout.write when readline closes without answer", async () => {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const origWrite = process.stdout.write;
+
+  // Force a TTY so readSecret doesn't reject before reaching the prompt.
+  const wasTTY = process.stdin.isTTY;
+  process.stdin.isTTY = true;
+
+  // Inject a fake readline.createInterface that emits 'close' before answer fires.
+  const { promptMasked } = await import("../../../src/util/secret");
+
+  const promise = promptMasked("test-label", {
+    createInterface: () => {
+      const ee = new EventEmitter() as EventEmitter & {
+        question: (label: string, cb: (answer: string) => void) => void;
+        close: () => void;
+      };
+      ee.question = (_label, _cb) => {
+        // Defer the close so the muted=true assignment after rl.question() runs first.
+        setImmediate(() => ee.emit("close"));
+      };
+      ee.close = () => {
+        ee.emit("close");
+      };
+      return ee as unknown as ReadlineInterface;
+    },
+  });
+
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  await expect(promise).rejects.toBeInstanceOf(Error);
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  expect(process.stdout.write).toBe(origWrite);
+
+  process.stdin.isTTY = wasTTY;
 });
