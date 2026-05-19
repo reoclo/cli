@@ -104,9 +104,14 @@ export function registerMonitors(program: Command): void {
       .command("pause <id>")
       .description("pause a monitor")
       .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        await ctx.client.post<Record<string, unknown>>(`/tenants/${tid}/monitors/${id}/pause`);
+        const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/pause`);
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(m as unknown as Record<string, unknown>, fmt);
+          return;
+        }
         process.stdout.write(`✓ monitor paused: ${id}\n`);
       }),
     { args: [{ slot: 0, resource: "monitors" }] },
@@ -117,9 +122,14 @@ export function registerMonitors(program: Command): void {
       .command("resume <id>")
       .description("resume a monitor")
       .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        await ctx.client.post<Record<string, unknown>>(`/tenants/${tid}/monitors/${id}/resume`);
+        const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/resume`);
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(m as unknown as Record<string, unknown>, fmt);
+          return;
+        }
         process.stdout.write(`✓ monitor resumed: ${id}\n`);
       }),
     { args: [{ slot: 0, resource: "monitors" }] },
