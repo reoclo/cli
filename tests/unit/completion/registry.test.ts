@@ -97,3 +97,39 @@ describe("RESOURCE_REGISTRY", () => {
     expect(e).toEqual({ id: "so1", value: "so1", name: "so1", desc: "so1 — " });
   });
 });
+
+describe("repos ResourceDef", () => {
+  test('INDEX_KINDS contains "repos"', () => {
+    expect(INDEX_KINDS).toContain("repos");
+  });
+
+  test("RESOURCE_REGISTRY.repos maps a raw repo doc to an Entry", () => {
+    const def = RESOURCE_REGISTRY.repos;
+    expect(def).toBeDefined();
+    expect(def.kind).toBe("repos");
+    expect(def.indexField).toBe("repos");
+    const entry = def.toEntry({
+      id: "abc",
+      full_name: "acme/web",
+      name: "web",
+      owner_login: "acme",
+      default_branch: "main",
+      is_private: false,
+    });
+    expect(entry.id).toBe("abc");
+    expect(entry.value).toBe("acme/web");
+    expect(entry.name).toBe("acme/web");
+    expect(entry.desc).toContain("main");
+    expect(entry.desc).toContain("public");
+  });
+
+  test("private repo desc says 'private'", () => {
+    const entry = RESOURCE_REGISTRY.repos.toEntry({
+      id: "abc",
+      full_name: "acme/web",
+      default_branch: "main",
+      is_private: true,
+    });
+    expect(entry.desc).toContain("private");
+  });
+});

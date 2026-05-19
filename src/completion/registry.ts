@@ -106,4 +106,20 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       return { id, value: id, name, desc: `${name} — ${str(r.status)}` };
     },
   },
+  repos: {
+    kind: "repos",
+    indexField: "repos",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const value = str(r.full_name, id);
+      const branch = str(r.default_branch);
+      const visibility = r.is_private ? "private" : "public";
+      return {
+        id,
+        value,
+        name: value,
+        desc: branch ? `${branch} · ${visibility}` : visibility,
+      };
+    },
+  },
 };

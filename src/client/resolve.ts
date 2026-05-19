@@ -73,16 +73,15 @@ export async function resolveRepo(
   tenantId: string,
   identifier: string,
 ): Promise<string> {
-  if (UUID.test(identifier)) return identifier;
-
-  const res = await c.get<PaginatedResponse<Repository>>(
-    `/tenants/${tenantId}/repositories/?limit=200`,
+  return resolve(
+    "repos",
+    identifier,
+    async () => {
+      const res = await c.get<PaginatedResponse<Repository>>(
+        `/tenants/${tenantId}/repositories/?limit=200`,
+      );
+      return res.items;
+    },
+    "repo",
   );
-  const found = res.items.find((r) => r.full_name === identifier || r.name === identifier);
-  if (!found) {
-    const e = new Error(`repo '${identifier}' not found`) as Error & { exitCode: number };
-    e.exitCode = 5;
-    throw e;
-  }
-  return found.id;
 }
