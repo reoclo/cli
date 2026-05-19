@@ -31,6 +31,38 @@ export function registerOtherTools(
     },
   );
 
+  server.tool(
+    "get_repository",
+    "Get a single connected Git repository by id.",
+    { repository_id: z.string().min(1).describe("Repository id") },
+    async ({ repository_id }) => {
+      try {
+        const repo = await ctx.client.get(
+          `/tenants/${tenantId}/repositories/${repository_id}`,
+        );
+        return asToolResult(repo);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "list_repo_branches",
+    "List branches for a repository.",
+    { repository_id: z.string().min(1).describe("Repository id") },
+    async ({ repository_id }) => {
+      try {
+        const branches = await ctx.client.get(
+          `/tenants/${tenantId}/repositories/${repository_id}/branches`,
+        );
+        return asToolResult(branches);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
   // Environment variables (values masked)
   server.tool(
     "list_env_vars",

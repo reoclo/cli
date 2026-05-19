@@ -120,6 +120,10 @@ test("mcp server responds to initialize and tools/list", async () => {
     // SP3-B tunnel tools
     expect(toolNames).toContain("list_tunnel_sessions");
     expect(toolNames).toContain("get_tunnel_session");
+
+    // SP3-B repository tools
+    expect(toolNames).toContain("get_repository");
+    expect(toolNames).toContain("list_repo_branches");
   } finally {
     proc.kill();
   }
@@ -173,6 +177,62 @@ test("get_tunnel_session with unknown id surfaces an error", async () => {
     });
     const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
     expect(result.isError).toBe(true);
+  } finally {
+    proc.kill();
+  }
+});
+
+test("get_repository returns a repository record", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    // Seeded repository id from SP1-C fake-gateway fixture.
+    const repoId = "11111111-1111-1111-1111-111111111111";
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "get_repository", arguments: { repository_id: repoId } },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { full_name?: string };
+    expect(parsed.full_name).toBeDefined();
+  } finally {
+    proc.kill();
+  }
+});
+
+test("list_repo_branches returns branches with default marker", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const repoId = "11111111-1111-1111-1111-111111111111";
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "list_repo_branches", arguments: { repository_id: repoId } },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "[]") as Array<{ name: string; is_default: boolean }>;
+    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed.some((b) => b.is_default === true)).toBe(true);
   } finally {
     proc.kill();
   }
