@@ -51,7 +51,23 @@ function parsePort(spec: string): { host: number; container: number; protocol: s
 }
 
 export function registerContainers(program: Command): void {
-  const g = program.command("containers").description("manage containers");
+  const g = program
+    .command("containers")
+    .description("manage containers")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ reoclo containers ls
+  $ reoclo containers ls --server my-server
+  $ reoclo containers ls --server my-server --status running
+  $ reoclo containers inspect my-server my-app
+  $ reoclo containers logs my-server my-app --tail 100
+  $ reoclo containers restart my-server my-app
+  $ reoclo containers scale my-server my-app 3
+  $ reoclo containers recreate my-server my-app --env DEBUG=1
+`,
+    );
 
   const lsCmd = g
     .command("ls")
@@ -127,6 +143,17 @@ export function registerContainers(program: Command): void {
   const recreateCmd = g
     .command("recreate <server> <name>")
     .description("recreate a container with new env/labels/ports")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ reoclo containers recreate my-server my-app --env DEBUG=1
+  $ reoclo containers recreate my-server my-app --label version=2 --label tier=prod
+  $ reoclo containers recreate my-server my-app --port 8080:80 --port 443:443/tcp
+  $ reoclo containers recreate my-server my-app --remove-label old-key
+  $ reoclo containers recreate my-server my-app --persist  # write env/labels back to app record
+`,
+    )
     .option("--env <kv>", "env var KEY=VALUE — full replacement (repeatable)", collectKV, {})
     .option("--label <kv>", "label KEY=VALUE (repeatable)", collectKV, {})
     .option("--remove-label <key>", "label key to delete (repeatable)", collectArr, [])

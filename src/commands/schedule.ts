@@ -53,7 +53,23 @@ function collectParam(value: string, prev: Record<string, string>): Record<strin
 }
 
 export function registerSchedule(program: Command): void {
-  const g = program.command("schedule").description("manage scheduled operations");
+  const g = program
+    .command("schedule")
+    .description("manage scheduled operations")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ reoclo schedule ls
+  $ reoclo schedule ls --status ACTIVE --type DEPLOY
+  $ reoclo schedule create --name nightly-backup --type COMMAND --schedule CRON --cron "0 3 * * *" --server my-server --command "backup.sh"
+  $ reoclo schedule pause <id>
+  $ reoclo schedule resume <id>
+  $ reoclo schedule trigger <id>
+  $ reoclo schedule runs <id>
+  $ reoclo schedule run <id> <run-id>
+`,
+    );
 
   withCompletion(
     g
@@ -115,6 +131,17 @@ export function registerSchedule(program: Command): void {
     g
       .command("create")
       .description("create a scheduled operation")
+      .addHelpText(
+        "after",
+        `
+Cron syntax: standard 5-field cron expression ("minute hour day-of-month month day-of-week").
+
+Examples:
+  $ reoclo schedule create --name nightly --type COMMAND --schedule CRON --cron "0 3 * * *" --server srv-1 --command "backup.sh"
+  $ reoclo schedule create --name hourly-redeploy --type DEPLOY --schedule CRON --cron "0 * * * *" --app my-app
+  $ reoclo schedule create --name one-off --type RESTART --schedule ONCE --at "2026-06-01T04:00:00Z" --server srv-1
+`,
+      )
       .requiredOption("--name <name>", "operation name")
       .requiredOption("--type <type>", "DEPLOY|COMMAND|RESTART|REBOOT")
       .requiredOption("--schedule <kind>", "CRON|ONCE")

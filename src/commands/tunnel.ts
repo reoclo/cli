@@ -283,6 +283,21 @@ export function registerTunnel(program: Command): void {
       .description(
         "open a TCP/UDP tunnel through a Reoclo runner (forward -L or reverse -R), or manage existing sessions",
       )
+      .addHelpText(
+        "after",
+        `
+Examples:
+  $ reoclo tunnel my-server -L 5432:5432               # forward localhost:5432 → server:5432
+  $ reoclo tunnel my-server -L 15432:5432              # forward localhost:15432 → server:5432
+  $ reoclo tunnel my-server -L 5432:5432 --udp         # UDP tunnel
+  $ reoclo tunnel my-server -R 8080:80                 # reverse tunnel, server:8080 → localhost:80
+  $ reoclo tunnel my-server -L 5432:db.internal:5432   # forward to a remote host via server
+  $ reoclo tunnel ls
+  $ reoclo tunnel ls --server my-server --active
+  $ reoclo tunnel describe <tunnel-id>
+  $ reoclo tunnel close <tunnel-id>
+`,
+      )
       .option(
         "-L <spec>",
         "forward [bind:]local_port:remote_host:remote_port (repeat for multiple)",
