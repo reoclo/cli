@@ -28,65 +28,62 @@ interface FleetResponse {
 export function registerContainers(program: Command): void {
   const g = program.command("containers").description("manage containers");
 
-  withCompletion(
-    requireCapability(
-      g
-        .command("ls")
-        .description("list fleet containers")
-        .option("--server <idOrSlug>", "filter by server")
-        .option("--app <idOrSlug>", "filter by application id")
-        .option("--status <status>", "filter by container status")
-        .action(async (opts: { server?: string; app?: string; status?: string }) => {
-          const fmt = resolveFormat(globalOutput(program));
-          const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
-          const serverId = opts.server
-            ? await resolveServer(ctx.client, tid, opts.server)
-            : undefined;
-          const all: ContainerEntry[] = [];
-          let staleCount = 0;
-          let cursor: string | undefined;
-          do {
-            const params = new URLSearchParams();
-            if (serverId) params.set("server_id", serverId);
-            if (opts.app) params.set("application_id", opts.app);
-            if (opts.status) params.set("status", opts.status);
-            if (cursor) params.set("cursor", cursor);
-            const qs = params.toString();
-            const res = await ctx.client.get<FleetResponse>(
-              `/tenants/${tid}/runtime/containers${qs ? `?${qs}` : ""}`,
-            );
-            all.push(...res.containers);
-            staleCount = res.stale_servers?.length ?? 0;
-            cursor = res.next_cursor ?? undefined;
-          } while (cursor);
-          printList(
-            all as unknown as Array<Record<string, unknown>>,
-            [
-              { key: "server_hostname", label: "SERVER" },
-              { key: "name", label: "NAME" },
-              { key: "image", label: "IMAGE" },
-              { key: "status", label: "STATUS" },
-              { key: "kind", label: "KIND" },
-              { key: "application_slug", label: "APP" },
-            ],
-            fmt,
-          );
-          if (staleCount > 0 && fmt === "text") {
-            process.stderr.write(`note: ${staleCount} server(s) had stale snapshots\n`);
-          }
-        }),
-      "container:read",
-    ),
-    {
-      flags: {
-        "--server": "servers",
-        "--app": "apps",
-        "--status": { enum: CONTAINER_STATES },
-      },
+  const lsCmd = g
+    .command("ls")
+    .description("list fleet containers")
+    .option("--server <idOrSlug>", "filter by server")
+    .option("--app <idOrSlug>", "filter by application slug or id")
+    .option("--status <status>", "filter by container status")
+    .action(async (opts: { server?: string; app?: string; status?: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const serverId = opts.server
+        ? await resolveServer(ctx.client, tid, opts.server)
+        : undefined;
+      const all: ContainerEntry[] = [];
+      let staleCount = 0;
+      let cursor: string | undefined;
+      do {
+        const params = new URLSearchParams();
+        if (serverId) params.set("server_id", serverId);
+        if (opts.app) params.set("application_id", opts.app);
+        if (opts.status) params.set("status", opts.status);
+        if (cursor) params.set("cursor", cursor);
+        const qs = params.toString();
+        const res = await ctx.client.get<FleetResponse>(
+          `/tenants/${tid}/runtime/containers${qs ? `?${qs}` : ""}`,
+        );
+        all.push(...res.containers);
+        staleCount += res.stale_servers?.length ?? 0;
+        cursor = res.next_cursor ?? undefined;
+      } while (cursor);
+      printList(
+        all as unknown as Array<Record<string, unknown>>,
+        [
+          { key: "server_hostname", label: "SERVER" },
+          { key: "name", label: "NAME" },
+          { key: "image", label: "IMAGE" },
+          { key: "status", label: "STATUS" },
+          { key: "kind", label: "KIND" },
+          { key: "application_slug", label: "APP" },
+        ],
+        fmt,
+      );
+      if (staleCount > 0 && fmt === "text") {
+        process.stderr.write(`note: ${staleCount} server(s) had stale snapshots\n`);
+      }
+    });
+  withCompletion(lsCmd, {
+    flags: {
+      "--server": "servers",
+      "--app": "apps",
+      "--status": { enum: CONTAINER_STATES },
     },
-  );
+  });
+  requireCapability(lsCmd, "container:read");
 
+  // refresh is gated on container:read — it refreshes the snapshot read-cache, not containers.
   requireCapability(
     g
       .command("refresh")
