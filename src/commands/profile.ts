@@ -13,7 +13,7 @@ export function registerProfile(program: Command): void {
       const rows = Object.entries(cfg.profiles).map(([n, p]) => ({
         name: n,
         active: n === cfg.active_profile ? "*" : "",
-        tenant: p.tenant_slug,
+        organization: p.tenant_slug,
         email: p.user_email,
         api: p.api_url,
         streams: p.streams_url ?? "(default)",
