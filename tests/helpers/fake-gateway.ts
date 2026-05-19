@@ -37,6 +37,26 @@ export function startFakeGateway(): FakeGateway {
     scheme_hint: string | null;
   }> = [];
   const deployments: Array<{ id: string; status: string }> = [];
+  const fleetContainers: Array<Record<string, unknown>> = [
+    {
+      server_id: "00000000-0000-0000-0000-00000000bbbb",
+      server_hostname: "srv-1",
+      name: "web-1",
+      image: "nginx:1.27",
+      status: "running",
+      kind: "container",
+      application_slug: "app-1",
+    },
+    {
+      server_id: "00000000-0000-0000-0000-00000000bbbb",
+      server_hostname: "srv-1",
+      name: "worker-1",
+      image: "reoclo/worker:latest",
+      status: "exited",
+      kind: "container",
+      application_slug: "app-1",
+    },
+  ];
   let nextId = 1;
 
   const server = Bun.serve({
@@ -546,6 +566,32 @@ export function startFakeGateway(): FakeGateway {
           scheduledOps.delete(id);
           return new Response(null, { status: 204 });
         }
+      }
+
+      // /mcp/tenants/{tid}/runtime/containers  — paginated, 1 per page
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/runtime/containers`) {
+        if (req.method === "GET") {
+          const statusFilter = url.searchParams.get("status");
+          const serverFilter = url.searchParams.get("server_id");
+          let rows = fleetContainers;
+          if (statusFilter) rows = rows.filter((c) => c.status === statusFilter);
+          if (serverFilter) rows = rows.filter((c) => c.server_id === serverFilter);
+          const offset = Number(url.searchParams.get("cursor") ?? "0");
+          const page = rows.slice(offset, offset + 1);
+          const nextOffset = offset + 1;
+          return Response.json({
+            containers: page,
+            next_cursor: nextOffset < rows.length ? String(nextOffset) : null,
+            stale_servers: [],
+          });
+        }
+      }
+      // /mcp/tenants/{tid}/runtime/refresh
+      if (
+        url.pathname === `/mcp/tenants/${TENANT_ID}/runtime/refresh` &&
+        req.method === "POST"
+      ) {
+        return Response.json({ refreshed: true });
       }
 
       return new Response("not found", { status: 404 });

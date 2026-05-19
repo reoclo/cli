@@ -8,6 +8,7 @@ import { registerLogin } from "./commands/login";
 import { registerLogout } from "./commands/logout";
 import { registerWhoami } from "./commands/whoami";
 import { registerServers } from "./commands/servers";
+import { registerContainers } from "./commands/containers";
 import { registerApps } from "./commands/apps";
 import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
@@ -58,6 +59,7 @@ if (import.meta.main) {
   registerLogout(program);
   registerWhoami(program);
   registerServers(program);
+  registerContainers(program);
   registerApps(program);
   registerDeployments(program);
   registerLogs(program);
