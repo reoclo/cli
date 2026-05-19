@@ -35,7 +35,18 @@ export function startFakeGateway(): FakeGateway {
     bound_server_id: string | null;
     verified_domain_id: string | null;
     scheme_hint: string | null;
-  }> = [];
+  }> = [
+    {
+      id: "dom-1",
+      tenant_id: TENANT_ID,
+      fqdn: "example.com",
+      status: "verified",
+      application_id: null,
+      bound_server_id: null,
+      verified_domain_id: null,
+      scheme_hint: null,
+    },
+  ];
   const deployments: Array<{ id: string; status: string }> = [];
   const repositories = [
     {
@@ -330,6 +341,40 @@ export function startFakeGateway(): FakeGateway {
         const key = envKeyMatch[2] ?? "";
         envVars.get(appId)?.delete(key);
         return new Response(null, { status: 204 });
+      }
+
+      // /mcp/tenants/{tid}/domains/{did}/dns
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)\/dns$/);
+        if (m) {
+          return Response.json({
+            records: [
+              { type: "A", name: "example.com", expected: "1.2.3.4", observed: "1.2.3.4", status: "ok" },
+              { type: "AAAA", name: "example.com", expected: "2001:db8::1", observed: "", status: "missing" },
+            ],
+            status: "mismatch",
+          });
+        }
+      }
+
+      // /mcp/tenants/{tid}/domains/{did}/health
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)\/health$/);
+        if (m) {
+          return Response.json({
+            dns: { status: "ok" },
+            tls: { status: "ok", cert_expires_at: "2026-08-19T00:00:00Z" },
+            uptime: { status: "ok", probe_at: "2026-05-19T10:00:00Z" },
+          });
+        }
+      }
+
+      // /mcp/tenants/{tid}/domains/{did}   (DELETE)
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)$/);
+        if (m && req.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
       }
 
       // /mcp/tenants/{tid}/domains/
