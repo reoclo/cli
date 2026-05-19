@@ -10,11 +10,11 @@ function scheduleCmd(): Command {
 }
 
 describe("reoclo schedule", () => {
-  test("registers the core CRUD subcommands", () => {
-    const names = scheduleCmd().commands.map((c) => c.name());
-    for (const n of ["ls", "get", "create", "update", "rm"]) {
-      expect(names).toContain(n);
-    }
+  test("registers all subcommands", () => {
+    const names = scheduleCmd().commands.map((c) => c.name()).sort();
+    expect(names).toEqual(
+      ["create", "get", "ls", "pause", "resume", "rm", "run", "runs", "trigger", "update"].sort(),
+    );
   });
 
   test("create requires --name/--type/--schedule", () => {
@@ -34,6 +34,14 @@ describe("reoclo schedule", () => {
     expect(spec?.flags?.["--schedule"]).toEqual({ enum: ["CRON", "ONCE"] });
     expect(spec?.flags?.["--concurrency"]).toEqual({
       enum: ["SKIP", "QUEUE", "REPLACE"],
+    });
+  });
+
+  test("runs has --status enum completion", () => {
+    const runs = scheduleCmd().commands.find((c) => c.name() === "runs")!;
+    const spec = getCompletionSpec(runs);
+    expect(spec?.flags?.["--status"]).toEqual({
+      enum: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "SKIPPED", "CANCELLED", "TIMED_OUT"],
     });
   });
 });

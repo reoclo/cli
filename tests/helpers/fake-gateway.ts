@@ -25,6 +25,7 @@ export function startFakeGateway(): FakeGateway {
   const incidents = new Map<string, Record<string, unknown>>();
   const incidentUpdates = new Map<string, Array<Record<string, unknown>>>();
   const scheduledOps = new Map<string, Record<string, unknown>>();
+  const scheduledRuns = new Map<string, Array<Record<string, unknown>>>();
   const domains: Array<{
     id: string;
     tenant_id: string;
@@ -469,6 +470,64 @@ export function startFakeGateway(): FakeGateway {
           scheduledOps.set(id, op);
           return Response.json(op);
         }
+      }
+      // /mcp/tenants/{tid}/scheduled-operations/{id}/(pause|resume|trigger)
+      const soActionMatch = url.pathname.match(
+        new RegExp(
+          `^/mcp/tenants/${TENANT_ID}/scheduled-operations/([^/]+)/(pause|resume|trigger)$`,
+        ),
+      );
+      if (soActionMatch && req.method === "POST") {
+        const id = soActionMatch[1] ?? "";
+        const action = soActionMatch[2];
+        const op = scheduledOps.get(id);
+        if (!op) return new Response("not found", { status: 404 });
+        if (action === "pause") {
+          op.status = "PAUSED";
+          return Response.json(op);
+        }
+        if (action === "resume") {
+          op.status = "ACTIVE";
+          return Response.json(op);
+        }
+        // trigger → create + return a run
+        const runId = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+        const run = {
+          id: runId,
+          scheduled_operation_id: id,
+          status: "RUNNING",
+          scheduled_for: "2026-02-01T00:00:00Z",
+          started_at: "2026-02-01T00:00:01Z",
+          duration_seconds: null,
+          attempt: 1,
+          output: "triggered manually\nstep 1 ok",
+        };
+        const runs = scheduledRuns.get(id) ?? [];
+        runs.push(run);
+        scheduledRuns.set(id, runs);
+        return Response.json(run);
+      }
+      // /mcp/tenants/{tid}/scheduled-operations/{id}/runs/{runId}
+      const soRunMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/scheduled-operations/([^/]+)/runs/([^/]+)$`),
+      );
+      if (soRunMatch && req.method === "GET") {
+        const id = soRunMatch[1] ?? "";
+        const runId = soRunMatch[2] ?? "";
+        const run = (scheduledRuns.get(id) ?? []).find((r) => r.id === runId);
+        if (!run) return new Response("not found", { status: 404 });
+        return Response.json(run);
+      }
+      // /mcp/tenants/{tid}/scheduled-operations/{id}/runs
+      const soRunsMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/scheduled-operations/([^/]+)/runs$`),
+      );
+      if (soRunsMatch && req.method === "GET") {
+        const id = soRunsMatch[1] ?? "";
+        const statusFilter = url.searchParams.get("status");
+        let runs = scheduledRuns.get(id) ?? [];
+        if (statusFilter) runs = runs.filter((r) => r.status === statusFilter);
+        return Response.json(runs);
       }
       // /mcp/tenants/{tid}/scheduled-operations/{id}  (item)
       const soItemMatch = url.pathname.match(

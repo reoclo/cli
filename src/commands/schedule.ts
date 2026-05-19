@@ -261,4 +261,117 @@ export function registerSchedule(program: Command): void {
       }),
     { args: [{ slot: 0, resource: "schedule" }] },
   );
+
+  withCompletion(
+    g
+      .command("pause <id>")
+      .description("pause a scheduled operation")
+      .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const op = await ctx.client.post<ScheduledOp>(
+          `/tenants/${tid}/scheduled-operations/${id}/pause`,
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(op as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        process.stdout.write(`✓ scheduled operation paused: ${id}\n`);
+      }),
+    { args: [{ slot: 0, resource: "schedule" }] },
+  );
+
+  withCompletion(
+    g
+      .command("resume <id>")
+      .description("resume a scheduled operation")
+      .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const op = await ctx.client.post<ScheduledOp>(
+          `/tenants/${tid}/scheduled-operations/${id}/resume`,
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(op as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        process.stdout.write(`✓ scheduled operation resumed: ${id}\n`);
+      }),
+    { args: [{ slot: 0, resource: "schedule" }] },
+  );
+
+  withCompletion(
+    g
+      .command("trigger <id>")
+      .description("trigger a scheduled operation to run now")
+      .action(async (id: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const run = await ctx.client.post<Record<string, unknown>>(
+          `/tenants/${tid}/scheduled-operations/${id}/trigger`,
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(run, fmt);
+          return;
+        }
+        process.stdout.write(`✓ triggered: run ${String(run.id)}\n`);
+      }),
+    { args: [{ slot: 0, resource: "schedule" }] },
+  );
+
+  withCompletion(
+    g
+      .command("runs <id>")
+      .description("list runs of a scheduled operation")
+      .option("--status <status>", "filter by run status")
+      .action(async (id: string, opts: { status?: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
+        const list = await ctx.client.get<Array<Record<string, unknown>>>(
+          `/tenants/${tid}/scheduled-operations/${id}/runs${qs}`,
+        );
+        printList(
+          list,
+          [
+            { key: "id", label: "ID" },
+            { key: "status", label: "STATUS" },
+            { key: "scheduled_for", label: "SCHEDULED FOR" },
+            { key: "started_at", label: "STARTED" },
+            { key: "duration_seconds", label: "DURATION(S)" },
+            { key: "attempt", label: "ATTEMPT" },
+          ],
+          fmt,
+        );
+      }),
+    { args: [{ slot: 0, resource: "schedule" }], flags: { "--status": { enum: RUN_STATUSES } } },
+  );
+
+  withCompletion(
+    g
+      .command("run <id> <runId>")
+      .description("show one run of a scheduled operation")
+      .action(async (id: string, runId: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const run = await ctx.client.get<Record<string, unknown>>(
+          `/tenants/${tid}/scheduled-operations/${id}/runs/${runId}`,
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(run, fmt);
+          return;
+        }
+        const { output, ...rest } = run;
+        printObject(rest, fmt);
+        if (typeof output === "string" && output.length > 0) {
+          process.stdout.write(`\noutput:\n${output}\n`);
+        }
+      }),
+    { args: [{ slot: 0, resource: "schedule" }] },
+  );
 }

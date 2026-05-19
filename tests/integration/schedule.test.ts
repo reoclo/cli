@@ -66,3 +66,26 @@ test("schedule ls --type filters by operation_type", async () => {
   expect(out).toContain("restart-op");
   expect(out).not.toContain("reboot-op");
 });
+
+test("schedule pause → resume → trigger → runs → run", async () => {
+  const created = await $`bun run src/index.ts schedule create --name lifecycle --type RESTART --schedule CRON --cron "0 1 * * *" --server srv-1`
+    .env(env()).quiet();
+  const id = created.stdout.toString().trim().split(": ")[1]!;
+
+  const paused = await $`bun run src/index.ts schedule pause ${id}`.env(env()).quiet();
+  expect(paused.stdout.toString()).toContain("✓ scheduled operation paused:");
+
+  const resumed = await $`bun run src/index.ts schedule resume ${id}`.env(env()).quiet();
+  expect(resumed.stdout.toString()).toContain("✓ scheduled operation resumed:");
+
+  const triggered = await $`bun run src/index.ts schedule trigger ${id}`.env(env()).quiet();
+  expect(triggered.stdout.toString()).toContain("✓ triggered: run ");
+  const runId = triggered.stdout.toString().trim().split("run ")[1]!;
+
+  const runs = await $`bun run src/index.ts schedule runs ${id}`.env(env()).quiet();
+  expect(runs.stdout.toString()).toContain(runId);
+
+  const run = await $`bun run src/index.ts schedule run ${id} ${runId}`.env(env()).quiet();
+  expect(run.stdout.toString()).toContain("output:");
+  expect(run.stdout.toString()).toContain("step 1 ok");
+});
