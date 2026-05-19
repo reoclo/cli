@@ -24,4 +24,21 @@ describe("reoclo incidents", () => {
       enum: ["minor", "major", "critical"],
     });
   });
+
+  test("update has --state and --severity enum completion", () => {
+    const update = incCmd().commands.find((c) => c.name() === "update")!;
+    const spec = getCompletionSpec(update);
+    expect(spec?.flags?.["--state"]).toEqual({
+      enum: ["investigating", "identified", "monitoring", "resolved"],
+    });
+    expect(spec?.flags?.["--severity"]).toEqual({ enum: ["minor", "major", "critical"] });
+  });
+
+  test("add-update has --state enum completion", () => {
+    const addUpdate = incCmd().commands.find((c) => c.name() === "add-update")!;
+    const spec = getCompletionSpec(addUpdate);
+    expect(spec?.flags?.["--state"]).toEqual({
+      enum: ["investigating", "identified", "monitoring", "resolved"],
+    });
+  });
 });

@@ -376,7 +376,13 @@ export function startFakeGateway(): FakeGateway {
 
       // /mcp/tenants/{tid}/incidents/  (collection, WITH trailing slash)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/incidents/`) {
-        if (req.method === "GET") return Response.json([...incidents.values()]);
+        if (req.method === "GET") {
+          const stateFilter = url.searchParams.get("state");
+          const all = [...incidents.values()];
+          return Response.json(
+            stateFilter ? all.filter((i) => i.state === stateFilter) : all,
+          );
+        }
         if (req.method === "POST") {
           const body = (await req.json()) as Record<string, unknown>;
           const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;

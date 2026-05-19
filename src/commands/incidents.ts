@@ -74,7 +74,8 @@ export function registerIncidents(program: Command): void {
         process.stdout.write(`\nupdates (${updates.length}):\n`);
         for (const u of updates) {
           const state = u.state ? ` [${u.state}]` : "";
-          process.stdout.write(`  ${u.created_at}${state} ${u.message}\n`);
+          const msg = u.message.replace(/\n/g, "\n    ");
+          process.stdout.write(`  ${u.created_at}${state} ${msg}\n`);
         }
       }),
     { args: [{ slot: 0, resource: "incidents" }] },
