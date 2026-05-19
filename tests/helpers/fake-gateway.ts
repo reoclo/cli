@@ -24,6 +24,7 @@ export function startFakeGateway(): FakeGateway {
   const statusPages = new Map<string, Record<string, unknown>>();
   const incidents = new Map<string, Record<string, unknown>>();
   const incidentUpdates = new Map<string, Array<Record<string, unknown>>>();
+  const scheduledOps = new Map<string, Record<string, unknown>>();
   const domains: Array<{
     id: string;
     tenant_id: string;
@@ -434,6 +435,57 @@ export function startFakeGateway(): FakeGateway {
         if (req.method === "PATCH") {
           Object.assign(inc, (await req.json()) as Record<string, unknown>);
           return Response.json(inc);
+        }
+      }
+
+      // /mcp/tenants/{tid}/scheduled-operations  (collection, NO trailing slash)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/scheduled-operations`) {
+        if (req.method === "GET") {
+          const statusFilter = url.searchParams.get("status");
+          const typeFilter = url.searchParams.get("operation_type");
+          let all = [...scheduledOps.values()];
+          if (statusFilter) all = all.filter((o) => o.status === statusFilter);
+          if (typeFilter) all = all.filter((o) => o.operation_type === typeFilter);
+          return Response.json(all);
+        }
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+          const op = {
+            id,
+            name: body.name,
+            description: body.description ?? "",
+            operation_type: body.operation_type,
+            schedule_kind: body.schedule_kind,
+            status: "ACTIVE",
+            cron_expression: body.cron_expression ?? null,
+            timezone: body.timezone ?? "UTC",
+            scheduled_at: body.scheduled_at ?? null,
+            server_id: body.server_id ?? null,
+            application_id: body.application_id ?? null,
+            params: body.params ?? {},
+            state: { next_run_at: "2026-02-01T00:00:00Z", last_run_status: null },
+          };
+          scheduledOps.set(id, op);
+          return Response.json(op);
+        }
+      }
+      // /mcp/tenants/{tid}/scheduled-operations/{id}  (item)
+      const soItemMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/scheduled-operations/([^/]+)$`),
+      );
+      if (soItemMatch) {
+        const id = soItemMatch[1] ?? "";
+        const op = scheduledOps.get(id);
+        if (!op) return new Response("not found", { status: 404 });
+        if (req.method === "GET") return Response.json(op);
+        if (req.method === "PATCH") {
+          Object.assign(op, (await req.json()) as Record<string, unknown>);
+          return Response.json(op);
+        }
+        if (req.method === "DELETE") {
+          scheduledOps.delete(id);
+          return new Response(null, { status: 204 });
         }
       }
 
