@@ -9,7 +9,7 @@ export function registerAuthTools(
 ): void {
   server.tool(
     "whoami",
-    "Show current API key context: connected tenant, role, permissions, and accessible organizations",
+    "Show current API key context: connected organization, role, permissions, and accessible organizations",
     {},
     async (): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: true }> => {
       try {

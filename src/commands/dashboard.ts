@@ -43,7 +43,7 @@ function sparkline(values: number[]): string {
 export function registerDashboard(program: Command): void {
   program
     .command("dashboard")
-    .description("show tenant summary (counts, recent activity, deploys)")
+    .description("show organization summary (counts, recent activity, deploys)")
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();

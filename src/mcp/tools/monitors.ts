@@ -17,7 +17,7 @@ export function registerMonitorTools(
 
   server.tool(
     "list_monitors",
-    "List all uptime monitors for your tenant",
+    "List all uptime monitors for your organization",
     {},
     async () => {
       try {

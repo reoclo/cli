@@ -87,7 +87,7 @@ export function registerOtherTools(
   // Audit logs
   server.tool(
     "get_audit_log",
-    "Get recent audit log entries for your tenant",
+    "Get recent audit log entries for your organization",
     {
       limit: z.number().int().positive().optional().describe("Max entries (default 50)"),
       action: z.string().optional().describe("Filter by action type"),

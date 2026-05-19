@@ -27,7 +27,7 @@ test("automation key is blocked from running 'servers ls' (tenant-only command)"
   };
   const r = await $`bun run src/index.ts servers ls`.env(env).nothrow().quiet();
   expect(r.exitCode).toBe(4);
-  expect(r.stderr.toString()).toContain("requires a tenant key");
+  expect(r.stderr.toString()).toContain("requires an organization key");
 });
 
 test("tenant key is allowed to run 'servers ls'", async () => {

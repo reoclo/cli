@@ -235,7 +235,7 @@ export function registerLogTools(
 
   server.tool(
     "get_log_usage",
-    "Get log storage usage statistics for the tenant",
+    "Get log storage usage statistics for the organization",
     {},
     async () => {
       try {

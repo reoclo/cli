@@ -134,7 +134,7 @@ if (import.meta.main) {
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;
       const err = new Error(
-        `'${cmd}' requires a tenant key; automation keys can only run 'apps deploy', 'apps restart', 'exec', or 'shell'.`,
+        `'${cmd}' requires an organization key; automation keys can only run 'apps deploy', 'apps restart', 'exec', or 'shell'.`,
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

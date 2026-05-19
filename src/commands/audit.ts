@@ -30,7 +30,7 @@ const HARD_LIMIT = 1000;
 const SERVER_MAX_PAGE = 200;
 
 export function registerAudit(program: Command): void {
-  const g = program.command("audit").description("inspect tenant audit logs");
+  const g = program.command("audit").description("inspect organization audit logs");
 
   g.command("ls")
     .description("list audit log entries")
