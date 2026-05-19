@@ -32,6 +32,7 @@ describe("buildProfileWithCapabilities", () => {
       get: mock(() => Promise.reject(new Error("network"))),
     };
     const profile = await buildProfileWithCapabilities(
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- fakeClient is a partial mock object incompatible with HttpClient; the double cast (unknown → target type) is the standard pattern for narrowing a structurally-incompatible test stub
       fakeClient as unknown as Parameters<typeof buildProfileWithCapabilities>[0],
       "https://api.example.com",
       "tenant",

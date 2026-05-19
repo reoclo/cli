@@ -71,6 +71,7 @@ describe("initiateDeviceFlow", () => {
       Promise.resolve(new Response("bad request", { status: 400 })),
     ) as unknown as typeof fetch;
 
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toMatchObject() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(initiateDeviceFlow(AUTH_BASE, CLIENT_ID, "openid")).rejects.toMatchObject({
       code: "network",
     });
@@ -81,7 +82,7 @@ describe("initiateDeviceFlow", () => {
       Promise.reject(new Error("ECONNREFUSED")),
     ) as unknown as typeof fetch;
 
-    const err = await initiateDeviceFlow(AUTH_BASE, CLIENT_ID, "openid").catch((e) => e);
+    const err = await initiateDeviceFlow(AUTH_BASE, CLIENT_ID, "openid").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("network");
   });
@@ -154,7 +155,7 @@ describe("pollForToken", () => {
       Promise.resolve(jsonRes({ error: "access_denied" }, 400)),
     ) as unknown as typeof fetch;
 
-    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e) => e);
+    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("access_denied");
   });
@@ -164,7 +165,7 @@ describe("pollForToken", () => {
       Promise.resolve(jsonRes({ error: "expired_token" }, 400)),
     ) as unknown as typeof fetch;
 
-    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e) => e);
+    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("expired_token");
   });
@@ -199,7 +200,7 @@ describe("pollForToken", () => {
       Promise.resolve(jsonRes({ detail: { error: "access_denied" } }, 400)),
     ) as unknown as typeof fetch;
 
-    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e) => e);
+    const err = await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("access_denied");
   });
@@ -228,9 +229,9 @@ describe("refreshAccessToken", () => {
 
   test("sends form-encoded body", async () => {
     let capturedBody = "";
-    globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
       capturedBody = init?.body as string;
-      return jsonRes({ access_token: "t", refresh_token: "r", scope: "openid" });
+      return Promise.resolve(jsonRes({ access_token: "t", refresh_token: "r", scope: "openid" }));
     }) as unknown as typeof fetch;
 
     await refreshAccessToken(AUTH_BASE, "my_refresh", CLIENT_ID);
@@ -244,7 +245,7 @@ describe("refreshAccessToken", () => {
       Promise.resolve(new Response("unauthorized", { status: 401 })),
     ) as unknown as typeof fetch;
 
-    const err = await refreshAccessToken(AUTH_BASE, "bad_rt", CLIENT_ID).catch((e) => e);
+    const err = await refreshAccessToken(AUTH_BASE, "bad_rt", CLIENT_ID).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("network");
   });

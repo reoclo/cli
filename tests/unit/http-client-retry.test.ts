@@ -37,7 +37,7 @@ describe("HttpClient 403 retry", () => {
     let callCount = 0;
     globalThis.fetch = mock((url: string) => {
       callCount++;
-      const u = url as string;
+      const u = url;
       if (callCount === 1) {
         // First call: original request → 403
         return Promise.resolve(textResponse("forbidden", 403));
@@ -60,8 +60,7 @@ describe("HttpClient 403 retry", () => {
     let gatedCalls = 0;
     let capsCalls = 0;
     globalThis.fetch = mock((url: string) => {
-      const u = url as string;
-      if (u.includes("/auth/me/capabilities")) {
+      if (url.includes("/auth/me/capabilities")) {
         capsCalls++;
         return Promise.resolve(jsonResponse({ capabilities: [] }));
       }
@@ -71,6 +70,7 @@ describe("HttpClient 403 retry", () => {
     }) as unknown as typeof fetch;
 
     const client = makeClient();
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toBeInstanceOf() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(client.get("/cost/rollup")).rejects.toBeInstanceOf(PermissionError);
     expect(gatedCalls).toBe(2);   // original + one retry
     expect(capsCalls).toBe(1);    // caps refresh called exactly once
