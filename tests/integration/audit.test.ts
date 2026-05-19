@@ -76,3 +76,10 @@ test("audit ls --from invalid spec exits with documented message", async () => {
   expect(ls.exitCode).not.toBe(0);
   expect(ls.stderr.toString()).toContain("invalid time spec");
 });
+
+test("audit ls --limit abc exits non-zero with the validation message", async () => {
+  const r = await $`bun run src/index.ts audit ls --limit abc`.env(env()).nothrow().quiet();
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stderr.toString()).toContain("invalid --limit");
+  expect(r.stderr.toString()).toContain("abc");
+});

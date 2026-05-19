@@ -92,3 +92,11 @@ test("registry test (failure) prints ✗ message and exits non-zero", async () =
   expect(r.exitCode).not.toBe(0);
   expect(r.stderr.toString() + r.stdout.toString()).toContain("DNS lookup failed");
 });
+
+test("registry test without --username still succeeds (no empty-string username sent)", async () => {
+  const r = await $`echo -n "pw" | bun run src/index.ts registry test \
+    --type docker --url 'https://index.docker.io/v1/' --password-stdin`
+    .env(env())
+    .quiet();
+  expect(r.stdout.toString()).toContain("✓ ok");
+});

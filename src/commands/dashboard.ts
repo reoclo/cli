@@ -79,7 +79,7 @@ export function registerDashboard(program: Command): void {
             { key: "action", label: "ACTION" },
             { key: "resource", label: "RESOURCE" },
           ],
-          "text",
+          fmt,
         );
         process.stdout.write("\n");
       }

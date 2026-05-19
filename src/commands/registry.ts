@@ -168,16 +168,15 @@ export function registerRegistry(program: Command): void {
         const body: Record<string, unknown> = {
           registry_type: opts.type,
           registry_url: opts.url,
-          username: opts.username ?? "",
           encrypted_credential: password,
         };
+        if (opts.username !== undefined) body["username"] = opts.username;
         const r = await ctx.client.post<
           Record<string, unknown> & { success: boolean; message: string; latency_ms: number }
         >(`/tenants/${tid}/registry-credentials/test-connection`, body);
         if (fmt === "json" || fmt === "yaml") {
           printObject(r, fmt);
           process.exit(r.success ? 0 : 1);
-          return;
         }
         if (r.success) {
           process.stdout.write(`✓ ok (latency: ${r.latency_ms}ms)\n`);
