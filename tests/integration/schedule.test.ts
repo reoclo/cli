@@ -50,10 +50,10 @@ test("schedule create → ls → get → update → rm", async () => {
 });
 
 test("schedule ls --status filters", async () => {
-  await $`bun run src/index.ts schedule create --name a --type REBOOT --schedule ONCE --at 2026-03-01T00:00:00Z --server srv-1`
+  await $`bun run src/index.ts schedule create --name status-filter-probe --type REBOOT --schedule ONCE --at 2026-03-01T00:00:00Z --server srv-1`
     .env(env()).quiet();
   const filtered = await $`bun run src/index.ts schedule ls --status PAUSED`.env(env()).quiet();
-  expect(filtered.stdout.toString()).not.toContain("\na ");
+  expect(filtered.stdout.toString()).not.toContain("status-filter-probe");
 });
 
 test("schedule ls --type filters by operation_type", async () => {

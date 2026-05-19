@@ -8,6 +8,7 @@ import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 
+// Mirror the API's scheduled-operation enums — keep in sync if the API adds values.
 const OP_TYPES = ["DEPLOY", "COMMAND", "RESTART", "REBOOT"];
 const SCHEDULE_KINDS = ["CRON", "ONCE"];
 const CONCURRENCY = ["SKIP", "QUEUE", "REPLACE"];
