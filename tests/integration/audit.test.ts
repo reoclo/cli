@@ -83,3 +83,10 @@ test("audit ls --limit abc exits non-zero with the validation message", async ()
   expect(r.stderr.toString()).toContain("invalid --limit");
   expect(r.stderr.toString()).toContain("abc");
 });
+
+test("audit ls --limit 1.5 exits 2 with the documented message", async () => {
+  const r = await $`bun run src/index.ts audit ls --limit 1.5`.env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("invalid --limit");
+  expect(r.stderr.toString()).toContain("1.5");
+});

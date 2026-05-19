@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
+import { parseLimit } from "../util/parse-limit";
 import { parseTimeSpec } from "../util/time";
 
 interface AuditLog {
@@ -71,15 +72,7 @@ export function registerAudit(program: Command): void {
         const fromDate = opts.from ? parseTimeSpec(opts.from).toISOString() : undefined;
         const toDate = opts.to ? parseTimeSpec(opts.to).toISOString() : undefined;
 
-        const parsed = Number(opts.limit);
-        if (!Number.isFinite(parsed) || parsed < 1) {
-          const e = new Error(
-            `invalid --limit: '${opts.limit}' (expected positive integer)`,
-          ) as Error & { exitCode: number };
-          e.exitCode = 2;
-          throw e;
-        }
-        const limit = Math.min(parsed, HARD_LIMIT);
+        const limit = parseLimit(opts.limit, HARD_LIMIT);
         const pageSize = Math.min(limit, SERVER_MAX_PAGE);
 
         const items: AuditLog[] = [];
