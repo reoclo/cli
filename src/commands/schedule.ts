@@ -6,7 +6,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 // Mirror the API's scheduled-operation enums — keep in sync if the API adds values.
 const OP_TYPES = ["DEPLOY", "COMMAND", "RESTART", "REBOOT"];
@@ -148,7 +148,6 @@ export function registerSchedule(program: Command): void {
           retryDelay?: string;
           timeout?: string;
         }) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = {
@@ -173,11 +172,7 @@ export function registerSchedule(program: Command): void {
             `/tenants/${tid}/scheduled-operations`,
             body,
           );
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(op as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ scheduled operation created: ${op.id}\n`);
+          printMutation(program, op as unknown as Record<string, unknown>, `✓ scheduled operation created: ${op.id}`);
         },
       ),
     {
@@ -225,7 +220,6 @@ export function registerSchedule(program: Command): void {
             timeout?: string;
           },
         ) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = {};
@@ -247,11 +241,7 @@ export function registerSchedule(program: Command): void {
             `/tenants/${tid}/scheduled-operations/${id}`,
             body,
           );
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(op as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ scheduled operation updated: ${op.id}\n`);
+          printMutation(program, op as unknown as Record<string, unknown>, `✓ scheduled operation updated: ${op.id}`);
         },
       ),
     {
@@ -278,17 +268,12 @@ export function registerSchedule(program: Command): void {
       .command("pause <id>")
       .description("pause a scheduled operation")
       .action(async (id: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const op = await ctx.client.post<ScheduledOp>(
           `/tenants/${tid}/scheduled-operations/${id}/pause`,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(op as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ scheduled operation paused: ${id}\n`);
+        printMutation(program, op as unknown as Record<string, unknown>, `✓ scheduled operation paused: ${id}`);
       }),
     { args: [{ slot: 0, resource: "schedule" }] },
   );
@@ -298,17 +283,12 @@ export function registerSchedule(program: Command): void {
       .command("resume <id>")
       .description("resume a scheduled operation")
       .action(async (id: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const op = await ctx.client.post<ScheduledOp>(
           `/tenants/${tid}/scheduled-operations/${id}/resume`,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(op as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ scheduled operation resumed: ${id}\n`);
+        printMutation(program, op as unknown as Record<string, unknown>, `✓ scheduled operation resumed: ${id}`);
       }),
     { args: [{ slot: 0, resource: "schedule" }] },
   );
@@ -318,17 +298,12 @@ export function registerSchedule(program: Command): void {
       .command("trigger <id>")
       .description("trigger a scheduled operation to run now")
       .action(async (id: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const run = await ctx.client.post<ScheduledRun>(
           `/tenants/${tid}/scheduled-operations/${id}/trigger`,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(run as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ triggered: run ${run.id}\n`);
+        printMutation(program, run as unknown as Record<string, unknown>, `✓ triggered: run ${run.id}`);
       }),
     { args: [{ slot: 0, resource: "schedule" }] },
   );

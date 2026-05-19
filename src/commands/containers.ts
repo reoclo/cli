@@ -5,7 +5,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { resolveServer } from "../client/resolve";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 const CONTAINER_STATES = ["created", "restarting", "running", "paused", "exited", "dead"];
 
@@ -114,17 +114,12 @@ export function registerContainers(program: Command): void {
       .command("refresh")
       .description("trigger a fleet container snapshot refresh")
       .action(async () => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const res = await ctx.client.post<Record<string, unknown>>(
           `/tenants/${tid}/runtime/refresh`,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(res, fmt);
-          return;
-        }
-        process.stdout.write("✓ snapshot refresh triggered\n");
+        printMutation(program, res, "✓ snapshot refresh triggered");
       }),
     "container:read",
   );
@@ -151,7 +146,6 @@ export function registerContainers(program: Command): void {
           replicas?: string;
         },
       ) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
@@ -167,11 +161,7 @@ export function registerContainers(program: Command): void {
           `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/recreate`,
           body,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(res, fmt);
-          return;
-        }
-        process.stdout.write(`✓ container recreated: ${name}\n`);
+        printMutation(program, res, `✓ container recreated: ${name}`);
         for (const w of res.warnings ?? []) {
           process.stdout.write(`  warning: ${w}\n`);
         }
@@ -184,7 +174,6 @@ export function registerContainers(program: Command): void {
     .command("scale <server> <name> <replicas>")
     .description("scale a Swarm service to N replicas")
     .action(async (server: string, name: string, replicas: string) => {
-      const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
@@ -192,11 +181,7 @@ export function registerContainers(program: Command): void {
         `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/scale`,
         { replicas: Number(replicas) },
       );
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(res, fmt);
-        return;
-      }
-      process.stdout.write(`✓ scaled ${name} to ${replicas}\n`);
+      printMutation(program, res, `✓ scaled ${name} to ${replicas}`);
     });
   withCompletion(scaleCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(scaleCmd, "container:write");
@@ -212,7 +197,6 @@ export function registerContainers(program: Command): void {
         name: string,
         opts: { label: Record<string, string>; removeLabel: string[] },
       ) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
@@ -222,11 +206,7 @@ export function registerContainers(program: Command): void {
           `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/labels`,
           { labels },
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(res, fmt);
-          return;
-        }
-        process.stdout.write(`✓ labels updated: ${name}\n`);
+        printMutation(program, res, `✓ labels updated: ${name}`);
       },
     );
   withCompletion(labelsCmd, { args: [{ slot: 0, resource: "servers" }] });
@@ -275,18 +255,13 @@ export function registerContainers(program: Command): void {
     .command("restart <server> <name>")
     .description("restart a container on a server")
     .action(async (server: string, name: string) => {
-      const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
       const res = await ctx.client.post<Record<string, unknown>>(
         `/tenants/${tid}/servers/${sid}/containers/${name}/restart`,
       );
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(res, fmt);
-        return;
-      }
-      process.stdout.write(`✓ container restarted: ${name}\n`);
+      printMutation(program, res, `✓ container restarted: ${name}`);
     });
   withCompletion(restartCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(restartCmd, "container:write");

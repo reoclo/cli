@@ -1,7 +1,7 @@
 // src/commands/registry.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
 import { readSecret } from "../util/secret";
 
@@ -84,7 +84,6 @@ export function registerRegistry(program: Command): void {
         description?: string;
         passwordStdin?: boolean;
       }) => {
-        const fmt = resolveFormat(globalOutput(program));
         const password = await readSecret({
           fromStdin: Boolean(opts.passwordStdin),
           promptLabel: "registry password",
@@ -103,11 +102,7 @@ export function registerRegistry(program: Command): void {
           `/tenants/${tid}/registry-credentials`,
           body,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(r, fmt);
-          return;
-        }
-        process.stdout.write(`✓ registry created: ${r.id}\n`);
+        printMutation(program, r, `✓ registry created: ${r.id}`);
       },
     );
 
@@ -129,7 +124,6 @@ export function registerRegistry(program: Command): void {
           passwordStdin?: boolean;
         },
       ) => {
-        const fmt = resolveFormat(globalOutput(program));
         const body: Record<string, unknown> = {};
         if (opts.name !== undefined) body["name"] = opts.name;
         if (opts.url !== undefined) body["registry_url"] = opts.url;
@@ -147,11 +141,7 @@ export function registerRegistry(program: Command): void {
           `/tenants/${tid}/registry-credentials/${id}`,
           body,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(r, fmt);
-          return;
-        }
-        process.stdout.write(`✓ registry updated: ${r.id}\n`);
+        printMutation(program, r, `✓ registry updated: ${r.id}`);
       },
     );
 

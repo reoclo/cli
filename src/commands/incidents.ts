@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 // Mirror the API's IncidentSeverity / IncidentState enums — keep in sync if the API adds values.
 const SEVERITIES = ["minor", "major", "critical"];
@@ -101,7 +101,6 @@ export function registerIncidents(program: Command): void {
           summary?: string;
           statusPage?: string;
         }) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = { title: opts.title };
@@ -109,11 +108,7 @@ export function registerIncidents(program: Command): void {
           if (opts.summary !== undefined) body.summary = opts.summary;
           if (opts.statusPage !== undefined) body.status_page_id = opts.statusPage;
           const inc = await ctx.client.post<Incident>(`/tenants/${tid}/incidents/`, body);
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(inc as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ incident created: ${inc.id}\n`);
+          printMutation(program, inc as unknown as Record<string, unknown>, `✓ incident created: ${inc.id}`);
         },
       ),
     { flags: { "--severity": { enum: SEVERITIES } } },
@@ -132,7 +127,6 @@ export function registerIncidents(program: Command): void {
           id: string,
           opts: { state?: string; severity?: string; title?: string; summary?: string },
         ) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = {};
@@ -141,11 +135,7 @@ export function registerIncidents(program: Command): void {
           if (opts.title !== undefined) body.title = opts.title;
           if (opts.summary !== undefined) body.summary = opts.summary;
           const inc = await ctx.client.patch<Incident>(`/tenants/${tid}/incidents/${id}`, body);
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(inc as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ incident updated: ${inc.id}\n`);
+          printMutation(program, inc as unknown as Record<string, unknown>, `✓ incident updated: ${inc.id}`);
         },
       ),
     {
@@ -161,7 +151,6 @@ export function registerIncidents(program: Command): void {
       .requiredOption("--message <text>", "update message")
       .option("--state <state>", "also change the incident state")
       .action(async (id: string, opts: { message: string; state?: string }) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const body: Record<string, unknown> = { message: opts.message };
@@ -170,11 +159,7 @@ export function registerIncidents(program: Command): void {
           `/tenants/${tid}/incidents/${id}/updates`,
           body,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(u, fmt);
-          return;
-        }
-        process.stdout.write(`✓ update posted to incident ${id}\n`);
+        printMutation(program, u, `✓ update posted to incident ${id}`);
       }),
     {
       args: [{ slot: 0, resource: "incidents" }],

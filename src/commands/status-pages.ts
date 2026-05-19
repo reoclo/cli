@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 interface StatusPage {
   id: string;
@@ -58,7 +58,6 @@ export function registerStatusPages(program: Command): void {
     .option("--label <label>", "short label")
     .option("--description <text>", "page description")
     .action(async (opts: { title?: string; label?: string; description?: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const body: Record<string, unknown> = {};
@@ -66,11 +65,7 @@ export function registerStatusPages(program: Command): void {
       if (opts.label !== undefined) body.label = opts.label;
       if (opts.description !== undefined) body.description = opts.description;
       const sp = await ctx.client.post<StatusPage>(`/tenants/${tid}/status-pages/`, body);
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(sp as unknown as Record<string, unknown>, fmt);
-        return;
-      }
-      process.stdout.write(`✓ status page created: ${sp.id}\n`);
+      printMutation(program, sp as unknown as Record<string, unknown>, `✓ status page created: ${sp.id}`);
     });
 
   withCompletion(
@@ -86,7 +81,6 @@ export function registerStatusPages(program: Command): void {
           id: string,
           opts: { title?: string; label?: string; description?: string; published?: string },
         ) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = {};
@@ -106,11 +100,7 @@ export function registerStatusPages(program: Command): void {
             `/tenants/${tid}/status-pages/${id}`,
             body,
           );
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(sp as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ status page updated: ${sp.id}\n`);
+          printMutation(program, sp as unknown as Record<string, unknown>, `✓ status page updated: ${sp.id}`);
         },
       ),
     { args: [{ slot: 0, resource: "status-pages" }] },

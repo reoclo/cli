@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 interface Monitor {
   id: string;
@@ -59,17 +59,12 @@ export function registerMonitors(program: Command): void {
     .requiredOption("--url <url>", "URL to probe")
     .option("--interval <seconds>", "check interval in seconds (10-3600)")
     .action(async (opts: { name: string; url: string; interval?: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const body: Record<string, unknown> = { name: opts.name, url: opts.url };
       if (opts.interval !== undefined) body.check_interval_seconds = Number(opts.interval);
       const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors`, body);
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(m as unknown as Record<string, unknown>, fmt);
-        return;
-      }
-      process.stdout.write(`✓ monitor created: ${m.id}\n`);
+      printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor created: ${m.id}`);
     });
 
   withCompletion(
@@ -81,7 +76,6 @@ export function registerMonitors(program: Command): void {
       .option("--interval <seconds>", "check interval in seconds (10-3600)")
       .action(
         async (id: string, opts: { name?: string; url?: string; interval?: string }) => {
-          const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const body: Record<string, unknown> = {};
@@ -89,11 +83,7 @@ export function registerMonitors(program: Command): void {
           if (opts.url !== undefined) body.url = opts.url;
           if (opts.interval !== undefined) body.check_interval_seconds = Number(opts.interval);
           const m = await ctx.client.patch<Monitor>(`/tenants/${tid}/monitors/${id}`, body);
-          if (fmt === "json" || fmt === "yaml") {
-            printObject(m as unknown as Record<string, unknown>, fmt);
-            return;
-          }
-          process.stdout.write(`✓ monitor updated: ${m.id}\n`);
+          printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor updated: ${m.id}`);
         },
       ),
     { args: [{ slot: 0, resource: "monitors" }] },
@@ -104,15 +94,10 @@ export function registerMonitors(program: Command): void {
       .command("pause <id>")
       .description("pause a monitor")
       .action(async (id: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/pause`);
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(m as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ monitor paused: ${id}\n`);
+        printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor paused: ${id}`);
       }),
     { args: [{ slot: 0, resource: "monitors" }] },
   );
@@ -122,15 +107,10 @@ export function registerMonitors(program: Command): void {
       .command("resume <id>")
       .description("resume a monitor")
       .action(async (id: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/resume`);
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(m as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ monitor resumed: ${id}\n`);
+        printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor resumed: ${id}`);
       }),
     { args: [{ slot: 0, resource: "monitors" }] },
   );

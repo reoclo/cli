@@ -2,7 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import type { Server } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
@@ -72,7 +72,6 @@ export function registerServers(program: Command): void {
       .command("set-slug <idOrSlug> <newSlug>")
       .description("change a server's slug (URL- and CLI-safe identifier)")
       .action(async (idOrSlug: string, newSlug: string) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const id = await resolveServer(ctx.client, tid, idOrSlug);
@@ -82,11 +81,7 @@ export function registerServers(program: Command): void {
           slug: newSlug,
         });
 
-        if (fmt === "json") {
-          printObject(updated as unknown as Record<string, unknown>, fmt);
-          return;
-        }
-        process.stdout.write(`✓ slug updated: ${before.slug} → ${updated.slug}\n`);
+        printMutation(program, updated as unknown as Record<string, unknown>, `✓ slug updated: ${before.slug} → ${updated.slug}`);
       }),
     { args: [{ slot: 0, resource: "servers" }] },
   );
@@ -216,7 +211,6 @@ export function registerServers(program: Command): void {
       .description("reboot a server")
       .option("--yes", "skip the confirmation prompt")
       .action(async (idOrSlug: string, opts: { yes?: boolean }) => {
-        const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
@@ -232,11 +226,7 @@ export function registerServers(program: Command): void {
         const res = await ctx.client.post<{ message?: string } & Record<string, unknown>>(
           `/tenants/${tid}/servers/${sid}/reboot`,
         );
-        if (fmt === "json" || fmt === "yaml") {
-          printObject(res, fmt);
-          return;
-        }
-        process.stdout.write(`✓ reboot signaled: ${idOrSlug}\n`);
+        printMutation(program, res, `✓ reboot signaled: ${idOrSlug}`);
         if (res.message) process.stdout.write(`  ${res.message}\n`);
       }),
     { args: [{ slot: 0, resource: "servers" }] },
