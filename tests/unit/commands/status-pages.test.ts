@@ -20,6 +20,6 @@ describe("reoclo status-pages", () => {
     expect(flags).toContain("--title");
     expect(flags).toContain("--label");
     expect(flags).toContain("--description");
-    expect(create.options.every((o) => !o.required)).toBe(true);
+    expect(create.options.every((o) => !o.mandatory)).toBe(true);
   });
 });

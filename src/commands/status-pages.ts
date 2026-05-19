@@ -53,9 +53,9 @@ export function registerStatusPages(program: Command): void {
 
   g.command("create")
     .description("create a status page")
-    .option("--title [title]", "page title")
-    .option("--label [label]", "short label")
-    .option("--description [text]", "page description")
+    .option("--title <title>", "page title")
+    .option("--label <label>", "short label")
+    .option("--description <text>", "page description")
     .action(async (opts: { title?: string; label?: string; description?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
