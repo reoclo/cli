@@ -116,6 +116,63 @@ test("mcp server responds to initialize and tools/list", async () => {
     expect(toolNames).toContain("recreate_container");
     expect(toolNames).toContain("scale_container");
     expect(toolNames).toContain("update_container_labels");
+
+    // SP3-B tunnel tools
+    expect(toolNames).toContain("list_tunnel_sessions");
+    expect(toolNames).toContain("get_tunnel_session");
+  } finally {
+    proc.kill();
+  }
+});
+
+test("list_tunnel_sessions returns sessions for the active organization", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "list_tunnel_sessions", arguments: {} },
+    });
+    expect(resp.result).toBeDefined();
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    expect(Array.isArray(result.content)).toBe(true);
+    expect(result.content[0]?.text).toBeDefined();
+    const parsed: unknown = JSON.parse(result.content[0]?.text ?? "[]");
+    expect(Array.isArray(parsed) || (typeof parsed === "object" && parsed !== null)).toBe(true);
+  } finally {
+    proc.kill();
+  }
+});
+
+test("get_tunnel_session with unknown id surfaces an error", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "get_tunnel_session", arguments: { tunnel_id: "does-not-exist" } },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).toBe(true);
   } finally {
     proc.kill();
   }

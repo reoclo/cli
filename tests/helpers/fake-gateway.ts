@@ -1194,6 +1194,16 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({ items, total: filtered.length, page, page_size: pageSize });
       }
 
+      // /mcp/tenants/{tid}/tunnels/   (list)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/tunnels/`) {
+        return Response.json([]);
+      }
+
+      // /mcp/tenants/{tid}/tunnels/{id}   (get by id)
+      if (url.pathname.startsWith(`/mcp/tenants/${TENANT_ID}/tunnels/`)) {
+        return new Response("not found", { status: 404 });
+      }
+
       return new Response("not found", { status: 404 });
     },
   });
