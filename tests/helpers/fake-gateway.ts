@@ -677,6 +677,76 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
+      // /mcp/tenants/{tid}/servers/{sid}/containers   (live per-server list)
+      const srvContainersMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/containers$`),
+      );
+      if (srvContainersMatch && req.method === "GET") {
+        const statusFilter = url.searchParams.get("status");
+        let rows: Array<Record<string, unknown>> = [
+          { container_id: "c1", name: "web-1", image: "nginx:1.27", status: "running", state: "running" },
+          { container_id: "c2", name: "worker-1", image: "reoclo/worker", status: "exited", state: "exited" },
+        ];
+        if (statusFilter) rows = rows.filter((c) => c.status === statusFilter);
+        return Response.json({
+          server_id: srvContainersMatch[1],
+          containers: rows,
+          fetched_at: "2026-01-01T00:00:00Z",
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/health
+      const healthMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/health$`),
+      );
+      if (healthMatch && req.method === "GET") {
+        return Response.json({
+          status: "healthy",
+          consecutive_failures: 0,
+          last_latency_ms: 12,
+          disk_percent: 41.2,
+          disk_status: "ok",
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/ports
+      const portsMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/ports$`),
+      );
+      if (portsMatch && req.method === "GET") {
+        return Response.json({
+          server_id: portsMatch[1],
+          listening_ports: [
+            { port: 22, protocol: "tcp", address: "0.0.0.0", process: "sshd", pid: 1, state: "LISTEN" },
+            { port: 443, protocol: "tcp", address: "0.0.0.0", process: "caddy", pid: 2, state: "LISTEN" },
+          ],
+          docker_port_bindings: [],
+          firewall: { detected: true, backend: "ufw", active: true, rules: [], raw_output: "" },
+          preview_port_range: [20000, 20010],
+          scanned_at: "2026-01-01T00:00:00Z",
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/uptime
+      const uptimeMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/uptime$`),
+      );
+      if (uptimeMatch && req.method === "GET") {
+        return Response.json({
+          server_id: uptimeMatch[1],
+          hours: Number(url.searchParams.get("hours") ?? "6"),
+          slot_minutes: 5,
+          buckets: [
+            { slot_start: "2026-01-01T00:00:00Z", slot_end: "2026-01-01T00:05:00Z", total_checks: 5, ok_checks: 5, uptime_pct: 100, status: "healthy" },
+          ],
+          overall_uptime_pct: 100,
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/reboot
+      const rebootMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/reboot$`),
+      );
+      if (rebootMatch && req.method === "POST") {
+        return Response.json({ success: true, message: "reboot job queued", job_id: "job-1" });
+      }
+
       return new Response("not found", { status: 404 });
     },
   });

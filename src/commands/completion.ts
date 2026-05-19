@@ -26,6 +26,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { fetchCompletionIndex } from "../completion/index-client";
 import { writeAllSlices } from "../completion/cache";
 import { NotFoundError } from "../client/errors";
+import { promptYesNo } from "../ui/prompt";
 
 type Shell = "bash" | "zsh" | "fish";
 
@@ -139,22 +140,6 @@ function detectShell(): Shell {
   if (sh.includes("zsh")) return "zsh";
   if (sh.includes("fish")) return "fish";
   return "bash";
-}
-
-async function promptYesNo(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
-  const { createInterface } = await import("node:readline");
-  return new Promise((resolve) => {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
 }
 
 interface InstallOpts {

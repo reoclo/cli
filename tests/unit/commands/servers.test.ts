@@ -23,3 +23,21 @@ describe("reoclo servers", () => {
     expect(setSlug?.usage()).toContain("newSlug");
   });
 });
+
+test("servers has the runtime/health extension subcommands", () => {
+  const p = new Command();
+  registerServers(p);
+  const g = p.commands.find((c) => c.name() === "servers")!;
+  const names = g.commands.map((c) => c.name());
+  for (const n of ["containers", "health", "ports", "uptime", "reboot"]) {
+    expect(names).toContain(n);
+  }
+});
+
+test("servers reboot has a --yes flag", () => {
+  const p = new Command();
+  registerServers(p);
+  const g = p.commands.find((c) => c.name() === "servers")!;
+  const reboot = g.commands.find((c) => c.name() === "reboot")!;
+  expect(reboot.options.map((o) => o.long)).toContain("--yes");
+});
