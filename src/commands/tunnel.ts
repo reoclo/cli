@@ -217,7 +217,7 @@ function parseReverseSpec(
     if (parts[0] !== "127.0.0.1" && parts[0] !== "0.0.0.0") {
       throw new Error(`invalid -R bind: ${parts[0]} (only 127.0.0.1 or 0.0.0.0 supported)`);
     }
-    bind = parts[0] as "127.0.0.1" | "0.0.0.0";
+    bind = parts[0];
     remotePort = parseDecimalInt(parts[1]!, "-R", "remote_port");
     localHost = parts[2]!;
     localPort = parseDecimalInt(parts[3]!, "-R", "local_port");
@@ -353,7 +353,7 @@ export function registerTunnel(program: Command): void {
             await session.stop();
             process.exit(0);
           };
-          process.on("SIGINT", onSigInt);
+          process.on("SIGINT", () => { void onSigInt(); });
 
           const ready = await session.start();
           for (let i = 0; i < parsed.forwards.length; i++) {

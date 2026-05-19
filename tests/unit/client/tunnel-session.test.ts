@@ -37,7 +37,13 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
     activeWs = ws;
     ws.on("error", () => { /* swallow errors on forced close */ });
     ws.on("message", (raw) => {
-      const msg = JSON.parse(raw.toString()) as Record<string, unknown>;
+      const msg = JSON.parse(
+        Array.isArray(raw)
+          ? Buffer.concat(raw).toString()
+          : Buffer.isBuffer(raw)
+            ? raw.toString()
+            : Buffer.from(raw).toString(),
+      ) as Record<string, unknown>;
       received.push(msg);
       onClientFrame?.(msg);
       if (msg.type === "tunnel_open") {
@@ -376,6 +382,7 @@ describe("TunnelSession — reverse TCP", () => {
       token: "test",
       reverses: [{ remoteBind: "127.0.0.1", remotePort: 8080, localHost: "x", localPort: 3000, proto: "tcp" }],
     });
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() returns a Promise at runtime but is typed as void
     await expect(session.start()).rejects.toThrow(/port in use/);
     // Clean up the live WS opened during start() before afterEach destroys the gateway
     await session.stop();
