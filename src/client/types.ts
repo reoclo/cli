@@ -55,6 +55,18 @@ export interface Deployment {
   finished_at?: string;
 }
 
+export interface Repository {
+  id: string;
+  tenant_id: string;
+  full_name: string;
+  name: string;
+  owner_login: string;
+  is_private: boolean;
+  default_branch: string;
+  status: string;
+  last_push_at?: string | null;
+}
+
 export interface Domain {
   id: string;
   tenant_id: string;

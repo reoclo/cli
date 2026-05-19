@@ -37,7 +37,7 @@ await mock.module("../../../src/completion/cache", () => ({
 }));
 
 // Import the module under test AFTER stubs are registered.
-const { resolveServer, resolveApp } = await import("../../../src/client/resolve");
+const { resolveServer, resolveApp, resolveRepo } = await import("../../../src/client/resolve");
 
 // ---------------------------------------------------------------------------
 
@@ -187,5 +187,50 @@ describe("resolveApp", () => {
       expect((err as Error & { exitCode: number }).exitCode).toBe(5);
     }
     expect(threw).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+import type { HttpClient } from "../../../src/client/http";
+
+function fakeRepoClient(handler: (path: string) => unknown): HttpClient {
+  return {
+    get: <T>(path: string) => Promise.resolve(handler(path) as T),
+  } as unknown as HttpClient;
+}
+
+const TID = "tenant-1";
+
+describe("resolveRepo", () => {
+  test("bare UUID round-trips unchanged", async () => {
+    const c = fakeRepoClient(() => {
+      throw new Error("should not call API for UUID inputs");
+    });
+    const out = await resolveRepo(c, TID, "11111111-2222-3333-4444-555555555555");
+    expect(out).toBe("11111111-2222-3333-4444-555555555555");
+  });
+
+  test("slug resolves via paginated repositories endpoint", async () => {
+    const c = fakeRepoClient((path) => {
+      expect(path).toContain(`/tenants/${TID}/repositories`);
+      return {
+        items: [
+          { id: "repo-1", full_name: "acme/web", name: "web", owner_login: "acme" },
+          { id: "repo-2", full_name: "acme/api", name: "api", owner_login: "acme" },
+        ],
+      };
+    });
+    const out = await resolveRepo(c, TID, "acme/api");
+    expect(out).toBe("repo-2");
+  });
+
+  test("missing slug throws with exitCode 5", async () => {
+    const c = fakeRepoClient(() => ({ items: [] }));
+    const err = await resolveRepo(c, TID, "acme/missing").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { exitCode: number }).exitCode).toBe(5);
+    expect((err as Error).message).toContain("repo");
+    expect((err as Error).message).toContain("acme/missing");
   });
 });

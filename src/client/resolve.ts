@@ -1,6 +1,6 @@
 // src/client/resolve.ts
 import type { HttpClient } from "./http";
-import type { Application, PaginatedResponse, Server } from "./types";
+import type { Application, PaginatedResponse, Repository, Server } from "./types";
 import { getSlice } from "../completion/cache";
 import { cacheList } from "../completion/populate";
 import type { Entry, IndexKind } from "../completion/types";
@@ -66,4 +66,23 @@ export async function resolveApp(
     },
     "application",
   );
+}
+
+export async function resolveRepo(
+  c: HttpClient,
+  tenantId: string,
+  identifier: string,
+): Promise<string> {
+  if (UUID.test(identifier)) return identifier;
+
+  const res = await c.get<PaginatedResponse<Repository>>(
+    `/tenants/${tenantId}/repositories/?limit=200`,
+  );
+  const found = res.items.find((r) => r.full_name === identifier || r.name === identifier);
+  if (!found) {
+    const e = new Error(`repo '${identifier}' not found`) as Error & { exitCode: number };
+    e.exitCode = 5;
+    throw e;
+  }
+  return found.id;
 }
