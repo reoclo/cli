@@ -21,6 +21,7 @@ export function startFakeGateway(): FakeGateway {
   // In-memory state per gateway instance — reset on each fresh startFakeGateway().
   const envVars = new Map<string, Map<string, string>>();
   const monitors = new Map<string, Record<string, unknown>>();
+  const statusPages = new Map<string, Record<string, unknown>>();
   const domains: Array<{
     id: string;
     tenant_id: string;
@@ -330,6 +331,43 @@ export function startFakeGateway(): FakeGateway {
         }
         if (req.method === "DELETE") {
           monitors.delete(id);
+          return new Response(null, { status: 204 });
+        }
+      }
+
+      // /mcp/tenants/{tid}/status-pages/  (collection, WITH trailing slash)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/status-pages/`) {
+        if (req.method === "GET") return Response.json([...statusPages.values()]);
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+          const sp = {
+            id,
+            title: body.title ?? "Status",
+            slug: `sp-${id.slice(-4)}`,
+            is_published: false,
+            label: body.label ?? null,
+            description: body.description ?? null,
+          };
+          statusPages.set(id, sp);
+          return Response.json(sp);
+        }
+      }
+      // /mcp/tenants/{tid}/status-pages/{id}  (item, NO trailing slash)
+      const spMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/status-pages/([^/]+)$`),
+      );
+      if (spMatch) {
+        const id = spMatch[1] ?? "";
+        const sp = statusPages.get(id);
+        if (!sp) return new Response("not found", { status: 404 });
+        if (req.method === "GET") return Response.json(sp);
+        if (req.method === "PATCH") {
+          Object.assign(sp, (await req.json()) as Record<string, unknown>);
+          return Response.json(sp);
+        }
+        if (req.method === "DELETE") {
+          statusPages.delete(id);
           return new Response(null, { status: 204 });
         }
       }

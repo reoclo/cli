@@ -14,6 +14,7 @@ import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
 import { registerMonitors } from "./commands/monitors";
+import { registerStatusPages } from "./commands/status-pages";
 import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
@@ -61,6 +62,7 @@ if (import.meta.main) {
   registerEnv(program);
   registerDomains(program);
   registerMonitors(program);
+  registerStatusPages(program);
   registerMcp(program);
   registerUpgrade(program);
   registerCompletion(program);
