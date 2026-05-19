@@ -25,6 +25,31 @@ interface FleetResponse {
   stale_servers: unknown[];
 }
 
+/** Accumulate a repeatable `KEY=VALUE` flag into a dict. */
+function collectKV(value: string, prev: Record<string, string>): Record<string, string> {
+  const eq = value.indexOf("=");
+  if (eq < 0) throw new Error(`expected KEY=VALUE, got '${value}'`);
+  return { ...prev, [value.slice(0, eq)]: value.slice(eq + 1) };
+}
+
+/** Accumulate a repeatable string flag into an array. */
+function collectArr(value: string, prev: string[]): string[] {
+  return [...prev, value];
+}
+
+/** Parse `host:container[/proto]` into a port spec object. */
+function parsePort(spec: string): { host: number; container: number; protocol: string } {
+  const slash = spec.split("/");
+  const protocol = slash[1] ?? "tcp";
+  const parts = (slash[0] ?? "").split(":");
+  const host = Number(parts[0]);
+  const container = Number(parts[1]);
+  if (parts.length !== 2 || !Number.isInteger(host) || !Number.isInteger(container)) {
+    throw new Error(`invalid --port '${spec}' (expected host:container[/proto])`);
+  }
+  return { host, container, protocol };
+}
+
 export function registerContainers(program: Command): void {
   const g = program.command("containers").description("manage containers");
 
@@ -103,4 +128,107 @@ export function registerContainers(program: Command): void {
       }),
     "container:read",
   );
+
+  const recreateCmd = g
+    .command("recreate <server> <name>")
+    .description("recreate a container with new env/labels/ports")
+    .option("--env <kv>", "env var KEY=VALUE — full replacement (repeatable)", collectKV, {})
+    .option("--label <kv>", "label KEY=VALUE (repeatable)", collectKV, {})
+    .option("--remove-label <key>", "label key to delete (repeatable)", collectArr, [])
+    .option("--port <spec>", "port host:container[/proto] (repeatable)", collectArr, [])
+    .option("--persist", "also write env/labels back to the app record")
+    .option("--replicas <n>", "replica count (Swarm services)")
+    .action(
+      async (
+        server: string,
+        name: string,
+        opts: {
+          env: Record<string, string>;
+          label: Record<string, string>;
+          removeLabel: string[];
+          port: string[];
+          persist?: boolean;
+          replicas?: string;
+        },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const sid = await resolveServer(ctx.client, tid, server);
+        const body: Record<string, unknown> = {};
+        if (Object.keys(opts.env).length > 0) body.env = opts.env;
+        const labels: Record<string, string | null> = { ...opts.label };
+        for (const k of opts.removeLabel) labels[k] = null;
+        if (Object.keys(labels).length > 0) body.labels = labels;
+        if (opts.port.length > 0) body.ports = opts.port.map(parsePort);
+        if (opts.persist) body.persist = true;
+        if (opts.replicas !== undefined) body.replicas = Number(opts.replicas);
+        const res = await ctx.client.post<{ warnings?: string[] }>(
+          `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/recreate`,
+          body,
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(res as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        process.stdout.write(`✓ container recreated: ${name}\n`);
+        for (const w of res.warnings ?? []) {
+          process.stdout.write(`  warning: ${w}\n`);
+        }
+      },
+    );
+  withCompletion(recreateCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(recreateCmd, "container:write");
+
+  const scaleCmd = g
+    .command("scale <server> <name> <replicas>")
+    .description("scale a Swarm service to N replicas")
+    .action(async (server: string, name: string, replicas: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, server);
+      const res = await ctx.client.post<Record<string, unknown>>(
+        `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/scale`,
+        { replicas: Number(replicas) },
+      );
+      if (fmt === "json" || fmt === "yaml") {
+        printObject(res, fmt);
+        return;
+      }
+      process.stdout.write(`✓ scaled ${name} to ${replicas}\n`);
+    });
+  withCompletion(scaleCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(scaleCmd, "container:write");
+
+  const labelsCmd = g
+    .command("labels <server> <name>")
+    .description("patch a container's labels")
+    .option("--label <kv>", "label KEY=VALUE (repeatable)", collectKV, {})
+    .option("--remove-label <key>", "label key to delete (repeatable)", collectArr, [])
+    .action(
+      async (
+        server: string,
+        name: string,
+        opts: { label: Record<string, string>; removeLabel: string[] },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const sid = await resolveServer(ctx.client, tid, server);
+        const labels: Record<string, string | null> = { ...opts.label };
+        for (const k of opts.removeLabel) labels[k] = null;
+        const res = await ctx.client.patch<Record<string, unknown>>(
+          `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/labels`,
+          { labels },
+        );
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(res, fmt);
+          return;
+        }
+        process.stdout.write(`✓ labels updated: ${name}\n`);
+      },
+    );
+  withCompletion(labelsCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(labelsCmd, "container:write");
 }

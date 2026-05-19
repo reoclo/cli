@@ -44,3 +44,16 @@ test("containers refresh", async () => {
   const r = await $`bun run src/index.ts containers refresh`.env(env()).quiet();
   expect(r.stdout.toString()).toContain("✓ snapshot refresh triggered");
 });
+
+test("containers recreate / scale / labels", async () => {
+  const rc = await $`bun run src/index.ts containers recreate srv-1 web-1 --env PORT=8080 --label tier=web`
+    .env(env()).quiet();
+  expect(rc.stdout.toString()).toContain("✓ container recreated: web-1");
+
+  const sc = await $`bun run src/index.ts containers scale srv-1 web-1 3`.env(env()).quiet();
+  expect(sc.stdout.toString()).toContain("✓ scaled web-1 to 3");
+
+  const lb = await $`bun run src/index.ts containers labels srv-1 web-1 --label env=prod --remove-label old`
+    .env(env()).quiet();
+  expect(lb.stdout.toString()).toContain("✓ labels updated: web-1");
+});

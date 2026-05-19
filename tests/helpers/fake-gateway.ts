@@ -594,6 +594,45 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({ refreshed: true });
       }
 
+      // /mcp/tenants/{tid}/runtime/servers/{sid}/containers/{name}/(recreate|scale|labels)
+      const runtimeActionMatch = url.pathname.match(
+        new RegExp(
+          `^/mcp/tenants/${TENANT_ID}/runtime/servers/([^/]+)/containers/([^/]+)/(recreate|scale|labels)$`,
+        ),
+      );
+      if (runtimeActionMatch) {
+        const name = runtimeActionMatch[2] ?? "";
+        const action = runtimeActionMatch[3];
+        const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        if (action === "recreate" && req.method === "POST") {
+          return Response.json({
+            container_name: name,
+            kind: "container",
+            before: { env: {}, labels: {}, ports: [] },
+            after: { env: body.env ?? {}, labels: body.labels ?? {}, ports: body.ports ?? [] },
+            persist: body.persist === true,
+            audit_log_id: "00000000-0000-0000-0000-0000000000a1",
+            warnings: [],
+          });
+        }
+        if (action === "scale" && req.method === "POST") {
+          return Response.json({
+            container_name: name,
+            previous_replicas: 1,
+            new_replicas: body.replicas ?? 1,
+            audit_log_id: "00000000-0000-0000-0000-0000000000a2",
+          });
+        }
+        if (action === "labels" && req.method === "PATCH") {
+          return Response.json({
+            container_name: name,
+            before_labels: {},
+            after_labels: body.labels ?? {},
+            audit_log_id: "00000000-0000-0000-0000-0000000000a3",
+          });
+        }
+      }
+
       return new Response("not found", { status: 404 });
     },
   });

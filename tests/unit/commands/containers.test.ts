@@ -33,4 +33,13 @@ describe("reoclo containers", () => {
     const ls = g.commands.find((c) => c.name() === "ls")!;
     expect((ls as unknown as { _hidden?: boolean })._hidden).toBe(true);
   });
+
+  test("registers recreate/scale/labels with container:write", () => {
+    const g = containersCmd();
+    for (const n of ["recreate", "scale", "labels"]) {
+      const c = g.commands.find((x) => x.name() === n)!;
+      expect(c, `${n} registered`).toBeDefined();
+      expect(getRequiredCapability(c)).toBe("container:write");
+    }
+  });
 });
