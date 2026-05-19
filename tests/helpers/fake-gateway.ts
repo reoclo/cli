@@ -68,6 +68,20 @@ export function startFakeGateway(): FakeGateway {
     ],
     "22222222-2222-2222-2222-222222222222": [{ name: "develop", is_default: true }],
   };
+  const registryCreds = new Map<string, Record<string, unknown>>();
+  registryCreds.set("33333333-3333-3333-3333-333333333333", {
+    id: "33333333-3333-3333-3333-333333333333",
+    tenant_id: TENANT_ID,
+    name: "dockerhub-main",
+    registry_type: "docker",
+    registry_url: "https://index.docker.io/v1/",
+    username: "acme-bot",
+    description: "Primary Docker Hub creds",
+    encrypted_credential: "***MASKED***",
+    created_at: "2026-05-19T00:00:00Z",
+    updated_at: "2026-05-19T00:00:00Z",
+  });
+
   const fleetContainers: Array<Record<string, unknown>> = [
     {
       server_id: "00000000-0000-0000-0000-00000000bbbb",
@@ -776,6 +790,74 @@ export function startFakeGateway(): FakeGateway {
       );
       if (rebootMatch && req.method === "POST") {
         return Response.json({ success: true, message: "reboot job queued", job_id: "job-1" });
+      }
+
+      // /mcp/tenants/{tid}/registry-credentials   (list + create)
+      if (
+        url.pathname === `/mcp/tenants/${TENANT_ID}/registry-credentials` ||
+        url.pathname === `/mcp/tenants/${TENANT_ID}/registry-credentials/`
+      ) {
+        if (req.method === "GET") {
+          return Response.json({ items: [...registryCreds.values()] });
+        }
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `cred-${nextId++}`;
+          const now = new Date().toISOString();
+          const row: Record<string, unknown> = {
+            id,
+            tenant_id: TENANT_ID,
+            name: body["name"],
+            registry_type: body["registry_type"],
+            registry_url: body["registry_url"],
+            username: body["username"] ?? "",
+            description: body["description"] ?? "",
+            encrypted_credential: "***MASKED***",
+            created_at: now,
+            updated_at: now,
+          };
+          registryCreds.set(id, row);
+          return Response.json(row);
+        }
+      }
+
+      // /mcp/tenants/{tid}/registry-credentials/test-connection (POST)
+      if (
+        url.pathname === `/mcp/tenants/${TENANT_ID}/registry-credentials/test-connection` &&
+        req.method === "POST"
+      ) {
+        const body = (await req.json()) as Record<string, unknown>;
+        if (body["registry_url"] === "https://bad.example.com") {
+          return Response.json({ success: false, message: "DNS lookup failed", latency_ms: 0 });
+        }
+        return Response.json({ success: true, message: "ok", latency_ms: 42 });
+      }
+
+      // /mcp/tenants/{tid}/registry-credentials/{id}  (get | patch | delete)
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/registry-credentials\/([^/]+)$/);
+        if (m && m[1] !== "test-connection") {
+          const id = m[1] ?? "";
+          if (req.method === "GET") {
+            const row = registryCreds.get(id);
+            if (!row) return new Response("not found", { status: 404 });
+            return Response.json(row);
+          }
+          if (req.method === "PATCH") {
+            const row = registryCreds.get(id);
+            if (!row) return new Response("not found", { status: 404 });
+            const body = (await req.json()) as Record<string, unknown>;
+            const updated = { ...row, ...body, updated_at: new Date().toISOString() };
+            if ("encrypted_credential" in updated) updated["encrypted_credential"] = "***MASKED***";
+            registryCreds.set(id, updated);
+            return Response.json(updated);
+          }
+          if (req.method === "DELETE") {
+            if (!registryCreds.has(id)) return new Response("not found", { status: 404 });
+            registryCreds.delete(id);
+            return new Response(null, { status: 204 });
+          }
+        }
       }
 
       // /mcp/tenants/{tid}/repositories  (paginated; honors ?search=)
