@@ -35,7 +35,7 @@ interface ScheduledOp {
 /** Accumulate a repeatable `--param key=value` flag into a dict. */
 function collectParam(value: string, prev: Record<string, string>): Record<string, string> {
   const eq = value.indexOf("=");
-  if (eq < 0) {
+  if (eq <= 0) {
     throw new Error(`invalid --param '${value}' (expected key=value)`);
   }
   return { ...prev, [value.slice(0, eq)]: value.slice(eq + 1) };

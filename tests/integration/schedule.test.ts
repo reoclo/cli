@@ -55,3 +55,14 @@ test("schedule ls --status filters", async () => {
   const filtered = await $`bun run src/index.ts schedule ls --status PAUSED`.env(env()).quiet();
   expect(filtered.stdout.toString()).not.toContain("\na ");
 });
+
+test("schedule ls --type filters by operation_type", async () => {
+  await $`bun run src/index.ts schedule create --name restart-op --type RESTART --schedule CRON --cron "0 2 * * *" --server srv-1`
+    .env(env()).quiet();
+  await $`bun run src/index.ts schedule create --name reboot-op --type REBOOT --schedule CRON --cron "0 4 * * *" --server srv-1`
+    .env(env()).quiet();
+  const filtered = await $`bun run src/index.ts schedule ls --type RESTART`.env(env()).quiet();
+  const out = filtered.stdout.toString();
+  expect(out).toContain("restart-op");
+  expect(out).not.toContain("reboot-op");
+});
