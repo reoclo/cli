@@ -163,12 +163,12 @@ export function registerContainers(program: Command): void {
         if (opts.port.length > 0) body.ports = opts.port.map(parsePort);
         if (opts.persist) body.persist = true;
         if (opts.replicas !== undefined) body.replicas = Number(opts.replicas);
-        const res = await ctx.client.post<{ warnings?: string[] }>(
+        const res = await ctx.client.post<{ warnings?: string[] } & Record<string, unknown>>(
           `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/recreate`,
           body,
         );
         if (fmt === "json" || fmt === "yaml") {
-          printObject(res as unknown as Record<string, unknown>, fmt);
+          printObject(res, fmt);
           return;
         }
         process.stdout.write(`✓ container recreated: ${name}\n`);
