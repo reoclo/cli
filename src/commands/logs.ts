@@ -282,6 +282,69 @@ export function registerLogs(program: Command): void {
     { args: [{ slot: 0, resource: "servers" }] },
   );
 
+  g.command("stats")
+    .description("show tenant-wide log counts by level and source")
+    .option("--from <spec>", "earliest time")
+    .option("--to <spec>", "latest time")
+    .action(async (opts: { from?: string; to?: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+
+      const q = new URLSearchParams();
+      if (opts.from) q.set("since", parseTimeSpec(opts.from).toISOString());
+      if (opts.to) q.set("until", parseTimeSpec(opts.to).toISOString());
+      const qs = q.toString();
+      interface LogStats {
+        by_level: Record<string, number>;
+        by_source_type: Record<string, number>;
+        total: number;
+        error_count: number;
+        warn_count: number;
+      }
+      const r = await ctx.client.get<LogStats>(
+        `/tenants/${tid}/logs/stats${qs ? `?${qs}` : ""}`,
+      );
+
+      if (fmt === "json" || fmt === "yaml") {
+        printObject(r as unknown as Record<string, unknown>, fmt);
+        return;
+      }
+
+      process.stdout.write("By level\n");
+      const levelRows = Object.entries(r.by_level).map(([level, count]) => ({ level, count }));
+      printList(
+        levelRows as unknown as Array<Record<string, unknown>>,
+        [
+          { key: "level", label: "LEVEL" },
+          { key: "count", label: "COUNT" },
+        ],
+        "text",
+      );
+      process.stdout.write("\nBy source type\n");
+      const sourceRows = Object.entries(r.by_source_type).map(([source, count]) => ({ source, count }));
+      printList(
+        sourceRows as unknown as Array<Record<string, unknown>>,
+        [
+          { key: "source", label: "SOURCE" },
+          { key: "count", label: "COUNT" },
+        ],
+        "text",
+      );
+      const rate = r.total > 0 ? ((r.error_count / r.total) * 100).toFixed(2) : "0.00";
+      process.stdout.write(`\nTotal: ${r.total}  errors: ${r.error_count} (${rate}%)  warnings: ${r.warn_count}\n`);
+    });
+
+  g.command("usage")
+    .description("show tenant-wide log storage and retention")
+    .action(async () => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const r = await ctx.client.get<Record<string, unknown>>(`/tenants/${tid}/logs/usage`);
+      printObject(r, fmt);
+    });
+
   withCompletion(
     g
       .command("sources <server>")

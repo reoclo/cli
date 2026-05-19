@@ -1063,6 +1063,26 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
+      // /mcp/tenants/{tid}/logs/stats
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/stats`) {
+        return Response.json({
+          by_level: { debug: 100, info: 1000, warn: 50, error: 20, fatal: 1 },
+          by_source_type: { container: 800, system: 300, runner: 71 },
+          total: 1171,
+          error_count: 21,
+          warn_count: 50,
+        });
+      }
+
+      // /mcp/tenants/{tid}/logs/usage
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/usage`) {
+        return Response.json({
+          storage_bytes: 1234567890,
+          retention_days: 14,
+          error_rate: 0.018,
+        });
+      }
+
       // /mcp/tenants/{tid}/logs/sources
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/sources`) {
         return Response.json({

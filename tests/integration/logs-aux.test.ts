@@ -47,3 +47,24 @@ test("logs sources -o json dumps raw payload", async () => {
   expect(Array.isArray(obj["containers"])).toBe(true);
   expect(Array.isArray(obj["journal_units"])).toBe(true);
 });
+
+test("logs stats prints by_level + by_source + total", async () => {
+  const r = await $`bun run src/index.ts logs stats`.env(env()).quiet();
+  const out = r.stdout.toString();
+  expect(out).toContain("info");
+  expect(out).toContain("error");
+  expect(out).toContain("1171");
+});
+
+test("logs usage prints storage_bytes and retention_days", async () => {
+  const r = await $`bun run src/index.ts logs usage`.env(env()).quiet();
+  const out = r.stdout.toString();
+  expect(out).toContain("storage_bytes");
+  expect(out).toContain("retention_days");
+});
+
+test("logs usage -o json round-trips", async () => {
+  const r = await $`bun run src/index.ts -o json logs usage`.env(env()).quiet();
+  const obj = JSON.parse(r.stdout.toString()) as Record<string, number>;
+  expect(typeof obj["storage_bytes"]).toBe("number");
+});

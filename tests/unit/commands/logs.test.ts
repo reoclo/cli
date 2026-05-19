@@ -47,3 +47,25 @@ describe("logs system + sources", () => {
     expect(sources).toBeDefined();
   });
 });
+
+describe("logs stats + usage", () => {
+  test("stats subcommand registered with --from --to", () => {
+    const program = new Command().name("reoclo");
+    registerLogs(program);
+    const stats = program.commands
+      .find((c) => c.name() === "logs")!
+      .commands.find((c) => c.name() === "stats")!;
+    const longs = stats.options.map((o) => o.long);
+    expect(longs).toContain("--from");
+    expect(longs).toContain("--to");
+  });
+
+  test("usage subcommand registered", () => {
+    const program = new Command().name("reoclo");
+    registerLogs(program);
+    const usage = program.commands
+      .find((c) => c.name() === "logs")!
+      .commands.find((c) => c.name() === "usage")!;
+    expect(usage).toBeDefined();
+  });
+});
