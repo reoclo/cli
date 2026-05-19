@@ -3,7 +3,16 @@
 // Shared types for the declarative completion subsystem.
 
 /** Resource kinds carried by the /completion-index endpoint. */
-export const INDEX_KINDS = ["servers", "apps", "deployments", "domains", "tunnels"] as const;
+export const INDEX_KINDS = [
+  "servers",
+  "apps",
+  "deployments",
+  "domains",
+  "tunnels",
+  "monitors",
+  "status-pages",
+  "incidents",
+] as const;
 
 /** Resource kinds carried by the /completion-index endpoint. */
 export type IndexKind = (typeof INDEX_KINDS)[number];

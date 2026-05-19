@@ -50,4 +50,21 @@ describe("RESOURCE_REGISTRY", () => {
       RESOURCE_REGISTRY.servers.toEntry({ id: "x" }),
     ).toEqual({ id: "x", value: "x", name: "x", desc: "x — " });
   });
+
+  test("monitors toEntry maps id/name/status", () => {
+    const e = RESOURCE_REGISTRY.monitors.toEntry({ id: "m1", name: "API", status: "active" });
+    expect(e).toEqual({ id: "m1", value: "m1", name: "API", desc: "API — active" });
+  });
+
+  test("status-pages toEntry maps id/title", () => {
+    const e = RESOURCE_REGISTRY["status-pages"].toEntry({ id: "sp1", title: "Public" });
+    expect(e).toEqual({ id: "sp1", value: "sp1", name: "Public", desc: "Public" });
+  });
+
+  test("incidents toEntry maps id/title/severity/state", () => {
+    const e = RESOURCE_REGISTRY.incidents.toEntry({
+      id: "i1", title: "Outage", severity: "major", state: "investigating",
+    });
+    expect(e).toEqual({ id: "i1", value: "i1", name: "Outage", desc: "major/investigating" });
+  });
 });

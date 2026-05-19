@@ -70,4 +70,31 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       return { id, value: id, name: id, desc: str(r.mode) };
     },
   },
+  monitors: {
+    kind: "monitors",
+    indexField: "monitors",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const name = str(r.name, id);
+      return { id, value: id, name, desc: `${name} — ${str(r.status)}` };
+    },
+  },
+  "status-pages": {
+    kind: "status-pages",
+    indexField: "status_pages",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const title = str(r.title, id);
+      return { id, value: id, name: title, desc: title };
+    },
+  },
+  incidents: {
+    kind: "incidents",
+    indexField: "incidents",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const title = str(r.title, id);
+      return { id, value: id, name: title, desc: `${str(r.severity)}/${str(r.state)}` };
+    },
+  },
 };
