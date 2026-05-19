@@ -22,4 +22,13 @@ describe("reoclo status-pages", () => {
     expect(flags).toContain("--description");
     expect(create.options.every((o) => !o.mandatory)).toBe(true);
   });
+
+  test("update has --title/--label/--description/--published", () => {
+    const update = spCmd().commands.find((c) => c.name() === "update")!;
+    const flags = update.options.map((o) => o.long);
+    expect(flags).toContain("--title");
+    expect(flags).toContain("--label");
+    expect(flags).toContain("--description");
+    expect(flags).toContain("--published");
+  });
 });

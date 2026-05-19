@@ -41,6 +41,10 @@ test("status-pages create → ls → update → rm", async () => {
     .env(env()).quiet();
   expect(updated.stdout.toString()).toContain("✓ status page updated:");
 
+  const got = await $`bun run src/index.ts status-pages get ${id} --output json`
+    .env(env()).quiet();
+  expect(got.stdout.toString()).toContain("true");
+
   const removed = await $`bun run src/index.ts status-pages rm ${id}`.env(env()).quiet();
   expect(removed.stdout.toString()).toContain("✓ status page removed:");
 });

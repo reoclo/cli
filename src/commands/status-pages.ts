@@ -15,6 +15,7 @@ interface StatusPage {
 export function registerStatusPages(program: Command): void {
   const g = program.command("status-pages").description("manage status pages");
 
+  // Collection routes (ls, create) use a trailing slash; item routes (get/update/rm) do not — matches the API's status-pages routing.
   g.command("ls")
     .description("list status pages")
     .action(async () => {
@@ -92,7 +93,15 @@ export function registerStatusPages(program: Command): void {
           if (opts.title !== undefined) body.title = opts.title;
           if (opts.label !== undefined) body.label = opts.label;
           if (opts.description !== undefined) body.description = opts.description;
-          if (opts.published !== undefined) body.is_published = opts.published === "true";
+          if (opts.published !== undefined) {
+            if (opts.published !== "true" && opts.published !== "false") {
+              process.stderr.write(
+                `error: --published must be 'true' or 'false', got '${opts.published}'\n`,
+              );
+              process.exit(1);
+            }
+            body.is_published = opts.published === "true";
+          }
           const sp = await ctx.client.patch<StatusPage>(
             `/tenants/${tid}/status-pages/${id}`,
             body,
