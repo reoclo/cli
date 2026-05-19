@@ -124,6 +124,12 @@ test("mcp server responds to initialize and tools/list", async () => {
     // SP3-B repository tools
     expect(toolNames).toContain("get_repository");
     expect(toolNames).toContain("list_repo_branches");
+
+    // SP3-B registry credential tools
+    expect(toolNames).toContain("get_registry_cred");
+    expect(toolNames).toContain("create_registry_cred");
+    expect(toolNames).toContain("update_registry_cred");
+    expect(toolNames).toContain("test_registry_cred");
   } finally {
     proc.kill();
   }
@@ -233,6 +239,136 @@ test("list_repo_branches returns branches with default marker", async () => {
     const parsed = JSON.parse(result.content[0]?.text ?? "[]") as Array<{ name: string; is_default: boolean }>;
     expect(parsed.length).toBeGreaterThan(0);
     expect(parsed.some((b) => b.is_default === true)).toBe(true);
+  } finally {
+    proc.kill();
+  }
+});
+
+test("get_registry_cred returns the seeded credential (password masked)", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const credId = "33333333-3333-3333-3333-333333333333";
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "get_registry_cred", arguments: { credential_id: credId } },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { encrypted_credential?: string };
+    expect(parsed.encrypted_credential).toBe("***MASKED***");
+  } finally {
+    proc.kill();
+  }
+});
+
+test("create_registry_cred creates a new credential", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "create_registry_cred",
+        arguments: {
+          name: "mcp-test-cred",
+          registry_type: "docker",
+          registry_url: "https://index.docker.io/v1/",
+          encrypted_credential: "test-pw",
+          username: "test-user",
+        },
+      },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { id?: string; encrypted_credential?: string };
+    expect(parsed.id).toBeDefined();
+    expect(parsed.encrypted_credential).toBe("***MASKED***");
+  } finally {
+    proc.kill();
+  }
+});
+
+test("test_registry_cred good URL returns success:true", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "test_registry_cred",
+        arguments: {
+          registry_type: "docker",
+          registry_url: "https://index.docker.io/v1/",
+          encrypted_credential: "test-pw",
+        },
+      },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { success?: boolean };
+    expect(parsed.success).toBe(true);
+  } finally {
+    proc.kill();
+  }
+});
+
+test("test_registry_cred bad URL returns success:false (NOT isError)", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "test_registry_cred",
+        arguments: {
+          registry_type: "docker",
+          registry_url: "https://bad.example.com",
+          encrypted_credential: "test-pw",
+        },
+      },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true); // business-logic failure ≠ MCP error
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { success?: boolean; message?: string };
+    expect(parsed.success).toBe(false);
+    expect(parsed.message).toContain("DNS lookup failed");
   } finally {
     proc.kill();
   }
