@@ -6,10 +6,10 @@ type WriteFn = typeof process.stdout.write;
 function captureStdout(): { restore: () => void; output: () => string } {
   const original: WriteFn = process.stdout.write.bind(process.stdout);
   const chunks: string[] = [];
-  process.stdout.write = ((s: string | Uint8Array) => {
+  process.stdout.write = (s: string | Uint8Array) => {
     chunks.push(typeof s === "string" ? s : Buffer.from(s).toString("utf8"));
     return true;
-  }) as WriteFn;
+  };
   return {
     restore: () => {
       process.stdout.write = original;
