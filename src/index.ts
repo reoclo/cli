@@ -117,11 +117,13 @@ if (import.meta.main) {
 
     const leafName = actionCommand.name();
     const parentName = actionCommand.parent?.name();
+    const commandPath =
+      parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
 
     // Resolve the auth context (token + key type) without making a network call.
     const ctx = await bootstrap();
 
-    if (!commandSupportedBy(leafName, ctx.tokenType)) {
+    if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
       const err = new Error(
         `'${cmd}' requires a tenant key; automation keys can only run deploy/restart/exec/shell.`,

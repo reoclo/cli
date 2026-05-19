@@ -13,9 +13,14 @@ export function apiPrefix(t: KeyType): string {
   return t === "automation" ? "/api/automation/v1" : "/mcp";
 }
 
-const AUTOMATION_ALLOWED = new Set(["deploy", "restart", "exec", "shell"]);
+const AUTOMATION_ALLOWED = new Set(["apps deploy", "apps restart", "exec", "shell"]);
 
-export function commandSupportedBy(command: string, t: KeyType): boolean {
+/** Return true if a token of the given type can invoke this command path.
+ *  Tenant keys can invoke anything; automation keys are restricted to a
+ *  fixed set of full command paths (so e.g. `containers restart` is rejected
+ *  even though its leaf is `restart`).
+ */
+export function commandSupportedBy(commandPath: string, t: KeyType): boolean {
   if (t === "tenant") return true;
-  return AUTOMATION_ALLOWED.has(command);
+  return AUTOMATION_ALLOWED.has(commandPath);
 }
