@@ -12,6 +12,7 @@ export const INDEX_KINDS = [
   "monitors",
   "status-pages",
   "incidents",
+  "schedule",
 ] as const;
 
 /** Resource kinds carried by the /completion-index endpoint. */

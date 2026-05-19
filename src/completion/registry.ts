@@ -97,4 +97,13 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       return { id, value: id, name: title, desc: [str(r.severity), str(r.state)].filter(Boolean).join("/") };
     },
   },
+  schedule: {
+    kind: "schedule",
+    indexField: "scheduled_operations",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const name = str(r.name, id);
+      return { id, value: id, name, desc: `${name} — ${str(r.status)}` };
+    },
+  },
 };

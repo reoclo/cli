@@ -82,4 +82,18 @@ describe("RESOURCE_REGISTRY", () => {
     const e = RESOURCE_REGISTRY.incidents.toEntry({ id: "i1" });
     expect(e).toEqual({ id: "i1", value: "i1", name: "i1", desc: "" });
   });
+
+  test("schedule toEntry maps id/name/status", () => {
+    const e = RESOURCE_REGISTRY.schedule.toEntry({
+      id: "so1", name: "nightly-restart", status: "ACTIVE",
+    });
+    expect(e).toEqual({
+      id: "so1", value: "so1", name: "nightly-restart", desc: "nightly-restart — ACTIVE",
+    });
+  });
+
+  test("schedule toEntry falls back when name/status absent", () => {
+    const e = RESOURCE_REGISTRY.schedule.toEntry({ id: "so1" });
+    expect(e).toEqual({ id: "so1", value: "so1", name: "so1", desc: "so1 — " });
+  });
 });
