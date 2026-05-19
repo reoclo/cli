@@ -955,6 +955,49 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({ items });
       }
 
+      // /mcp/tenants/{tid}/dashboard/stats
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/dashboard/stats`) {
+        return Response.json({
+          server_count: 5,
+          server_healthy_count: 4,
+          server_unhealthy_count: 1,
+          application_count: 12,
+          application_running_count: 11,
+          domain_count: 8,
+          domain_healthy_count: 8,
+          open_incident_count: 1,
+          recent_incidents: [
+            { id: "inc-1", title: "API slow", state: "investigating", severity: "minor" },
+          ],
+          recent_deployments: [{ id: "dep-1", status: "succeeded" }],
+          server_health: [{ server_id: "srv-1", status: "healthy" }],
+          recent_activity: [
+            {
+              id: "act-1",
+              action: "deploy_succeeded",
+              resource_type: "application",
+              resource_name: "web",
+              actor_email: "a@x.com",
+              created_at: "2026-05-19T00:00:00Z",
+            },
+            {
+              id: "act-2",
+              action: "update",
+              resource_type: "monitor",
+              resource_name: "api-monitor",
+              actor_email: "b@x.com",
+              created_at: "2026-05-18T00:00:00Z",
+            },
+          ],
+          deploy_history: Array.from({ length: 14 }, (_v, i) => ({
+            date: `2026-05-${String(6 + i).padStart(2, "0")}`,
+            total: (i * 3) % 8,
+            succeeded: (i * 3) % 8,
+            failed: 0,
+          })),
+        });
+      }
+
       return new Response("not found", { status: 404 });
     },
   });
