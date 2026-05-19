@@ -126,6 +126,34 @@ export function startFakeGateway(): FakeGateway {
       application_slug: "app-1",
     },
   ];
+  const appConfigs = new Map<string, Record<string, unknown>>();
+  appConfigs.set("11111111-aaaa-aaaa-aaaa-111111111111", {
+    build: { buildpack: "node", docker_image: null },
+    deploy: { replicas: 1, container_port: 3000, host_port: 8080, env: { FOO: "1" } },
+  });
+
+  function mergeDeep(
+    target: Record<string, unknown>,
+    src: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...target };
+    for (const [k, v] of Object.entries(src)) {
+      if (
+        typeof v === "object" &&
+        v !== null &&
+        !Array.isArray(v) &&
+        typeof out[k] === "object" &&
+        out[k] !== null &&
+        !Array.isArray(out[k])
+      ) {
+        out[k] = mergeDeep(out[k] as Record<string, unknown>, v as Record<string, unknown>);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+
   let nextId = 1;
 
   const server = Bun.serve({
@@ -368,6 +396,29 @@ export function startFakeGateway(): FakeGateway {
           stderr: "",
           truncated: false,
         });
+      }
+
+      // /mcp/tenants/{tid}/applications/{aid}/config
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/applications\/([^/]+)\/config$/);
+        if (m) {
+          const aid = m[1] ?? "";
+          if (req.method === "GET") {
+            const cfg = appConfigs.get(aid);
+            if (!cfg) return new Response("not found", { status: 404 });
+            return Response.json(cfg);
+          }
+          if (req.method === "PATCH") {
+            const body = (await req.json()) as { config?: Record<string, unknown> };
+            if (!body.config || Object.keys(body.config).length === 0) {
+              return Response.json({ detail: "empty patch" }, { status: 422 });
+            }
+            const existing = appConfigs.get(aid) ?? {};
+            const merged = mergeDeep(existing, body.config);
+            appConfigs.set(aid, merged);
+            return Response.json(merged);
+          }
+        }
       }
 
       // /mcp/tenants/{tid}/applications/{id}
