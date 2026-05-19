@@ -20,6 +20,7 @@ export interface FakeGateway {
 export function startFakeGateway(): FakeGateway {
   // In-memory state per gateway instance — reset on each fresh startFakeGateway().
   const envVars = new Map<string, Map<string, string>>();
+  const monitors = new Map<string, Record<string, unknown>>();
   const domains: Array<{
     id: string;
     tenant_id: string;
@@ -289,6 +290,48 @@ export function startFakeGateway(): FakeGateway {
           current_deployment_id: null,
           created_at: "2026-01-01T00:00:00Z",
         });
+      }
+
+      // /mcp/tenants/{tid}/monitors  (collection, NO trailing slash)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/monitors`) {
+        if (req.method === "GET") return Response.json([...monitors.values()]);
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+          const m = {
+            id,
+            name: body.name,
+            url: body.url,
+            status: "active",
+            check_interval_seconds: body.check_interval_seconds ?? 60,
+          };
+          monitors.set(id, m);
+          return Response.json(m);
+        }
+      }
+      // /mcp/tenants/{tid}/monitors/{id}  and  /{id}/pause | /resume
+      const monMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/monitors/([^/]+?)(?:/(pause|resume))?$`),
+      );
+      if (monMatch) {
+        const id = monMatch[1] ?? "";
+        const action = monMatch[2];
+        const m = monitors.get(id);
+        if (!m) return new Response("not found", { status: 404 });
+        if (action && req.method === "POST") {
+          m.status = action === "pause" ? "paused" : "active";
+          return Response.json(m);
+        }
+        if (req.method === "GET") return Response.json(m);
+        if (req.method === "PATCH") {
+          const body = (await req.json()) as Record<string, unknown>;
+          Object.assign(m, body);
+          return Response.json(m);
+        }
+        if (req.method === "DELETE") {
+          monitors.delete(id);
+          return new Response(null, { status: 204 });
+        }
       }
 
       return new Response("not found", { status: 404 });

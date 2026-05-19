@@ -13,6 +13,7 @@ import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
+import { registerMonitors } from "./commands/monitors";
 import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
@@ -59,6 +60,7 @@ if (import.meta.main) {
   registerLogs(program);
   registerEnv(program);
   registerDomains(program);
+  registerMonitors(program);
   registerMcp(program);
   registerUpgrade(program);
   registerCompletion(program);
