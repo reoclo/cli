@@ -57,3 +57,16 @@ test("containers recreate / scale / labels", async () => {
     .env(env()).quiet();
   expect(lb.stdout.toString()).toContain("✓ labels updated: web-1");
 });
+
+test("containers inspect / logs / restart", async () => {
+  const ins = await $`bun run src/index.ts containers inspect srv-1 web-1 -o json`
+    .env(env()).quiet();
+  const inspected = JSON.parse(ins.stdout.toString()) as { container_name: string };
+  expect(inspected.container_name).toBe("web-1");
+
+  const lg = await $`bun run src/index.ts containers logs srv-1 web-1`.env(env()).quiet();
+  expect(lg.stdout.toString()).toContain("log line 1");
+
+  const rs = await $`bun run src/index.ts containers restart srv-1 web-1`.env(env()).quiet();
+  expect(rs.stdout.toString()).toContain("✓ container restarted: web-1");
+});

@@ -42,4 +42,17 @@ describe("reoclo containers", () => {
       expect(getRequiredCapability(c)).toBe("container:write");
     }
   });
+
+  test("registers inspect/logs/restart with the right capabilities", () => {
+    const g = containersCmd();
+    expect(getRequiredCapability(g.commands.find((c) => c.name() === "inspect")!)).toBe(
+      "container:read",
+    );
+    expect(getRequiredCapability(g.commands.find((c) => c.name() === "logs")!)).toBe(
+      "container:logs:tail",
+    );
+    expect(getRequiredCapability(g.commands.find((c) => c.name() === "restart")!)).toBe(
+      "container:write",
+    );
+  });
 });

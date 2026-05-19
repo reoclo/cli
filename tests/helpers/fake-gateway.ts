@@ -633,6 +633,50 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
+      // /mcp/tenants/{tid}/servers/{sid}/containers/{name}/inspect
+      const inspectMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/containers/([^/]+)/inspect$`),
+      );
+      if (inspectMatch && req.method === "GET") {
+        return Response.json({
+          container_name: inspectMatch[2],
+          container_id: "deadbeef",
+          image: "nginx:1.27",
+          status: "running",
+          state: "running",
+          env_vars: [{ key: "PORT", value: "8080" }],
+          ports: [{ container_port: 80, host_port: 8080, protocol: "tcp" }],
+          resource_limits: { cpu_cores: null, memory_mb: null },
+          created: "2026-01-01T00:00:00Z",
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/containers/{name}/logs
+      const clogsMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/containers/([^/]+)/logs$`),
+      );
+      if (clogsMatch && req.method === "GET") {
+        return Response.json({
+          container_name: clogsMatch[2],
+          stdout: "log line 1\nlog line 2",
+          stderr: "",
+          tail: Number(url.searchParams.get("tail") ?? "200"),
+        });
+      }
+      // /mcp/tenants/{tid}/servers/{sid}/containers/{name}/(start|stop|restart)
+      const cActionMatch = url.pathname.match(
+        new RegExp(
+          `^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/containers/([^/]+)/(start|stop|restart)$`,
+        ),
+      );
+      if (cActionMatch && req.method === "POST") {
+        return Response.json({
+          success: true,
+          container_name: cActionMatch[2],
+          action: cActionMatch[3],
+          message: "ok",
+        });
+      }
+
       return new Response("not found", { status: 404 });
     },
   });

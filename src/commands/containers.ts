@@ -231,4 +231,63 @@ export function registerContainers(program: Command): void {
     );
   withCompletion(labelsCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(labelsCmd, "container:write");
+
+  const inspectCmd = g
+    .command("inspect <server> <name>")
+    .description("inspect a container on a server")
+    .action(async (server: string, name: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, server);
+      const res = await ctx.client.get<Record<string, unknown>>(
+        `/tenants/${tid}/servers/${sid}/containers/${name}/inspect`,
+      );
+      printObject(res, fmt);
+    });
+  withCompletion(inspectCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(inspectCmd, "container:read");
+
+  const logsCmd = g
+    .command("logs <server> <name>")
+    .description("fetch a container's logs")
+    .option("--tail <n>", "number of log lines (default 200)")
+    .action(async (server: string, name: string, opts: { tail?: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, server);
+      const qs = opts.tail ? `?tail=${encodeURIComponent(opts.tail)}` : "";
+      const res = await ctx.client.get<{ stdout: string; stderr: string } & Record<string, unknown>>(
+        `/tenants/${tid}/servers/${sid}/containers/${name}/logs${qs}`,
+      );
+      if (fmt === "json" || fmt === "yaml") {
+        printObject(res, fmt);
+        return;
+      }
+      if (res.stdout) process.stdout.write(res.stdout.endsWith("\n") ? res.stdout : `${res.stdout}\n`);
+      if (res.stderr) process.stderr.write(res.stderr.endsWith("\n") ? res.stderr : `${res.stderr}\n`);
+    });
+  withCompletion(logsCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(logsCmd, "container:logs:tail");
+
+  const restartCmd = g
+    .command("restart <server> <name>")
+    .description("restart a container on a server")
+    .action(async (server: string, name: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, server);
+      const res = await ctx.client.post<Record<string, unknown>>(
+        `/tenants/${tid}/servers/${sid}/containers/${name}/restart`,
+      );
+      if (fmt === "json" || fmt === "yaml") {
+        printObject(res, fmt);
+        return;
+      }
+      process.stdout.write(`✓ container restarted: ${name}\n`);
+    });
+  withCompletion(restartCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(restartCmd, "container:write");
 }
