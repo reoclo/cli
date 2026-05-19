@@ -5,6 +5,7 @@ import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 
+// Mirror the API's IncidentSeverity / IncidentState enums — keep in sync if the API adds values.
 const SEVERITIES = ["minor", "major", "critical"];
 const STATES = ["investigating", "identified", "monitoring", "resolved"];
 
@@ -71,11 +72,15 @@ export function registerIncidents(program: Command): void {
           return;
         }
         printObject(incident, fmt);
-        process.stdout.write(`\nupdates (${updates.length}):\n`);
-        for (const u of updates) {
-          const state = u.state ? ` [${u.state}]` : "";
-          const msg = u.message.replace(/\n/g, "\n    ");
-          process.stdout.write(`  ${u.created_at}${state} ${msg}\n`);
+        if (updates.length === 0) {
+          process.stdout.write("\nupdates: none\n");
+        } else {
+          process.stdout.write(`\nupdates (${updates.length}):\n`);
+          for (const u of updates) {
+            const state = u.state ? ` [${u.state}]` : "";
+            const msg = u.message.replace(/\n/g, "\n    ");
+            process.stdout.write(`  ${u.created_at}${state} ${msg}\n`);
+          }
         }
       }),
     { args: [{ slot: 0, resource: "incidents" }] },
