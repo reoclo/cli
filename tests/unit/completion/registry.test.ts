@@ -67,4 +67,19 @@ describe("RESOURCE_REGISTRY", () => {
     });
     expect(e).toEqual({ id: "i1", value: "i1", name: "Outage", desc: "major/investigating" });
   });
+
+  test("monitors toEntry falls back when name/status absent", () => {
+    const e = RESOURCE_REGISTRY.monitors.toEntry({ id: "m1" });
+    expect(e).toEqual({ id: "m1", value: "m1", name: "m1", desc: "m1 — " });
+  });
+
+  test("status-pages toEntry falls back when title absent", () => {
+    const e = RESOURCE_REGISTRY["status-pages"].toEntry({ id: "sp1" });
+    expect(e).toEqual({ id: "sp1", value: "sp1", name: "sp1", desc: "sp1" });
+  });
+
+  test("incidents toEntry falls back when title/severity/state absent", () => {
+    const e = RESOURCE_REGISTRY.incidents.toEntry({ id: "i1" });
+    expect(e).toEqual({ id: "i1", value: "i1", name: "i1", desc: "" });
+  });
 });

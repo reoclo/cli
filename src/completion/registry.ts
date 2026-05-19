@@ -94,7 +94,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
     toEntry: (r) => {
       const id = str(r.id);
       const title = str(r.title, id);
-      return { id, value: id, name: title, desc: `${str(r.severity)}/${str(r.state)}` };
+      return { id, value: id, name: title, desc: [str(r.severity), str(r.state)].filter(Boolean).join("/") };
     },
   },
 };
