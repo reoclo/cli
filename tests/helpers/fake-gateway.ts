@@ -126,6 +126,20 @@ export function startFakeGateway(): FakeGateway {
       application_slug: "app-1",
     },
   ];
+  const logEntries: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < 600; i++) {
+    logEntries.push({
+      ts: `2026-05-19T${String(Math.floor(i / 100)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+      level: i % 5 === 0 ? "error" : i % 3 === 0 ? "warn" : "info",
+      message: `log line ${i}: ${i % 7 === 0 ? "panic" : "ok"}`,
+      server_id: i % 2 === 0 ? "srv-1" : "srv-2",
+      server_name: i % 2 === 0 ? "web-1" : "web-2",
+      source_type: i % 4 === 0 ? "container" : "system",
+      source_name: i % 4 === 0 ? "app-container" : "kernel",
+      stream: i % 3 === 0 ? "stderr" : "stdout",
+    });
+  }
+
   const appConfigs = new Map<string, Record<string, unknown>>();
   appConfigs.set("11111111-aaaa-aaaa-aaaa-111111111111", {
     build: { buildpack: "node", docker_image: null },
@@ -1047,6 +1061,30 @@ export function startFakeGateway(): FakeGateway {
             failed: 0,
           })),
         });
+      }
+
+      // /mcp/tenants/{tid}/logs   (paginated query)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs`) {
+        const search = url.searchParams.get("search");
+        const serverId = url.searchParams.get("server_id");
+        const sourceType = url.searchParams.get("source_type");
+        const level = url.searchParams.get("level");
+        const fromDate = url.searchParams.get("from_date");
+        const toDate = url.searchParams.get("to_date");
+        const page = Number(url.searchParams.get("page") ?? "1");
+        const pageSize = Math.min(Number(url.searchParams.get("page_size") ?? "100"), 500);
+
+        let filtered = logEntries;
+        if (search) filtered = filtered.filter((l) => String(l["message"]).includes(search));
+        if (serverId) filtered = filtered.filter((l) => l["server_id"] === serverId);
+        if (sourceType) filtered = filtered.filter((l) => l["source_type"] === sourceType);
+        if (level) filtered = filtered.filter((l) => l["level"] === level);
+        if (fromDate) filtered = filtered.filter((l) => String(l["ts"]) >= fromDate);
+        if (toDate) filtered = filtered.filter((l) => String(l["ts"]) <= toDate);
+
+        const start = (page - 1) * pageSize;
+        const items = filtered.slice(start, start + pageSize);
+        return Response.json({ items, total: filtered.length, page, page_size: pageSize });
       }
 
       return new Response("not found", { status: 404 });
