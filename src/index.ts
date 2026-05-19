@@ -26,6 +26,7 @@ import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
+import { registerAudit } from "./commands/audit";
 import { bootstrap } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
@@ -79,6 +80,7 @@ if (import.meta.main) {
   registerExec(program);
   registerShell(program);
   registerTunnel(program);
+  registerAudit(program);
 
   // Load capabilities from the active profile (best-effort — failure hides all gated commands,
   // which is correct behaviour for unauthenticated users).

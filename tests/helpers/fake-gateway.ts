@@ -68,6 +68,30 @@ export function startFakeGateway(): FakeGateway {
     ],
     "22222222-2222-2222-2222-222222222222": [{ name: "develop", is_default: true }],
   };
+  const auditLogs: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < 250; i++) {
+    auditLogs.push({
+      id: `audit-${i}`,
+      tenant_id: TENANT_ID,
+      actor_id: i % 2 === 0 ? "user-1" : "user-2",
+      actor_email: i % 2 === 0 ? "a@x.com" : "b@x.com",
+      action: i % 3 === 0 ? "deploy_succeeded" : "update",
+      resource_type: i % 4 === 0 ? "server" : "application",
+      resource_id: `res-${i}`,
+      resource_name: `name-${i}`,
+      changes: {},
+      metadata: {},
+      ip_address: "127.0.0.1",
+      created_at: `2026-05-${String(19 - (i % 18)).padStart(2, "0")}T00:00:00Z`,
+      updated_at: `2026-05-${String(19 - (i % 18)).padStart(2, "0")}T00:00:00Z`,
+    });
+  }
+
+  const users = [
+    { id: "user-1", email: "a@x.com" },
+    { id: "user-2", email: "b@x.com" },
+  ];
+
   const registryCreds = new Map<string, Record<string, unknown>>();
   registryCreds.set("33333333-3333-3333-3333-333333333333", {
     id: "33333333-3333-3333-3333-333333333333",
@@ -890,6 +914,45 @@ export function startFakeGateway(): FakeGateway {
           if (!repo) return new Response("not found", { status: 404 });
           return Response.json(repo);
         }
+      }
+
+      // /mcp/tenants/{tid}/audit-logs   (filtered list)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/audit-logs`) {
+        const actor = url.searchParams.get("actor_id");
+        const action = url.searchParams.get("action");
+        const resType = url.searchParams.get("resource_type");
+        const resId = url.searchParams.get("resource_id");
+        const from = url.searchParams.get("from_date");
+        const to = url.searchParams.get("to_date");
+        const page = Number(url.searchParams.get("page") ?? "1");
+        const pageSize = Math.min(Number(url.searchParams.get("page_size") ?? "50"), 200);
+
+        let filtered = auditLogs;
+        if (actor) filtered = filtered.filter((l) => l["actor_id"] === actor);
+        if (action) filtered = filtered.filter((l) => l["action"] === action);
+        if (resType) filtered = filtered.filter((l) => l["resource_type"] === resType);
+        if (resId) filtered = filtered.filter((l) => l["resource_id"] === resId);
+        if (from) filtered = filtered.filter((l) => String(l["created_at"]) >= from);
+        if (to) filtered = filtered.filter((l) => String(l["created_at"]) <= to);
+
+        const start = (page - 1) * pageSize;
+        const items = filtered.slice(start, start + pageSize);
+        return Response.json({
+          items,
+          total: filtered.length,
+          page,
+          page_size: pageSize,
+        });
+      }
+
+      // /mcp/tenants/{tid}/users?search=<email>
+      if (
+        url.pathname === `/mcp/tenants/${TENANT_ID}/users` ||
+        url.pathname === `/mcp/tenants/${TENANT_ID}/users/`
+      ) {
+        const search = url.searchParams.get("search") ?? "";
+        const items = search ? users.filter((u) => u.email === search) : users;
+        return Response.json({ items });
       }
 
       return new Response("not found", { status: 404 });
