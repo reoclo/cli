@@ -24,3 +24,41 @@ describe("registry command group (reads + rm)", () => {
     expect(opt).toBeDefined();
   });
 });
+
+describe("registry create/update/test", () => {
+  test("create has --name, --type, --url, --password-stdin", () => {
+    const program = new Command().name("reoclo");
+    registerRegistry(program);
+    const create = program.commands
+      .find((c) => c.name() === "registry")!
+      .commands.find((c) => c.name() === "create")!;
+    const longs = create.options.map((o) => o.long);
+    expect(longs).toContain("--name");
+    expect(longs).toContain("--type");
+    expect(longs).toContain("--url");
+    expect(longs).toContain("--password-stdin");
+  });
+
+  test("update accepts <id> and has --password-stdin", () => {
+    const program = new Command().name("reoclo");
+    registerRegistry(program);
+    const update = program.commands
+      .find((c) => c.name() === "registry")!
+      .commands.find((c) => c.name() === "update")!;
+    expect(update.registeredArguments.length).toBe(1);
+    const longs = update.options.map((o) => o.long);
+    expect(longs).toContain("--password-stdin");
+  });
+
+  test("test has --type, --url, --password-stdin", () => {
+    const program = new Command().name("reoclo");
+    registerRegistry(program);
+    const t = program.commands
+      .find((c) => c.name() === "registry")!
+      .commands.find((c) => c.name() === "test")!;
+    const longs = t.options.map((o) => o.long);
+    expect(longs).toContain("--type");
+    expect(longs).toContain("--url");
+    expect(longs).toContain("--password-stdin");
+  });
+});
