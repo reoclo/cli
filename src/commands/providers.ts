@@ -4,9 +4,34 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { resolveProvider } from "../client/resolve";
 import type { GitProvider, SyncStatusResponse } from "../client/types";
+import { getActiveProfile } from "../config/store";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { openBrowser } from "../ui/open-browser";
+
+function deriveDashboardOrigin(apiUrl: string): string {
+  try {
+    const url = new URL(apiUrl);
+    if (url.hostname.startsWith("api.")) {
+      return `${url.protocol}//app.${url.hostname.slice(4)}`;
+    }
+    return url.origin;
+  } catch {
+    return "https://app.reoclo.com";
+  }
+}
+
+function deriveGatewayOrigin(apiUrl: string): string {
+  try {
+    const url = new URL(apiUrl);
+    if (url.hostname.startsWith("api.")) {
+      return `${url.protocol}//gateway.${url.hostname.slice(4)}`;
+    }
+    return url.origin;
+  } catch {
+    return "https://gateway.reoclo.com";
+  }
+}
 
 export function registerProviders(program: Command): void {
   const g = program.command("providers").description("manage git providers (GitHub, Gitea)");
@@ -93,10 +118,19 @@ export function registerProviders(program: Command): void {
       .action(async (ref: string) => {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
+        const profile = await getActiveProfile();
+        const slug = profile?.tenant_slug ?? "";
+        if (!slug) {
+          const err = new Error(
+            "tenant_slug not found in active profile — run 'reoclo login' to refresh your profile",
+          ) as Error & { exitCode: number };
+          err.exitCode = 3;
+          throw err;
+        }
         const id = await resolveProvider(ctx.client, tid, ref);
-        const dashboardOrigin = "https://app.reoclo.com";
+        const dashboardOrigin = deriveDashboardOrigin(ctx.api);
         const resp = await ctx.client.get<{ authorize_url: string; state: string }>(
-          `/tenants/${tid}/git-providers/${id}/oauth/authorize-url?redirect_uri=${encodeURIComponent(`${dashboardOrigin}/repositories/settings`)}`,
+          `/tenants/${tid}/git-providers/${id}/oauth/authorize-url?redirect_uri=${encodeURIComponent(`${dashboardOrigin}/org/${slug}/repositories/settings`)}`,
         );
         console.log(`Open this URL to authorize (also opened in browser):\n${resp.authorize_url}`);
         openBrowser(resp.authorize_url);
@@ -207,7 +241,15 @@ export function registerProviders(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
-        const gateway = "https://gateway.reoclo.com";
+        const provider = await ctx.client.get<GitProvider>(`/tenants/${tid}/git-providers/${id}`);
+        if (provider.provider_type === "github") {
+          const err = new Error(
+            "GitHub providers use the App-level webhook (`/webhooks/github`). Per-provider webhook URLs only apply to Gitea providers.",
+          ) as Error & { exitCode: number };
+          err.exitCode = 4;
+          throw err;
+        }
+        const gateway = deriveGatewayOrigin(ctx.api);
         console.log(`${gateway}/webhooks/gitea/${id}`);
       }),
     { args: [{ slot: 0, resource: "providers" }] },
