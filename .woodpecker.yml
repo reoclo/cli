@@ -30,7 +30,9 @@ steps:
         from_secret: github_release_token
     commands:
       - apt-get update
-      - apt-get install -y --no-install-recommends curl jq ca-certificates
+      # python3 + build-essential are required for node-pty's native build
+      # (devDependency used only by the bash-completion e2e harness).
+      - apt-get install -y --no-install-recommends curl jq ca-certificates python3 build-essential
       - bun install --frozen-lockfile
       - bun test tests/unit/
       - bun run typecheck
