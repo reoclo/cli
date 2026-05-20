@@ -388,9 +388,13 @@ export function registerLogs(program: Command): void {
           return;
         }
 
+        // Server can return null for either array when the runner snapshot
+        // is unavailable; treat as empty so printList doesn't crash.
+        const containers = res.containers ?? [];
+        const journalUnits = res.journal_units ?? [];
         process.stdout.write("Containers\n");
         printList(
-          res.containers as unknown as Array<Record<string, unknown>>,
+          containers as unknown as Array<Record<string, unknown>>,
           [
             { key: "name", label: "NAME" },
             { key: "image", label: "IMAGE" },
@@ -400,7 +404,7 @@ export function registerLogs(program: Command): void {
         );
         process.stdout.write("\nJournal units\n");
         printList(
-          res.journal_units as unknown as Array<Record<string, unknown>>,
+          journalUnits as unknown as Array<Record<string, unknown>>,
           [
             { key: "unit", label: "UNIT" },
             { key: "description", label: "DESCRIPTION" },
