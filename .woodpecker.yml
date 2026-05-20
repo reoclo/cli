@@ -34,7 +34,14 @@ steps:
       # (devDependency used only by the bash-completion e2e harness).
       - apt-get install -y --no-install-recommends curl jq ca-certificates python3 build-essential
       - bun install --frozen-lockfile
-      - bun test tests/unit/
+      # Run completion-warm.test.ts in a separate process. It uses
+      # `mock.module()` to stub `index-client` and `cache`, and bun's module
+      # mocks are process-global — leaving the stubs in place pollutes any
+      # subsequent test file (cache.test, engine.test, index-client.test)
+      # that imports the real modules. afterAll restoration doesn't help
+      # because bun pre-loads every test file in the worker before running.
+      - bun test tests/unit/commands/completion-warm.test.ts
+      - find tests/unit -name '*.test.ts' ! -path '*/completion-warm.test.ts' -print0 | xargs -0 bun test
       - bun run typecheck
       - bun run build
       - cd dist && sha256sum reoclo-* > SHA256SUMS && cd ..
