@@ -3,14 +3,6 @@ import { Command } from "commander";
 import { registerProviders } from "../../../src/commands/providers";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 
-// Re-export the private helpers via the module boundary for unit testing.
-// We reach them by importing the module under test with a cast to any.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const mod = require("../../../src/commands/providers") as {
-  deriveDashboardOrigin?: (u: string) => string;
-  deriveGatewayOrigin?: (u: string) => string;
-};
-
 describe("providers command registration", () => {
   test("registers ls/get/create/connect/test/sync/status/orgs/webhook-url/update/rm", () => {
     const program = new Command().name("reoclo");
@@ -135,7 +127,7 @@ describe("webhook-url github provider rejection", () => {
   });
 
   test("does not throw for gitea provider_type", () => {
-    const providerType = "gitea";
+    const providerType: string = "gitea";
     let threw = false;
     try {
       if (providerType === "github") {
