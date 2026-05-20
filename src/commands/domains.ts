@@ -16,16 +16,21 @@ interface VerifyResponse {
   expires_at: string;
 }
 
-async function resolveDomainId(client: HttpClient, tid: string, fqdnOrId: string): Promise<string> {
-  if (UUID.test(fqdnOrId)) return fqdnOrId;
+async function resolveDomain(
+  client: HttpClient,
+  tid: string,
+  fqdnOrId: string,
+): Promise<{ id: string; fqdn: string }> {
   const list = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
-  const found = list.find((d) => d.fqdn === fqdnOrId);
+  const found = UUID.test(fqdnOrId)
+    ? list.find((d) => d.id === fqdnOrId)
+    : list.find((d) => d.fqdn === fqdnOrId) ?? list.find((d) => d.id === fqdnOrId);
   if (!found) {
     const e = new Error(`domain '${fqdnOrId}' not found`) as Error & { exitCode: number };
     e.exitCode = 5;
     throw e;
   }
-  return found.id;
+  return { id: found.id, fqdn: found.fqdn };
 }
 
 export function registerDomains(program: Command): void {
@@ -72,7 +77,7 @@ export function registerDomains(program: Command): void {
       .action(async (fqdnOrId: string) => {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
+        const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
         const r = await ctx.client.post<VerifyResponse>(`/tenants/${tid}/domains/${id}/verify`);
         console.log("Add this DNS TXT record to verify the domain:");
         console.log(`  Name:    ${r.txt_name}`);
@@ -104,7 +109,7 @@ export function registerDomains(program: Command): void {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
+        const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
         const r = await ctx.client.get<DnsOverview>(`/tenants/${tid}/domains/${id}/dns`);
 
         if (fmt === "json" || fmt === "yaml") {
@@ -136,7 +141,7 @@ export function registerDomains(program: Command): void {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
+        const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
         const r = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/domains/${id}/health`,
         );
@@ -160,12 +165,12 @@ export function registerDomains(program: Command): void {
         }
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
-        const id = await resolveDomainId(ctx.client, tid, fqdnOrId);
+        const { id, fqdn } = await resolveDomain(ctx.client, tid, fqdnOrId);
         await ctx.client.del<void>(`/tenants/${tid}/domains/${id}`);
         printMutation(
           program,
-          { id, fqdn: fqdnOrId, status: "decommissioned" },
-          `✓ domain removed: ${fqdnOrId}`,
+          { id, fqdn, status: "decommissioned" },
+          `✓ domain removed: ${fqdn}`,
         );
       }),
     { args: [{ slot: 0, resource: "domains" }] },
