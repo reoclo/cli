@@ -122,4 +122,15 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       };
     },
   },
+  providers: {
+    kind: "providers",
+    indexField: "providers",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const value = str(r.slug, id);
+      const name = str(r.name, value);
+      const providerType = str(r.provider_type);
+      return { id, value, name, desc: `${name} — ${providerType}` };
+    },
+  },
 };

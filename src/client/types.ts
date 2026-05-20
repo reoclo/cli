@@ -89,3 +89,41 @@ export interface PaginatedResponse<T> {
   skip: number;
   limit: number;
 }
+
+export type ProviderType = "github" | "gitea";
+export type ProviderScope = "platform" | "tenant";
+
+export interface GitProvider {
+  id: string;
+  tenant_id: string;
+  provider_type: ProviderType;
+  scope: ProviderScope;
+  name: string;
+  slug: string;
+  instance_url: string;
+  api_url: string | null;
+  status: "active" | "inactive";
+  oauth_client_id: string | null;
+  is_connected: boolean;
+  connected_at: string | null;
+  allowed_organizations: string[] | null;
+  created_at: string;
+  updated_at: string;
+  sync_status: "idle" | "syncing" | "enriching" | "completed" | "failed";
+  sync_total_repos: number;
+  sync_completed_repos: number;
+  sync_started_at: string | null;
+  sync_completed_at: string | null;
+  sync_error: string | null;
+  last_health_checked_at: string | null;
+  last_health_status: "healthy" | "disconnected" | "error" | null;
+}
+
+export interface SyncStatusResponse {
+  status: "idle" | "syncing" | "enriching" | "completed" | "failed";
+  total_repos: number;
+  completed_repos: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}

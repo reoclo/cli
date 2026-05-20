@@ -1,6 +1,6 @@
 // src/client/resolve.ts
 import type { HttpClient } from "./http";
-import type { Application, PaginatedResponse, Repository, Server } from "./types";
+import type { Application, GitProvider, PaginatedResponse, Repository, Server } from "./types";
 import { getSlice } from "../completion/cache";
 import { cacheList } from "../completion/populate";
 import type { Entry, IndexKind } from "../completion/types";
@@ -83,5 +83,18 @@ export async function resolveRepo(
       return res.items;
     },
     "repo",
+  );
+}
+
+export async function resolveProvider(
+  c: HttpClient,
+  tenantId: string,
+  identifier: string,
+): Promise<string> {
+  return resolve(
+    "providers",
+    identifier,
+    () => c.get<GitProvider[]>(`/tenants/${tenantId}/git-providers`),
+    "provider",
   );
 }
