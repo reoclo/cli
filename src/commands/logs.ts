@@ -5,6 +5,15 @@ import { resolveServer } from "../client/resolve";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { parseTimeSpec } from "../util/time";
+import {
+  LOG_LEVELS,
+  LogLevelSchema,
+  SOURCE_TYPES,
+  SourceTypeSchema,
+  STREAMS,
+  StreamSchema,
+} from "../client/enums";
+import { parseLimit } from "../util/parse-limit";
 
 interface LiveLogEntry {
   ts: string;
@@ -31,7 +40,7 @@ export function registerLogs(program: Command): void {
   const tailCmd = withCompletion(g.command("tail"), {
     flags: {
       "--server": "servers",
-      "--source": { enum: ["container", "system", "docker_daemon", "runner", "kernel", "auth"] },
+      "--source": { enum: [...SOURCE_TYPES] },
     },
   });
   requireCapability(tailCmd, "container:logs:tail");
@@ -57,6 +66,7 @@ export function registerLogs(program: Command): void {
         tail: string;
         search?: string;
       }) => {
+        const source = SourceTypeSchema.parse(opts.source);
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, opts.server);
@@ -64,7 +74,7 @@ export function registerLogs(program: Command): void {
         const baseQs = (sinceParam: string, tailParam: string): string => {
           const params = new URLSearchParams({
             server_id: sid,
-            source_type: opts.source,
+            source_type: source,
             source_name: opts.name,
             since: sinceParam,
             tail: tailParam,
@@ -164,16 +174,12 @@ export function registerLogs(program: Command): void {
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
 
-          const parsed = Number(opts.limit);
-          if (!Number.isFinite(parsed) || parsed < 1) {
-            const e = new Error(
-              `invalid --limit: '${opts.limit}' (expected positive integer)`,
-            ) as Error & { exitCode: number };
-            e.exitCode = 2;
-            throw e;
-          }
-          const limit = Math.min(parsed, HARD_LIMIT);
+          const limit = parseLimit(opts.limit, HARD_LIMIT);
           const pageSize = Math.min(limit, SERVER_MAX_PAGE);
+
+          const level = opts.level !== undefined ? LogLevelSchema.parse(opts.level) : undefined;
+          const sourceType = opts.sourceType !== undefined ? SourceTypeSchema.parse(opts.sourceType) : undefined;
+          const stream = opts.stream !== undefined ? StreamSchema.parse(opts.stream) : undefined;
 
           let serverId: string | undefined;
           if (opts.server) serverId = await resolveServer(ctx.client, tid, opts.server);
@@ -190,10 +196,10 @@ export function registerLogs(program: Command): void {
             });
             if (query) q.set("search", query);
             if (serverId) q.set("server_id", serverId);
-            if (opts.sourceType) q.set("source_type", opts.sourceType);
+            if (sourceType) q.set("source_type", sourceType);
             if (opts.sourceName) q.set("source_name", opts.sourceName);
-            if (opts.stream) q.set("stream", opts.stream);
-            if (opts.level) q.set("level", opts.level);
+            if (stream) q.set("stream", stream);
+            if (level) q.set("level", level);
             if (fromDate) q.set("from_date", fromDate);
             if (toDate) q.set("to_date", toDate);
             const res = await ctx.client.get<SearchLogResponse>(
@@ -236,9 +242,9 @@ export function registerLogs(program: Command): void {
     {
       flags: {
         "--server": "servers",
-        "--source-type": { enum: ["container", "system", "docker_daemon", "runner", "kernel", "auth"] },
-        "--stream": { enum: ["stdout", "stderr", "journal"] },
-        "--level": { enum: ["debug", "info", "warn", "error", "fatal"] },
+        "--source-type": { enum: [...SOURCE_TYPES] },
+        "--stream": { enum: [...STREAMS] },
+        "--level": { enum: [...LOG_LEVELS] },
       },
     },
   );
@@ -261,6 +267,8 @@ export function registerLogs(program: Command): void {
           const tid = requireTenantId(ctx);
           const sid = await resolveServer(ctx.client, tid, server);
 
+          const level = opts.level !== undefined ? LogLevelSchema.parse(opts.level) : undefined;
+
           const q = new URLSearchParams({
             server_id: sid,
             source_type: "system",
@@ -269,11 +277,16 @@ export function registerLogs(program: Command): void {
           });
           if (opts.since) q.set("since", parseTimeSpec(opts.since).toISOString());
           if (opts.search) q.set("search", opts.search);
-          if (opts.level) q.set("level", opts.level);
+          if (level) q.set("level", level);
 
           const res = await ctx.client.get<LiveLogResponse>(
             `/tenants/${tid}/logs/live?${q.toString()}`,
           );
+          const fmt = resolveFormat(globalOutput(program));
+          if (fmt === "json" || fmt === "yaml") {
+            printObject(res as unknown as Record<string, unknown>, fmt);
+            return;
+          }
           for (const e of res.entries) {
             process.stdout.write(`${e.ts} [${e.level}] ${e.message}\n`);
           }

@@ -6,6 +6,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { RegistryTypeSchema } from "../../client/enums";
 import type { McpRegistrationContext } from "./context";
 import { asToolError, asToolResult } from "./common";
 
@@ -137,8 +138,8 @@ export function registerOtherTools(
     "Create a container registry credential.",
     {
       name: z.string().min(1).describe("Human-readable name (e.g. 'dockerhub-prod')"),
-      registry_type: z.enum(["docker", "ecr", "private"]).describe("Registry kind"),
-      registry_url: z.string().url().describe("Registry URL"),
+      registry_type: RegistryTypeSchema.describe("Registry kind"),
+      registry_url: z.url().describe("Registry URL"),
       encrypted_credential: z.string().min(1).describe(
         "The credential/password value. Sensitive — treat as such and do not echo back to the user.",
       ),
@@ -172,7 +173,7 @@ export function registerOtherTools(
     {
       credential_id: z.string().min(1).describe("Registry credential id"),
       name: z.string().optional().describe("New name"),
-      registry_url: z.string().url().optional().describe("New URL"),
+      registry_url: z.url().optional().describe("New URL"),
       username: z.string().optional().describe("New username"),
       description: z.string().optional().describe("New description"),
       encrypted_credential: z.string().min(1).optional().describe(
@@ -202,8 +203,8 @@ export function registerOtherTools(
     "test_registry_cred",
     "Test a registry connection ad-hoc (does not require an existing credential record).",
     {
-      registry_type: z.enum(["docker", "ecr", "private"]).describe("Registry kind"),
-      registry_url: z.string().url().describe("Registry URL"),
+      registry_type: RegistryTypeSchema.describe("Registry kind"),
+      registry_url: z.url().describe("Registry URL"),
       encrypted_credential: z.string().min(1).describe(
         "The credential/password to test. Sensitive — treat as such.",
       ),

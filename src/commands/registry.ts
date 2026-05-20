@@ -1,6 +1,7 @@
 // src/commands/registry.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { RegistryTypeSchema } from "../client/enums";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
 import { readSecret } from "../util/secret";
@@ -84,6 +85,7 @@ export function registerRegistry(program: Command): void {
         description?: string;
         passwordStdin?: boolean;
       }) => {
+        const registryType = RegistryTypeSchema.parse(opts.type);
         const password = await readSecret({
           fromStdin: Boolean(opts.passwordStdin),
           promptLabel: "registry password",
@@ -92,7 +94,7 @@ export function registerRegistry(program: Command): void {
         const tid = requireTenantId(ctx);
         const body: Record<string, unknown> = {
           name: opts.name,
-          registry_type: opts.type,
+          registry_type: registryType,
           registry_url: opts.url,
           encrypted_credential: password,
         };
@@ -158,6 +160,7 @@ export function registerRegistry(program: Command): void {
         username?: string;
         passwordStdin?: boolean;
       }) => {
+        const registryType = RegistryTypeSchema.parse(opts.type);
         const fmt = resolveFormat(globalOutput(program));
         const password = await readSecret({
           fromStdin: Boolean(opts.passwordStdin),
@@ -166,7 +169,7 @@ export function registerRegistry(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const body: Record<string, unknown> = {
-          registry_type: opts.type,
+          registry_type: registryType,
           registry_url: opts.url,
           encrypted_credential: password,
         };

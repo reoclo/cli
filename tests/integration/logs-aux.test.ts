@@ -68,3 +68,11 @@ test("logs usage -o json round-trips", async () => {
   const obj = JSON.parse(r.stdout.toString()) as Record<string, number>;
   expect(typeof obj["storage_bytes"]).toBe("number");
 });
+
+test("logs system honors -o json", async () => {
+  const r = await $`bun run src/index.ts -o json logs system srv-1 --unit kernel`.env(env()).quiet();
+  const out = r.stdout.toString();
+  // Should be parseable JSON, not text "ts [level] message" lines
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  expect(typeof parsed).toBe("object");
+});

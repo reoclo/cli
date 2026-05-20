@@ -100,3 +100,17 @@ test("registry test without --username still succeeds (no empty-string username 
     .quiet();
   expect(r.stdout.toString()).toContain("✓ ok");
 });
+
+test("registry create --type bogus exits non-zero with enum message", async () => {
+  const r = await $`echo -n "pw" | bun run src/index.ts registry create --name x --type bogus --url https://x.io --password-stdin`
+    .env(env()).nothrow().quiet();
+  expect(r.exitCode).not.toBe(0);
+  const errOut = r.stderr.toString() + r.stdout.toString();
+  expect(errOut).toMatch(/Invalid|expected|enum|docker|ecr|private/);
+});
+
+test("registry test --type bogus exits non-zero", async () => {
+  const r = await $`echo -n "pw" | bun run src/index.ts registry test --type bogus --url https://x.io --password-stdin`
+    .env(env()).nothrow().quiet();
+  expect(r.exitCode).not.toBe(0);
+});

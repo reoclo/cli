@@ -53,3 +53,11 @@ test("domains rm without --yes in non-TTY exits non-zero", async () => {
   const r = await $`bun run src/index.ts domains rm example.com`.env(env()).nothrow().quiet();
   expect(r.exitCode).not.toBe(0);
 });
+
+test("domains rm <id> --yes shows the FQDN in the success line", async () => {
+  // Pass the id (not the fqdn) and verify the output uses the fqdn.
+  const r = await $`bun run src/index.ts domains rm dom-1 --yes`.env(env()).quiet();
+  expect(r.stdout.toString()).toContain("✓ domain removed: example.com");
+  // Crucially, NOT "✓ domain removed: dom-1"
+  expect(r.stdout.toString()).not.toContain("✓ domain removed: dom-1");
+});

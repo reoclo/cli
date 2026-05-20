@@ -50,7 +50,7 @@ export function registerMonitorTools(
     "Create a new uptime monitor",
     {
       name: z.string().min(1).describe("Monitor display name"),
-      url: z.string().url().describe("URL to monitor"),
+      url: z.url().describe("URL to monitor"),
       interval: z.number().int().positive().optional().describe("Check interval in seconds (default 60)"),
     },
     async ({ name, url, interval }) => {
@@ -73,7 +73,7 @@ export function registerMonitorTools(
     {
       monitor_id: z.string().min(1).describe("Monitor ID"),
       name: z.string().optional().describe("New display name"),
-      url: z.string().url().optional().describe("New URL to monitor"),
+      url: z.url().optional().describe("New URL to monitor"),
       interval: z.number().int().positive().optional().describe("New check interval in seconds"),
     },
     async ({ monitor_id, name, url, interval }) => {

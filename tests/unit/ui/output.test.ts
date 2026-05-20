@@ -28,33 +28,33 @@ describe("globalOutput", () => {
   });
 });
 
-const origWrite = process.stdout.write.bind(process.stdout);
-let captured: string;
-
-function makeProgram(outputFlag?: string): Command {
-  const program = new Command().name("reoclo");
-  program.option("-o, --output <fmt>", "output format");
-  if (outputFlag !== undefined) {
-    program.opts()["output"] = outputFlag;
-  }
-  return program;
-}
-
-beforeEach(() => {
-  captured = "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout.write as any) = (chunk: unknown): boolean => {
-    captured += typeof chunk === "string" ? chunk : Buffer.from(chunk as Buffer).toString();
-    return true;
-  };
-});
-
-afterEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout.write as any) = origWrite;
-});
-
 describe("printMutation", () => {
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured: string;
+
+  function makeProgram(outputFlag?: string): Command {
+    const program = new Command().name("reoclo");
+    program.option("-o, --output <fmt>", "output format");
+    if (outputFlag !== undefined) {
+      program.opts()["output"] = outputFlag;
+    }
+    return program;
+  }
+
+  beforeEach(() => {
+    captured = "";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout.write as any) = (chunk: unknown): boolean => {
+      captured += typeof chunk === "string" ? chunk : Buffer.from(chunk as Buffer).toString();
+      return true;
+    };
+  });
+
+  afterEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout.write as any) = origWrite;
+  });
+
   test("text mode writes only the textLine", () => {
     const program = makeProgram();
     const origTTY = process.stdout.isTTY;
