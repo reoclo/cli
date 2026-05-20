@@ -6,6 +6,9 @@ import { globalOutput, printList, printObject, resolveFormat } from "../ui/outpu
 import type { Deployment } from "../client/types";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
+import { parseLimit, parseOffset } from "../util/parse-limit";
+
+const HARD_LIMIT = 1000;
 
 interface DeploymentStageDetail {
   name?: string;
@@ -42,9 +45,11 @@ export function registerDeployments(program: Command): void {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
+        const skip = parseOffset(opts.skip ?? "0");
+        const limit = parseLimit(opts.limit ?? "20", HARD_LIMIT);
         const params = new URLSearchParams();
-        if (opts.skip) params.set("skip", opts.skip);
-        if (opts.limit) params.set("limit", opts.limit);
+        params.set("skip", String(skip));
+        params.set("limit", String(limit));
         if (opts.app) {
           const appId = await resolveApp(ctx.client, tid, opts.app);
           params.set("application_id", appId);

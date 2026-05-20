@@ -28,3 +28,7 @@ export const LogLevelSchema = z.enum(LOG_LEVELS);
 export const REGISTRY_TYPES = ["docker", "ecr", "private"] as const;
 export type RegistryType = (typeof REGISTRY_TYPES)[number];
 export const RegistryTypeSchema = z.enum(REGISTRY_TYPES);
+
+// Shared positive-integer schema for `limit` params in MCP tools. The CLI
+// equivalent is `parseLimit` in src/util/parse-limit.ts.
+export const LimitSchema = z.number().int().positive();
