@@ -25,13 +25,25 @@ describe("reoclo containers", () => {
     expect(getRequiredCapability(refresh)).toBe("container:read");
   });
 
-  test("a capability-less profile hides the containers commands", () => {
+  test("a known cap list that lacks container:read hides the gated commands", () => {
+    // An empty array or undefined now means "unknown — show everything", so
+    // pass a non-empty list that explicitly does not include container:read
+    // to exercise the hide path.
+    const p = new Command().name("reoclo");
+    registerContainers(p);
+    filterCommandsByCapability(p, ["something:else"]);
+    const g = p.commands.find((c) => c.name() === "containers")!;
+    const ls = g.commands.find((c) => c.name() === "ls")!;
+    expect((ls as unknown as { _hidden?: boolean })._hidden).toBe(true);
+  });
+
+  test("an empty / unknown cap list shows the containers commands (server enforces)", () => {
     const p = new Command().name("reoclo");
     registerContainers(p);
     filterCommandsByCapability(p, []);
     const g = p.commands.find((c) => c.name() === "containers")!;
     const ls = g.commands.find((c) => c.name() === "ls")!;
-    expect((ls as unknown as { _hidden?: boolean })._hidden).toBe(true);
+    expect((ls as unknown as { _hidden?: boolean })._hidden ?? false).toBe(false);
   });
 
   test("registers recreate/scale/labels with container:write", () => {

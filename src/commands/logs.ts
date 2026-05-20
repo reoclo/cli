@@ -324,8 +324,15 @@ export function registerLogs(program: Command): void {
         return;
       }
 
+      // The endpoint can return null for the maps when no logs match; treat
+      // those as empty objects so Object.entries / printList don't crash.
+      const byLevel = r.by_level ?? {};
+      const bySource = r.by_source_type ?? {};
+      const total = r.total ?? 0;
+      const errors = r.error_count ?? 0;
+      const warns = r.warn_count ?? 0;
       process.stdout.write("By level\n");
-      const levelRows = Object.entries(r.by_level).map(([level, count]) => ({ level, count }));
+      const levelRows = Object.entries(byLevel).map(([level, count]) => ({ level, count }));
       printList(
         levelRows as unknown as Array<Record<string, unknown>>,
         [
@@ -335,7 +342,7 @@ export function registerLogs(program: Command): void {
         "text",
       );
       process.stdout.write("\nBy source type\n");
-      const sourceRows = Object.entries(r.by_source_type).map(([source, count]) => ({ source, count }));
+      const sourceRows = Object.entries(bySource).map(([source, count]) => ({ source, count }));
       printList(
         sourceRows as unknown as Array<Record<string, unknown>>,
         [
@@ -344,8 +351,8 @@ export function registerLogs(program: Command): void {
         ],
         "text",
       );
-      const rate = r.total > 0 ? ((r.error_count / r.total) * 100).toFixed(2) : "0.00";
-      process.stdout.write(`\nTotal: ${r.total}  errors: ${r.error_count} (${rate}%)  warnings: ${r.warn_count}\n`);
+      const rate = total > 0 ? ((errors / total) * 100).toFixed(2) : "0.00";
+      process.stdout.write(`\nTotal: ${total}  errors: ${errors} (${rate}%)  warnings: ${warns}\n`);
     });
 
   g.command("usage")

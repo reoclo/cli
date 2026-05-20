@@ -52,6 +52,29 @@ export function registerDomains(program: Command): void {
       );
     });
 
+  withCompletion(
+    g
+      .command("get <fqdnOrId>")
+      .description("show details for one domain")
+      .action(async (fqdnOrId: string) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const list = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
+        const d =
+          list.find((x) => x.fqdn === fqdnOrId) ?? list.find((x) => x.id === fqdnOrId);
+        if (!d) {
+          const e = new Error(`domain '${fqdnOrId}' not found`) as Error & {
+            exitCode: number;
+          };
+          e.exitCode = 5;
+          throw e;
+        }
+        printObject(d as unknown as Record<string, unknown>, fmt);
+      }),
+    { args: [{ slot: 0, resource: "domains" }] },
+  );
+
   g.command("add <fqdn>")
     .description("register a new domain")
     .action(async (fqdn: string) => {
