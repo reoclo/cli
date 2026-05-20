@@ -28,10 +28,8 @@ export function registerGitProviderTools(
     async ({ scope }) => {
       try {
         const items = await ctx.client.get(`/tenants/${tenantId}/git-providers`);
-        const filtered =
-          scope === "all"
-            ? items
-            : (items as Array<{ scope: string }>).filter((p) => p.scope === scope);
+        const list = Array.isArray(items) ? (items as Array<{ scope: string }>) : [];
+        const filtered = scope === "all" ? items : list.filter((p) => p.scope === scope);
         return asToolResult(filtered);
       } catch (error: unknown) {
         return asToolError(error);
@@ -57,11 +55,11 @@ export function registerGitProviderTools(
 
   server.tool(
     "create_git_provider",
-    "Create a new Gitea git provider for your organization",
+    "Create a new tenant-scoped Gitea git provider. Other provider types (e.g. GitHub) and platform-scoped providers must be configured outside this tool. Optional `api_url`, `webhook_secret`, `config`, and `allowed_organizations` fields are not exposed here — use the REST API directly if you need them.",
     {
-      name: z.string().min(1).describe("Display name for the git provider"),
-      slug: z.string().min(1).describe("URL-safe identifier for the provider"),
-      instance_url: z.string().url().describe("Base URL of the Gitea instance"),
+      name: z.string().min(2).max(100).describe("Display name for the git provider"),
+      slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/, "lowercase letters, digits, hyphens only").describe("URL-safe identifier for the provider"),
+      instance_url: z.string().url().max(500).describe("Base URL of the Gitea instance"),
       oauth_client_id: z.string().optional().describe("OAuth application client ID"),
       oauth_client_secret: z.string().optional().describe("OAuth application client secret"),
     },
@@ -138,7 +136,7 @@ export function registerGitProviderTools(
 
   server.tool(
     "delete_git_provider",
-    "Delete a git provider from your organization",
+    "Permanently delete a git provider and disconnect it from all associated applications. Repositories already synced are not removed, but applications referencing them lose their repository link. This action cannot be undone.",
     { provider_id: z.string().min(1).describe("Git provider ID") },
     async ({ provider_id }) => {
       try {
