@@ -21,6 +21,15 @@ let _writeAllSlicesCalled = false;
 let _writeAllSlicesArg: unknown = null;
 
 // ---------------------------------------------------------------------------
+// Capture the original module exports BEFORE mocking so afterAll can restore
+// them. Mocks are process-global in bun, so leakage across test files
+// (observed on Linux CI but not always locally) breaks any subsequent test
+// that imports the real index-client / cache modules.
+// ---------------------------------------------------------------------------
+const realIndexClient = await import("../../../src/completion/index-client");
+const realCache = await import("../../../src/completion/cache");
+
+// ---------------------------------------------------------------------------
 // Stub only the two leaf modules; bootstrap itself is the real implementation
 // driven by REOCLO_CONFIG_DIR + a minimal config.json.
 // ---------------------------------------------------------------------------
@@ -92,15 +101,14 @@ afterEach(() => {
   }
 });
 
-// Restore stubbed modules after all tests in this file so other test files
-// that share the bun worker are not affected.
+// Restore the real modules after all tests in this file so other test files
+// that share the bun worker are not affected. The previous version called
+// `import("...")` inside the factory which resolves against the *already-
+// mocked* registry — so it just re-mocked. The fix captures the real exports
+// at file load time (above) and replays them here.
 afterAll(async () => {
-  await mock.module("../../../src/completion/index-client", () =>
-    import("../../../src/completion/index-client"),
-  );
-  await mock.module("../../../src/completion/cache", () =>
-    import("../../../src/completion/cache"),
-  );
+  await mock.module("../../../src/completion/index-client", () => realIndexClient);
+  await mock.module("../../../src/completion/cache", () => realCache);
 });
 
 // ---------------------------------------------------------------------------
