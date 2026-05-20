@@ -8,8 +8,6 @@ import type { HttpClient } from "../client/http";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 interface VerifyResponse {
   txt_name: string;
   txt_value: string;
@@ -22,9 +20,8 @@ async function resolveDomain(
   fqdnOrId: string,
 ): Promise<{ id: string; fqdn: string }> {
   const list = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
-  const found = UUID.test(fqdnOrId)
-    ? list.find((d) => d.id === fqdnOrId)
-    : list.find((d) => d.fqdn === fqdnOrId) ?? list.find((d) => d.id === fqdnOrId);
+  const found =
+    list.find((d) => d.fqdn === fqdnOrId) ?? list.find((d) => d.id === fqdnOrId);
   if (!found) {
     const e = new Error(`domain '${fqdnOrId}' not found`) as Error & { exitCode: number };
     e.exitCode = 5;
