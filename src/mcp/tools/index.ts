@@ -6,6 +6,7 @@ import { registerApplicationTools } from "./applications";
 import { registerAuthTools } from "./auth";
 import { registerDeploymentTools } from "./deployments";
 import { registerDomainTools } from "./domains";
+import { registerGitProviderTools } from "./git-providers";
 import { registerLogTools } from "./logs";
 import { registerMonitorTools } from "./monitors";
 import { registerOtherTools } from "./other";
@@ -23,6 +24,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerDeploymentTools(server, ctx);
   registerLogTools(server, ctx);
   registerDomainTools(server, ctx);
+  registerGitProviderTools(server, ctx);
   registerMonitorTools(server, ctx);
   registerStatusPageTools(server, ctx);
   registerTunnelTools(server, ctx);
