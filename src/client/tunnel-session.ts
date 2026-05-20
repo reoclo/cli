@@ -215,7 +215,7 @@ export class TunnelSession {
       const timeout = setTimeout(() => {
         this.removeListenWaiter(listenId);
         reject(new Error(`tunnel_listen_open timeout for listen_id=${listenId}`));
-      }, 10_000);
+      }, 30_000);
       const onMsg = (msg: Record<string, unknown>) => {
         clearTimeout(timeout);
         if (msg.type === "tunnel_listen_opened") {
