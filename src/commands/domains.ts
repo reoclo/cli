@@ -109,18 +109,6 @@ export function registerDomains(program: Command): void {
     { args: [{ slot: 0, resource: "domains" }] },
   );
 
-  interface DnsRecord {
-    type: string;
-    name: string;
-    expected: string;
-    observed: string;
-    status: string;
-  }
-  interface DnsOverview {
-    records: DnsRecord[];
-    status: string;
-  }
-
   withCompletion(
     g
       .command("dns <fqdnOrId>")
@@ -135,11 +123,18 @@ export function registerDomains(program: Command): void {
         // domains by server. We fetch the whole overview and pick the one
         // matching the resolved id — server-side there's no per-domain
         // GET, but the overview already contains per-domain records.
-        interface OverviewDomain {
-          id: string;
-          fqdn: string;
-          records: DnsOverview["records"];
+        interface OverviewRecord {
+          record_type: string;
+          name: string;
+          value: string;
+          observed_values?: string[];
           status: string;
+        }
+        interface OverviewDomain {
+          domain_id: string;
+          fqdn: string;
+          records: OverviewRecord[];
+          dns_status: string;
         }
         interface OverviewServerGroup {
           domains: OverviewDomain[];
@@ -155,7 +150,7 @@ export function registerDomains(program: Command): void {
           ...overview.servers.flatMap((s) => s.domains),
           ...overview.unbound_domains,
         ];
-        const r = all.find((d) => d.id === id);
+        const r = all.find((d) => d.domain_id === id);
         if (!r) {
           const e = new Error(`domain '${fqdnOrId}' has no DNS overview entry`) as Error & {
             exitCode: number;
@@ -169,8 +164,17 @@ export function registerDomains(program: Command): void {
           return;
         }
 
+        // Flatten observed_values (string[]) into a comma-joined string so the
+        // text table reads cleanly. JSON / YAML output above keeps the array.
+        const rows = (r.records ?? []).map((rec) => ({
+          type: rec.record_type,
+          name: rec.name,
+          expected: rec.value,
+          observed: (rec.observed_values ?? []).join(", "),
+          status: rec.status,
+        }));
         printList(
-          r.records as unknown as Array<Record<string, unknown>>,
+          rows as unknown as Array<Record<string, unknown>>,
           [
             { key: "type", label: "TYPE" },
             { key: "name", label: "NAME" },
@@ -180,7 +184,7 @@ export function registerDomains(program: Command): void {
           ],
           "text",
         );
-        process.stdout.write(`\nStatus: ${r.status}\n`);
+        process.stdout.write(`\nStatus: ${r.dns_status}\n`);
       }),
     { args: [{ slot: 0, resource: "domains" }] },
   );
