@@ -6,7 +6,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { RegistryTypeSchema } from "../../client/enums";
+import { LimitSchema, RegistryTypeSchema } from "../../client/enums";
 import type { McpRegistrationContext } from "./context";
 import { asToolError, asToolResult } from "./common";
 
@@ -235,7 +235,7 @@ export function registerOtherTools(
     "get_audit_log",
     "Get recent audit log entries for your organization",
     {
-      limit: z.number().int().positive().optional().describe("Max entries (default 50)"),
+      limit: LimitSchema.optional().describe("Max entries (default 50)"),
       action: z.string().optional().describe("Filter by action type"),
       resource_type: z.string().optional().describe("Filter by resource type"),
     },
