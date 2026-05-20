@@ -28,26 +28,32 @@ describe("filterCommandsByCapability", () => {
     expect((gated as unknown as { _hidden?: boolean })._hidden ?? false).toBe(false);
   });
 
-  test("recurses into subcommands", () => {
+  test("recurses into subcommands when caps are known", () => {
     const root = new Command("root");
     const sub = root.command("sub");
     const inner = sub.command("inner");
     requireCapability(inner, "app:deploy");
 
-    filterCommandsByCapability(root, []);
+    // Pass a non-empty cap list that doesn't include "app:deploy" so the gate fires.
+    filterCommandsByCapability(root, ["something:else"]);
 
     expect((inner as unknown as { _hidden?: boolean })._hidden).toBe(true);
   });
 
-  test("treats undefined capabilities as 'show only ungated'", () => {
-    const root = new Command("root");
-    const ungated = root.command("ungated");
-    const gated = root.command("gated");
-    requireCapability(gated, "container:exec");
+  test("treats undefined or empty capabilities as 'unknown — show everything'", () => {
+    // Rationale: when the local cap cache hasn't been populated (OAuth profile
+    // that never fetched, /auth/me/capabilities returned 404, etc.) we want the
+    // user to still discover commands and let the server enforce.
+    const undef = new Command("root");
+    const undefGated = undef.command("gated");
+    requireCapability(undefGated, "container:exec");
+    filterCommandsByCapability(undef, undefined);
+    expect((undefGated as unknown as { _hidden?: boolean })._hidden ?? false).toBe(false);
 
-    filterCommandsByCapability(root, undefined);
-
-    expect((ungated as unknown as { _hidden?: boolean })._hidden ?? false).toBe(false);
-    expect((gated as unknown as { _hidden?: boolean })._hidden).toBe(true);
+    const empty = new Command("root");
+    const emptyGated = empty.command("gated");
+    requireCapability(emptyGated, "container:exec");
+    filterCommandsByCapability(empty, []);
+    expect((emptyGated as unknown as { _hidden?: boolean })._hidden ?? false).toBe(false);
   });
 });

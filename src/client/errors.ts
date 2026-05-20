@@ -46,9 +46,29 @@ export class NetworkError extends Error {
   }
 }
 
+/** Try to pull `detail` out of a FastAPI error body. Returns the trimmed
+ *  string if found, or the original input. Lets the CLI render
+ *  `Error: not found` instead of `Error: {"detail":"Not Found"}`. */
+function unwrapDetail(message: string): string {
+  const trimmed = (message ?? "").trim();
+  if (!trimmed.startsWith("{")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    if (typeof parsed.detail === "string") return parsed.detail;
+  } catch {
+    // not JSON, fall through
+  }
+  return trimmed;
+}
+
 export function mapHttpError(status: number, message: string, path: string): ApiError {
-  if (status === 401) return new AuthError(message, path);
-  if (status === 403) return new PermissionError(message, path);
-  if (status === 404) return new NotFoundError(message, path);
-  return new ApiError(status, message, path);
+  const detail = unwrapDetail(message);
+  if (status === 401) return new AuthError(detail, path);
+  if (status === 403) return new PermissionError(detail, path);
+  if (status === 404) {
+    // Friendlier 404 with the requested path so users can see what failed.
+    const friendly = detail.toLowerCase() === "not found" ? `not found: ${path}` : detail;
+    return new NotFoundError(friendly, path);
+  }
+  return new ApiError(status, detail, path);
 }

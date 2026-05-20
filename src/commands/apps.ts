@@ -18,16 +18,28 @@ export function registerApps(program: Command): void {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const res = await ctx.client.get<PaginatedResponse<Application>>(
-        `/tenants/${tid}/applications/?limit=200`,
-      );
-      cacheList("apps", res.items);
+      const [appsRes, servers] = await Promise.all([
+        ctx.client.get<PaginatedResponse<Application>>(
+          `/tenants/${tid}/applications/?limit=200`,
+        ),
+        // Best-effort sidecar fetch so the SERVER column shows a slug instead
+        // of the UUID. Falls back to "" if the fetch fails for any reason.
+        ctx.client
+          .get<Array<{ id: string; slug: string }>>(`/tenants/${tid}/servers/`)
+          .catch(() => [] as Array<{ id: string; slug: string }>),
+      ]);
+      cacheList("apps", appsRes.items);
+      const serverSlugById = new Map(servers.map((s) => [s.id, s.slug] as const));
+      const rows = appsRes.items.map((a) => ({
+        ...a,
+        server_slug: serverSlugById.get(a.server_id ?? "") ?? (a.server_id ?? ""),
+      }));
       printList(
-        res.items as unknown as Array<Record<string, unknown>>,
+        rows as unknown as Array<Record<string, unknown>>,
         [
           { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },
-          { key: "server_id", label: "SERVER" },
+          { key: "server_slug", label: "SERVER" },
           { key: "current_deployment_id", label: "DEPLOYMENT" },
         ],
         fmt,

@@ -39,14 +39,14 @@ describe("ensureCapabilityOrExit", () => {
     }
   });
 
-  test("throws when capability list is undefined", () => {
-    try {
-      ensureCapabilityOrExit(undefined, "container:exec");
-      throw new Error("did not throw");
-    } catch (err) {
-      const e = err as Error & { exitCode?: number };
-      expect(e.exitCode).toBe(13);
-    }
+  test("treats an undefined capability list as 'unknown — allow through'", () => {
+    // Pairs with filterCommandsByCapability — when the local cap cache hasn't
+    // been populated we let the server enforce instead of locking the user out.
+    expect(() => ensureCapabilityOrExit(undefined, "container:exec")).not.toThrow();
+  });
+
+  test("treats an empty capability list as 'unknown — allow through'", () => {
+    expect(() => ensureCapabilityOrExit([], "container:exec")).not.toThrow();
   });
 });
 

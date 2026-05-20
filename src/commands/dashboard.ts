@@ -1,6 +1,7 @@
 // src/commands/dashboard.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { getActiveProfile } from "../config/store";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 
 interface ActivityEntry {
@@ -55,6 +56,12 @@ export function registerDashboard(program: Command): void {
         return;
       }
 
+      // Header: which organization this dashboard reflects. Slug is friendlier
+      // than the UUID; pulled from the active profile (set at login time).
+      const profile = await getActiveProfile();
+      const slug = profile?.tenant_slug ?? "";
+      const header = slug ? `Organization: ${slug} (${tid})` : `Organization: ${tid}`;
+      process.stdout.write(`${header}\n\n`);
       process.stdout.write("Counts\n");
       process.stdout.write(`  servers       ${stats.server_healthy_count}/${stats.server_count}\n`);
       process.stdout.write(

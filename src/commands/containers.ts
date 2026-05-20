@@ -95,7 +95,7 @@ Examples:
         const res = await ctx.client.get<FleetResponse>(
           `/tenants/${tid}/runtime/containers${qs ? `?${qs}` : ""}`,
         );
-        all.push(...res.containers);
+        all.push(...(res.containers ?? []));
         staleCount += res.stale_servers?.length ?? 0;
         cursor = res.next_cursor ?? undefined;
       } while (cursor);
