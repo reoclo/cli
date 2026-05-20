@@ -1,6 +1,6 @@
 {
   "name": "@reoclo/cli",
-  "version": "0.27.2",
+  "version": "0.27.3",
   "description": "Reoclo command-line interface",
   "license": "MIT",
   "bin": {
