@@ -130,7 +130,39 @@ export function registerDomains(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
-        const r = await ctx.client.get<DnsOverview>(`/tenants/${tid}/domains/${id}/dns`);
+
+        // The DNS endpoint is tenant-wide (`/dns/overview`) and groups
+        // domains by server. We fetch the whole overview and pick the one
+        // matching the resolved id — server-side there's no per-domain
+        // GET, but the overview already contains per-domain records.
+        interface OverviewDomain {
+          id: string;
+          fqdn: string;
+          records: DnsOverview["records"];
+          status: string;
+        }
+        interface OverviewServerGroup {
+          domains: OverviewDomain[];
+        }
+        interface OverviewResponse {
+          servers: OverviewServerGroup[];
+          unbound_domains: OverviewDomain[];
+        }
+        const overview = await ctx.client.get<OverviewResponse>(
+          `/tenants/${tid}/dns/overview`,
+        );
+        const all: OverviewDomain[] = [
+          ...overview.servers.flatMap((s) => s.domains),
+          ...overview.unbound_domains,
+        ];
+        const r = all.find((d) => d.id === id);
+        if (!r) {
+          const e = new Error(`domain '${fqdnOrId}' has no DNS overview entry`) as Error & {
+            exitCode: number;
+          };
+          e.exitCode = 5;
+          throw e;
+        }
 
         if (fmt === "json" || fmt === "yaml") {
           printObject(r as unknown as Record<string, unknown>, fmt);
