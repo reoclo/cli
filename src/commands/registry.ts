@@ -23,11 +23,11 @@ export function registerRegistry(program: Command): void {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const res = await ctx.client.get<{ items: RegistryCredential[] }>(
+      const items = await ctx.client.get<RegistryCredential[]>(
         `/tenants/${tid}/registry-credentials`,
       );
       printList(
-        res.items as unknown as Array<Record<string, unknown>>,
+        items as unknown as Array<Record<string, unknown>>,
         [
           { key: "id", label: "ID" },
           { key: "name", label: "NAME" },
