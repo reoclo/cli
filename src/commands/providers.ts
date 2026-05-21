@@ -249,7 +249,16 @@ export function registerProviders(program: Command): void {
           err.exitCode = 4;
           throw err;
         }
-        const gateway = deriveGatewayOrigin(ctx.api);
+        // Prefer the server-published canonical gateway URL. Falls back to
+        // host-derivation only if /config doesn't return one (older API or
+        // misconfigured deployment).
+        let gateway: string;
+        try {
+          const config = await ctx.client.get<{ public_gateway_url: string | null }>("/config");
+          gateway = config.public_gateway_url?.replace(/\/$/, "") ?? deriveGatewayOrigin(ctx.api);
+        } catch {
+          gateway = deriveGatewayOrigin(ctx.api);
+        }
         console.log(`${gateway}/webhooks/gitea/${id}`);
       }),
     { args: [{ slot: 0, resource: "providers" }] },
