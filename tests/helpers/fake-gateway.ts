@@ -981,7 +981,7 @@ export function startFakeGateway(): FakeGateway {
         url.pathname === `/mcp/tenants/${TENANT_ID}/registry-credentials/`
       ) {
         if (req.method === "GET") {
-          return Response.json({ items: [...registryCreds.values()] });
+          return Response.json([...registryCreds.values()]);
         }
         if (req.method === "POST") {
           const body = (await req.json()) as Record<string, unknown>;

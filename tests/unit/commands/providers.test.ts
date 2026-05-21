@@ -9,14 +9,11 @@ describe("providers command registration", () => {
     registerProviders(program);
     const providers = program.commands.find((c) => c.name() === "providers");
     expect(providers).toBeDefined();
-    const subs = providers!.commands.map((c) => c.name());
-    expect(subs).toEqual(
-      expect.arrayContaining([
-        "ls", "get", "create", "connect", "test", "sync",
-        "status", "orgs", "webhook-url", "update", "rm",
-      ]),
-    );
-    expect(subs).toHaveLength(11);
+    const subs = providers!.commands.map((c) => c.name()).sort();
+    expect(subs).toEqual([
+      "connect", "create", "get", "ls", "orgs", "rm",
+      "status", "sync", "test", "update", "webhook-url",
+    ]);
   });
 
   test("get has withCompletion(slot 0 → providers)", () => {
