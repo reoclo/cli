@@ -357,6 +357,43 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
+      // /mcp/tenants/{tid}/dns/overview — tenant-wide overview that
+      // `domains dns` and similar callers consume. Mirrors the per-domain
+      // /domains/{did}/dns data above but in the new OverviewResponse
+      // envelope (record_type / value / observed_values / dns_status).
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/dns/overview`) {
+        return Response.json({
+          servers: [
+            {
+              domains: [
+                {
+                  domain_id: "dom-1",
+                  fqdn: "example.com",
+                  dns_status: "mismatch",
+                  records: [
+                    {
+                      record_type: "A",
+                      name: "example.com",
+                      value: "1.2.3.4",
+                      observed_values: ["1.2.3.4"],
+                      status: "ok",
+                    },
+                    {
+                      record_type: "AAAA",
+                      name: "example.com",
+                      value: "2001:db8::1",
+                      observed_values: [],
+                      status: "missing",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          unbound_domains: [],
+        });
+      }
+
       // /mcp/tenants/{tid}/domains/{did}/health
       {
         const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)\/health$/);
