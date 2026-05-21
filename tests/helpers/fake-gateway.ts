@@ -1024,7 +1024,8 @@ export function startFakeGateway(): FakeGateway {
         if (m) {
           const branches = repoBranches[m[1] ?? ""];
           if (!branches) return new Response("not found", { status: 404 });
-          return Response.json(branches);
+          const defaultBranch = branches.find((b) => b.is_default)?.name ?? "main";
+          return Response.json({ branches, default_branch: defaultBranch });
         }
       }
 

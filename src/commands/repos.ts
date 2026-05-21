@@ -7,9 +7,14 @@ import type { PaginatedResponse, Repository } from "../client/types";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 
-interface Branch {
+interface BranchInfo {
   name: string;
   is_default: boolean;
+}
+
+interface BranchListResponse {
+  branches: BranchInfo[];
+  default_branch: string;
 }
 
 export function registerRepos(program: Command): void {
@@ -75,10 +80,10 @@ export function registerRepos(program: Command): void {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
         const id = await resolveRepo(ctx.client, tid, repo);
-        const branches = await ctx.client.get<Branch[]>(
+        const res = await ctx.client.get<BranchListResponse>(
           `/tenants/${tid}/repositories/${id}/branches`,
         );
-        const rows = branches.map((b) => ({
+        const rows = res.branches.map((b) => ({
           BRANCH: b.name,
           DEFAULT: b.is_default ? "✓" : "",
         }));
