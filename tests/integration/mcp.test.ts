@@ -236,9 +236,13 @@ test("list_repo_branches returns branches with default marker", async () => {
     });
     const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
     expect(result.isError).not.toBe(true);
-    const parsed = JSON.parse(result.content[0]?.text ?? "[]") as Array<{ name: string; is_default: boolean }>;
-    expect(parsed.length).toBeGreaterThan(0);
-    expect(parsed.some((b) => b.is_default === true)).toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as {
+      branches: Array<{ name: string; is_default: boolean }>;
+      default_branch: string;
+    };
+    expect(parsed.branches.length).toBeGreaterThan(0);
+    expect(parsed.branches.some((b) => b.is_default === true)).toBe(true);
+    expect(typeof parsed.default_branch).toBe("string");
   } finally {
     proc.kill();
   }

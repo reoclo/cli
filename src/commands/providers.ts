@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { resolveProvider } from "../client/resolve";
+import { PermissionError } from "../client/errors";
 import type { GitProvider, SyncStatusResponse } from "../client/types";
 import { getActiveProfile } from "../config/store";
 import { cacheList } from "../completion/populate";
@@ -43,12 +44,37 @@ export function registerProviders(program: Command): void {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
-      const all = await ctx.client.get<GitProvider[]>(`/tenants/${tid}/git-providers`);
       const scope = opts.scope ?? "all";
-      const filtered = scope === "all" ? all : all.filter((p) => p.scope === scope);
-      cacheList("providers", filtered);
+      const wantTenant = scope === "tenant" || scope === "all";
+      const wantPlatform = scope === "platform" || scope === "all";
+
+      // The tenant list endpoint only returns scope=tenant rows. Platform-scoped
+      // providers live behind /admin/git-providers (platform_admin only) or are
+      // surfaced via /available as already-cloned hand-offs. Probe admin first
+      // so platform admins see uncloned platform providers; fall back to
+      // /available for everyone else.
+      const tenantPromise = wantTenant
+        ? ctx.client.get<GitProvider[]>(`/tenants/${tid}/git-providers`)
+        : Promise.resolve<GitProvider[]>([]);
+      const platformPromise = wantPlatform
+        ? ctx.client
+            .get<GitProvider[]>(`/admin/git-providers`)
+            .then((rows) => rows.filter((p) => p.scope === "platform"))
+            .catch(async (err: unknown) => {
+              if (err instanceof PermissionError) {
+                return ctx.client.get<GitProvider[]>(
+                  `/tenants/${tid}/git-providers/available`,
+                );
+              }
+              throw err;
+            })
+        : Promise.resolve<GitProvider[]>([]);
+
+      const [tenantRows, platformRows] = await Promise.all([tenantPromise, platformPromise]);
+      const merged = [...tenantRows, ...platformRows];
+      cacheList("providers", merged);
       printList(
-        filtered as unknown as Array<Record<string, unknown>>,
+        merged as unknown as Array<Record<string, unknown>>,
         [
           { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },
