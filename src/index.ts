@@ -2,6 +2,7 @@
 import { basename } from "node:path";
 import { Command } from "commander";
 import pkg from "../package.json" with { type: "json" };
+import { registerOrg } from "./commands/org";
 import { registerProfile } from "./commands/profile";
 import { registerKeyring } from "./commands/keyring";
 import { registerLogin } from "./commands/login";
@@ -58,6 +59,7 @@ if (import.meta.main) {
     .option("--quiet", "suppress non-error output")
     .option("--verbose", "log HTTP requests (tokens redacted)");
 
+  registerOrg(program);
   registerProfile(program);
   registerKeyring(program);
   registerLogin(program);
