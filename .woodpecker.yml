@@ -4,14 +4,19 @@
 # bun's compile target, then publishes a release on both mirrors:
 #   - Gitea  (git.boxpositron.dev/reoclo/reoclo-cli)
 #   - GitHub (github.com/reoclo/cli)
+# Finally, refreshes the Homebrew tap at reoclo/homebrew-tap so
+# `brew install reoclo/tap/reoclo` resolves to the new version.
 #
 # Required Woodpecker secrets (set at the repo level):
 #   gitea_release_token  — Gitea PAT with write:repository scope
 #   github_release_token — GitHub PAT with contents:write on reoclo/cli
+#   homebrew_tap_token   — GitHub PAT with contents:write on reoclo/homebrew-tap
+#                          (optional: if unset, the homebrew step logs and skips)
 #
 # Re-running the same tag is safe: an existing release with the same tag is
 # reused, and assets that are already attached are skipped — a retry after a
-# failed upload only ships what wasn't there yet.
+# failed upload only ships what wasn't there yet. The homebrew step is also
+# idempotent: an unchanged formula is detected by content compare and skipped.
 
 when:
   - event: tag
@@ -28,11 +33,14 @@ steps:
         from_secret: gitea_release_token
       GITHUB_TOKEN:
         from_secret: github_release_token
+      HOMEBREW_TAP_REPO: reoclo/homebrew-tap
+      HOMEBREW_TAP_TOKEN:
+        from_secret: homebrew_tap_token
     commands:
       - apt-get update
       # python3 + build-essential are required for node-pty's native build
       # (devDependency used only by the bash-completion e2e harness).
-      - apt-get install -y --no-install-recommends curl jq ca-certificates python3 build-essential
+      - apt-get install -y --no-install-recommends curl jq ca-certificates git python3 build-essential
       - bun install --frozen-lockfile
       # Run each unit test file in its own bun process. Two observed cross-
       # file pollution sources on Linux that we can't reproduce on macOS:
@@ -46,3 +54,4 @@ steps:
       - bun run build
       - cd dist && sha256sum reoclo-* > SHA256SUMS && cd ..
       - bash scripts/release.sh
+      - bash scripts/publish-homebrew.sh
