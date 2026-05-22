@@ -1,16 +1,17 @@
 import { expect, test } from "bun:test";
 import { detectKeyType, apiPrefix, commandSupportedBy } from "../../../src/client/routing";
 
-test("rk_t_ → tenant", () => {
-  expect(detectKeyType("rk_t_xyz")).toBe("tenant");
-});
-
 test("rk_a_ → automation", () => {
   expect(detectKeyType("rk_a_xyz")).toBe("automation");
 });
 
-test("unknown prefix → tenant (fallback)", () => {
+test("rca_ → automation", () => {
+  expect(detectKeyType("rca_xyz")).toBe("automation");
+});
+
+test("OAuth bearer / unknown prefix → tenant routing (fallback)", () => {
   expect(detectKeyType("rk_foo")).toBe("tenant");
+  expect(detectKeyType("eyJhbGciOiJSUzI1NiJ9.fake.jwt")).toBe("tenant");
 });
 
 test("apiPrefix automation", () => {

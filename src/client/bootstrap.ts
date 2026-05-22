@@ -66,13 +66,14 @@ export interface BootstrapOptions {
 
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
   // Precedence:
-  //   1. --token flag
-  //   2. REOCLO_AUTOMATION_KEY env (more specific)
-  //   3. REOCLO_API_KEY env (generic; routing inferred from prefix)
-  //   4. ~/.reoclo/config.json active profile
+  //   1. --token flag                (programmatic; used by automation harness + tests)
+  //   2. REOCLO_AUTOMATION_KEY env   (CI/CD with rca_* automation keys)
+  //   3. ~/.reoclo/config.json active profile (populated by `reoclo login` OAuth)
+  //
+  // The legacy `REOCLO_API_KEY` env (tenant integration keys, rk_t_*) is no
+  // longer honored — those keys are retired in favour of OAuth device flow.
   const flagToken = opts.token;
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
-  const envGeneric = process.env.REOCLO_API_KEY;
 
   const cfg = await loadConfig();
   const profileName = opts.profile ?? process.env.REOCLO_PROFILE ?? cfg.active_profile;
@@ -83,8 +84,6 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token = flagToken;
   } else if (envAuto) {
     token = envAuto;
-  } else if (envGeneric) {
-    token = envGeneric;
   } else if (profile) {
     if (profile.token_ref?.startsWith("keyring:")) {
       const store = await resolveStore();

@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ServerWebSocket } from "bun";
-import { $ } from "bun";
+import { seedTenantProfile } from "../helpers/seed-profile";
 
 const TENANT_ID = "00000000-0000-0000-0000-00000000aaaa";
 const SERVER_ID = "00000000-0000-0000-0000-00000000dddd"; // UUID → resolveServer short-circuits
@@ -181,13 +181,7 @@ beforeEach(async () => {
 
   // Populate the profile so bootstrap() can read tenant_id.
   // --no-keyring writes the token directly to the config file (no system keyring).
-  await $`bun run src/index.ts login --token ${TOKEN} --api ${backend.url} --no-keyring`
-    .env({
-      ...process.env,
-      REOCLO_CONFIG_DIR: tmp,
-      REOCLO_CACHE_DIR: join(tmp, "cache"),
-    })
-    .quiet();
+  seedTenantProfile({ configDir: tmp, apiUrl: backend.url, token: TOKEN });
 });
 
 afterEach(() => {

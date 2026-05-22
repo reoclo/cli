@@ -74,7 +74,7 @@ export function registerOrg(program: Command): void {
       if (profile.auth_kind !== "oauth") {
         process.stderr.write(
           "'org use' requires an OAuth-issued credential — this profile uses an API key.\n" +
-            "Run 'reoclo login --device' to switch to the device-flow.\n",
+            "Run 'reoclo login' to switch to the OAuth device-flow.\n",
         );
         process.exit(4);
       }

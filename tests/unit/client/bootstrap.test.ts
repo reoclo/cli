@@ -31,9 +31,9 @@ test("bootstrap throws with exitCode 3 when no auth source", async () => {
   expect((caught as { exitCode?: number }).exitCode).toBe(3);
 });
 
-test("bootstrap honors --token flag", async () => {
-  const ctx = await bootstrap({ token: "rk_t_flag" });
-  expect(ctx.token).toBe("rk_t_flag");
+test("bootstrap honors --token flag (programmatic; OAuth bearer or test token)", async () => {
+  const ctx = await bootstrap({ token: "oauth-access-token" });
+  expect(ctx.token).toBe("oauth-access-token");
   expect(ctx.tokenType).toBe("tenant");
   expect(ctx.api).toBe("https://api.reoclo.com");
 });
@@ -41,6 +41,35 @@ test("bootstrap honors --token flag", async () => {
 test("bootstrap auto-detects automation key by prefix", async () => {
   const ctx = await bootstrap({ token: "rk_a_robot" });
   expect(ctx.tokenType).toBe("automation");
+});
+
+test("bootstrap auto-detects rca_ automation key by prefix", async () => {
+  const ctx = await bootstrap({ token: "rca_robot" });
+  expect(ctx.tokenType).toBe("automation");
+});
+
+test("REOCLO_API_KEY env is no longer respected (tenant integration keys retired)", async () => {
+  process.env.REOCLO_API_KEY = "rk_t_legacy";
+  let caught: unknown = null;
+  try {
+    await bootstrap();
+  } catch (e) {
+    caught = e;
+  }
+  delete process.env.REOCLO_API_KEY;
+  expect(caught).toBeInstanceOf(Error);
+  expect((caught as { exitCode?: number }).exitCode).toBe(3);
+});
+
+test("REOCLO_AUTOMATION_KEY env is still respected", async () => {
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_ciauto");
+    expect(ctx.tokenType).toBe("automation");
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
 });
 
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
@@ -57,25 +86,25 @@ test("defaultStreamsUrl falls through to the api host for dev/staging/localhost"
 });
 
 test("bootstrap streamsUrl defaults to streams.reoclo.com for prod api", async () => {
-  const ctx = await bootstrap({ token: "rk_t_test" });
+  const ctx = await bootstrap({ token: "oauth-fake" });
   expect(ctx.api).toBe("https://api.reoclo.com");
   expect(ctx.streamsUrl).toBe("https://streams.reoclo.com");
 });
 
 test("bootstrap streamsUrl falls back to api when api is dev/localhost", async () => {
-  const ctx = await bootstrap({ token: "rk_t_test", api: "http://localhost:8000" });
+  const ctx = await bootstrap({ token: "oauth-fake", api: "http://localhost:8000" });
   expect(ctx.api).toBe("http://localhost:8000");
   expect(ctx.streamsUrl).toBe("http://localhost:8000");
 });
 
 test("REOCLO_STREAMS_URL env overrides the default", async () => {
   process.env.REOCLO_STREAMS_URL = "http://localhost:9000";
-  const ctx = await bootstrap({ token: "rk_t_test" });
+  const ctx = await bootstrap({ token: "oauth-fake" });
   expect(ctx.streamsUrl).toBe("http://localhost:9000");
 });
 
 test("--streams flag wins over env and defaults", async () => {
   process.env.REOCLO_STREAMS_URL = "http://localhost:9000";
-  const ctx = await bootstrap({ token: "rk_t_test", streams: "http://localhost:9001" });
+  const ctx = await bootstrap({ token: "oauth-fake", streams: "http://localhost:9001" });
   expect(ctx.streamsUrl).toBe("http://localhost:9001");
 });

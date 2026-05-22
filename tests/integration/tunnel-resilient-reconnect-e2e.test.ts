@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ServerWebSocket } from "bun";
-import { $ } from "bun";
+import { seedTenantProfile } from "../helpers/seed-profile";
 
 const TENANT_ID = "00000000-0000-0000-0000-00000000aaaa";
 const SERVER_ID = "00000000-0000-0000-0000-00000000eeee"; // UUID → resolveServer short-circuits
@@ -174,19 +174,12 @@ let tmp: string;
 let backend: ResilientBackend;
 let cli: ChildProcessWithoutNullStreams;
 
-beforeEach(async () => {
+beforeEach(() => {
   backend = startResilientBackend();
   tmp = mkdtempSync(join(tmpdir(), "reoclo-tunnel-resilient-e2e-"));
 
   // Populate the profile so bootstrap() can read tenant_id.
-  await $`bun run src/index.ts login --token ${TOKEN} --api ${backend.url} --no-keyring`
-    .env({
-      ...process.env,
-      REOCLO_CONFIG_DIR: tmp,
-      REOCLO_CACHE_DIR: join(tmp, "cache"),
-    })
-    .cwd(join(import.meta.dir, "../.."))
-    .quiet();
+  seedTenantProfile({ configDir: tmp, apiUrl: backend.url, token: TOKEN });
 });
 
 afterEach(async () => {

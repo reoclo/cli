@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type * as NodePty from "node-pty";
 import { startFakeGateway, type FakeGateway } from "../helpers/fake-gateway";
+import { seedTenantProfile } from "../helpers/seed-profile";
 
 // node-pty is loaded lazily so the test gracefully skips on platforms where
 // it's not available (e.g., Windows CI without prebuilt binaries).
@@ -56,15 +57,11 @@ if (pty) {
 let tmp: string;
 let gw: FakeGateway;
 
-beforeEach(async () => {
+beforeEach(() => {
   gw = startFakeGateway();
   tmp = mkdtempSync(join(tmpdir(), "reoclo-comp-"));
   process.env.REOCLO_CACHE_DIR = join(tmp, "cache");
-  await $`bun run src/index.ts login --token ${gw.token} --api ${gw.url} --no-keyring`.env({
-    ...process.env,
-    REOCLO_CONFIG_DIR: tmp,
-    REOCLO_CACHE_DIR: join(tmp, "cache"),
-  }).quiet();
+  seedTenantProfile({ configDir: tmp, apiUrl: gw.url, token: gw.token });
 });
 
 afterEach(() => {

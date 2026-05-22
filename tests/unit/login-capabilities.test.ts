@@ -19,7 +19,6 @@ describe("buildProfileWithCapabilities", () => {
     const profile = await buildProfileWithCapabilities(
       fakeClient as unknown as Parameters<typeof buildProfileWithCapabilities>[0],
       "https://api.example.com",
-      "tenant",
       { tenant_id: "t1", tenant_slug: "tenant-1", email: "u@x.com" },
     );
     expect(profile.capabilities).toEqual(["container:read", "container:exec"]);
@@ -35,7 +34,6 @@ describe("buildProfileWithCapabilities", () => {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- fakeClient is a partial mock object incompatible with HttpClient; the double cast (unknown → target type) is the standard pattern for narrowing a structurally-incompatible test stub
       fakeClient as unknown as Parameters<typeof buildProfileWithCapabilities>[0],
       "https://api.example.com",
-      "tenant",
       { tenant_id: "t1", tenant_slug: "tenant-1", email: "u@x.com" },
     );
     expect(profile.capabilities).toEqual([]);

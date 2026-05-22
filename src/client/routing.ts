@@ -1,7 +1,17 @@
 export type KeyType = "tenant" | "automation";
 
+/**
+ * Classifies a presented token for HTTP routing.
+ *
+ *   - `rca_*` and the legacy `rk_a_*` prefix → automation (hits
+ *     `/api/automation/v1/*`, restricted command surface).
+ *   - everything else → "tenant" routing (`/mcp/*`), which is the surface
+ *     OAuth-issued access tokens use. The legacy `rk_t_*` tenant integration
+ *     key prefix has been retired but still resolves here for read-compat
+ *     with any in-flight requests during rollout.
+ */
 export function detectKeyType(token: string): KeyType {
-  if (token.startsWith("rk_a_")) return "automation";
+  if (token.startsWith("rk_a_") || token.startsWith("rca_")) return "automation";
   return "tenant";
 }
 

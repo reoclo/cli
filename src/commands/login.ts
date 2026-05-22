@@ -1,77 +1,23 @@
 // src/commands/login.ts
+//
+// `reoclo login` is OAuth-only. Tenant integration keys (`rk_t_*`) and the
+// generic `REOCLO_API_KEY` env are retired (see .omc/autopilot/spec.md);
+// CI/CD continues to use `REOCLO_AUTOMATION_KEY` (`rca_*`) on the bootstrap
+// path, which does not go through this command.
 import type { Command } from "commander";
-import { saveProfile, type ProfileRecord } from "../config/store";
+import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
 import { resolveStore } from "../config/token-store";
 import { HttpClient } from "../client/http";
-import { detectKeyType } from "../client/routing";
 import type { Me } from "../client/types";
 import { fetchCapabilities } from "../client/capabilities";
 import { initiateDeviceFlow, pollForToken } from "../auth/oauth-device";
 import { openBrowser } from "../ui/open-browser";
-
-/**
- * Interactive selector shown when `reoclo login` is run without `--token` or
- * `--device` on a TTY. Returns `true` if the user chose OAuth, `false` for API
- * key. Default (Enter) selects option 1 (OAuth).
- */
-async function promptAuthMethod(): Promise<boolean> {
-  const { createInterface } = await import("node:readline");
-  process.stdout.write("\nChoose how you'd like to authenticate:\n");
-  process.stdout.write("  1) OAuth via browser  (recommended)\n");
-  process.stdout.write("  2) API key            (paste a long-lived key)\n");
-  return new Promise<boolean>((resolve) => {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-    rl.question("Select [1]: ", (answer) => {
-      rl.close();
-      const trimmed = answer.trim();
-      // Default + "1" + "oauth" → OAuth.  "2" + "key" + "api" → API key.
-      if (trimmed === "" || trimmed === "1" || /^oauth$/i.test(trimmed)) {
-        resolve(true);
-      } else {
-        resolve(false);
-      }
-    });
-  });
-}
-
-// TODO(future): replace plain readline with hidden-input prompt (termios raw mode).
-// Echoing is acceptable today since the primary auth path is `--token` from env.
-async function promptToken(msg: string): Promise<string> {
-  if (!process.stdin.isTTY) {
-    const e = new Error(
-      "no API key provided and stdin is not a TTY — pass --token or set REOCLO_API_KEY",
-    ) as Error & { exitCode: number };
-    e.exitCode = 2;
-    throw e;
-  }
-  // Pass the prompt string into rl.question directly. Splitting it across
-  // process.stdout.write + rl.question("") doesn't render reliably in
-  // bun-compiled binaries — the buffered write gets swallowed when readline
-  // takes over the TTY.
-  const { createInterface } = await import("node:readline");
-  return new Promise((resolve) => {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-    rl.question(msg, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
 
 type ClientLike = { get: <T>(path: string) => Promise<T> };
 
 export async function buildProfileWithCapabilities(
   client: ClientLike,
   apiUrl: string,
-  tokenType: ReturnType<typeof detectKeyType>,
   me: Pick<Me, "tenant_id" | "tenant_slug" | "email">,
   streamsUrl?: string,
 ): Promise<ProfileRecord> {
@@ -86,7 +32,7 @@ export async function buildProfileWithCapabilities(
   return {
     api_url: apiUrl,
     streams_url: streamsUrl,
-    token_type: tokenType,
+    token_type: "automation",
     tenant_id: me.tenant_id,
     tenant_slug: me.tenant_slug,
     user_email: me.email,
@@ -107,6 +53,14 @@ async function runDeviceFlow(opts: {
   const { profile: profileName, api, auth, streams, keyring, browser } = opts;
   const clientId = "reoclo-cli";
   const scope = "openid tenant.read";
+
+  if (process.stdin.isTTY === false) {
+    const e = new Error(
+      "OAuth device flow requires an interactive terminal. Run `reoclo login` directly in your shell, or set `REOCLO_AUTOMATION_KEY` for CI.",
+    ) as Error & { exitCode: number };
+    e.exitCode = 2;
+    throw e;
+  }
 
   // 1. Initiate device flow
   const init = await initiateDeviceFlow(auth, clientId, scope);
@@ -157,7 +111,7 @@ async function runDeviceFlow(opts: {
   const me = await probe.get<Me>("/auth/me");
 
   // 5. Save profile
-  const baseProfile = await buildProfileWithCapabilities(probe, api, "tenant", me, streams);
+  const baseProfile = await buildProfileWithCapabilities(probe, api, me, streams);
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
     : undefined;
@@ -167,11 +121,21 @@ async function runDeviceFlow(opts: {
     forbidKeyring: keyring === false,
   });
 
-  // Store access token under the standard profile key
+  // FileStore.set patches an existing profile entry (token persists inline
+  // in config.json), so we have to materialize the profile shell first.
+  // Keyring stores don't require this but the extra write is harmless.
+  await saveProfile(profileName, baseProfile);
+
+  // Persist the access token via the resolved store (file → config.json,
+  // keyring → OS keyring). The refresh token only flows through `store.set`
+  // for keyring stores; for FileStore it isn't persisted at all because
+  // bootstrap's refresh callback only fires when `refresh_token_ref` is set
+  // — file-only users re-run `reoclo login` when the access token expires.
   await store.set(profileName, tokens.access_token);
-  // Store refresh token under a separate key
-  const refreshKey = `${profileName}-refresh`;
-  await store.set(refreshKey, tokens.refresh_token);
+  if (store.kind === "keyring") {
+    const refreshKey = `${profileName}-refresh`;
+    await store.set(refreshKey, tokens.refresh_token);
+  }
 
   const oauthProfile: ProfileRecord = {
     ...baseProfile,
@@ -184,6 +148,13 @@ async function runDeviceFlow(opts: {
   if (store.kind === "keyring") {
     oauthProfile.token_ref = `keyring:reoclo-${profileName}`;
     oauthProfile.refresh_token_ref = `reoclo-${profileName}-refresh`;
+  } else {
+    // FileStore persisted the access token inline in config.json on the
+    // `store.set` call above; carry it forward so the second saveProfile
+    // doesn't clobber it.
+    const cfg = await loadConfig();
+    const storedToken = cfg.profiles[profileName]?.token;
+    if (storedToken) oauthProfile.token = storedToken;
   }
 
   await saveProfile(profileName, oauthProfile);
@@ -195,9 +166,7 @@ async function runDeviceFlow(opts: {
 export function registerLogin(program: Command): void {
   program
     .command("login")
-    .description("authenticate and store credentials")
-    .option("--token <key>", "API key (otherwise prompt)")
-    .option("--device", "use OAuth 2.1 device flow (browser-based login)")
+    .description("sign in via OAuth device flow (browser-based)")
     .option("--profile <name>", "profile name", "default")
     .option("--api <url>", "API base URL", "https://api.reoclo.com")
     .option("--auth <url>", "auth service base URL", "https://auth.reoclo.com")
@@ -207,11 +176,9 @@ export function registerLogin(program: Command): void {
     )
     .option("--keyring", "require OS keyring storage")
     .option("--no-keyring", "force file storage")
-    .option("--no-browser", "do not auto-open the browser during --device login")
+    .option("--no-browser", "do not auto-open the browser during device-flow login")
     .action(
       async (opts: {
-        token?: string;
-        device?: boolean;
         profile: string;
         api: string;
         auth: string;
@@ -219,58 +186,14 @@ export function registerLogin(program: Command): void {
         keyring?: boolean;
         browser?: boolean;
       }) => {
-        // Resolve the auth method.
-        //   --device explicit       → OAuth device flow
-        //   --token explicit        → API-key paste
-        //   neither, TTY            → interactive selector (default = 1, OAuth)
-        //   neither, non-TTY        → fall through to API-key prompt (errors)
-        let useDevice = opts.device === true;
-        if (!opts.device && !opts.token && process.stdin.isTTY) {
-          useDevice = await promptAuthMethod();
-        }
-
-        if (useDevice) {
-          await runDeviceFlow({
-            profile: opts.profile,
-            api: opts.api,
-            auth: opts.auth,
-            streams: opts.streams,
-            keyring: opts.keyring,
-            browser: opts.browser,
-          });
-          return;
-        }
-
-        // API-key path
-        const token = opts.token ?? (await promptToken("Paste API key: "));
-
-        const probe = new HttpClient({ baseUrl: opts.api, token });
-        const me = await probe.get<Me>("/auth/me");
-
-        const profile = await buildProfileWithCapabilities(
-          probe,
-          opts.api,
-          detectKeyType(token),
-          me,
-          opts.streams,
-        );
-        await saveProfile(opts.profile, { ...profile, auth_kind: "api-key" });
-
-        const store = await resolveStore({
-          requireKeyring: opts.keyring === true,
-          forbidKeyring: opts.keyring === false,
+        await runDeviceFlow({
+          profile: opts.profile,
+          api: opts.api,
+          auth: opts.auth,
+          streams: opts.streams,
+          keyring: opts.keyring,
+          browser: opts.browser,
         });
-        await store.set(opts.profile, token);
-
-        if (store.kind === "keyring") {
-          await saveProfile(opts.profile, {
-            ...profile,
-            auth_kind: "api-key",
-            token_ref: `keyring:reoclo-${opts.profile}`,
-          });
-        }
-
-        console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);
       },
     );
 }

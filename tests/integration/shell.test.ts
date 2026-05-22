@@ -11,6 +11,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
+import { seedTenantProfile } from "../helpers/seed-profile";
 
 const TENANT_ID = "00000000-0000-0000-0000-00000000aaaa";
 const SERVER_ID = "00000000-0000-0000-0000-00000000bbbb";
@@ -92,16 +93,10 @@ function startShellGateway(): ShellGateway {
 let tmp: string;
 let gw: ShellGateway;
 
-beforeEach(async () => {
+beforeEach(() => {
   gw = startShellGateway();
   tmp = mkdtempSync(join(tmpdir(), "reoclo-shell-"));
-  await $`bun run src/index.ts login --token ${TOKEN} --api ${gw.url} --no-keyring`
-    .env({
-      ...process.env,
-      REOCLO_CONFIG_DIR: tmp,
-      REOCLO_CACHE_DIR: join(tmp, "cache"),
-    })
-    .quiet();
+  seedTenantProfile({ configDir: tmp, apiUrl: gw.url, token: TOKEN });
 });
 
 afterEach(() => {

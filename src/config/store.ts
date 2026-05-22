@@ -9,6 +9,10 @@ export interface ProfileRecord {
                                      // defaults derive from api_url in bootstrap.
   token?: string;
   token_ref?: string;
+  // New CLI profiles must write "automation". "tenant" retained for backward
+  // read-compat with v0.31.x / v0.32.x profiles minted before the OAuth-only
+  // cut-over; new code paths must not write it. OAuth-issued profiles also
+  // set `auth_kind: "oauth"` below.
   token_type: "tenant" | "automation";
   tenant_id: string;
   tenant_slug: string;
