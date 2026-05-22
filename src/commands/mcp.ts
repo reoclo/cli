@@ -7,7 +7,7 @@ import { createMcpServer } from "../mcp/server";
 export function registerMcp(program: Command): void {
   program
     .command("mcp")
-    .description("start the stdio MCP server (replaces @reoclo/theta)")
+    .description("start the stdio MCP server")
     .option("--profile <name>", "profile name")
     .action(async (opts: { profile?: string }) => {
       const ctx = await bootstrap({ profile: opts.profile });
