@@ -421,7 +421,7 @@ export function registerAlerts(program: Command): void {
     routing
       .command("override <alert-code>")
       .description("set per-code routing overrides")
-      .option("--critical <channels>", "comma-separated channels for critical (email, webhook:id, or '' to clear)")
+      .option("--critical <channels>", "comma-separated channels for critical (email, channel:<id>, or '' to clear)")
       .option("--warn <channels>", "comma-separated channels for warn")
       .option("--info <channels>", "comma-separated channels for info")
       .action(
@@ -469,13 +469,13 @@ function resolveMuteExpiry(duration: string): string {
   return new Date(Date.now() + ms).toISOString();
 }
 
-/** Parse a comma-separated channel spec like "email,webhook:primary" into ChannelRef objects. */
-function parseChannels(spec: string): Array<{ kind: string; endpoint_id?: string }> {
+/** Parse a comma-separated channel spec like "email,channel:<id>" into ChannelRef objects. */
+function parseChannels(spec: string): Array<{ kind: string; channel_id?: string }> {
   if (spec === "") return [];
   return spec.split(",").map((ch) => {
     const trimmed = ch.trim();
-    if (trimmed.startsWith("webhook:")) {
-      return { kind: "webhook", endpoint_id: trimmed.slice(8) };
+    if (trimmed.startsWith("channel:")) {
+      return { kind: "channel", channel_id: trimmed.slice(8) };
     }
     return { kind: trimmed };
   });
