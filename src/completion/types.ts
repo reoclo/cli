@@ -15,6 +15,10 @@ export const INDEX_KINDS = [
   "schedule",
   "repos",
   "providers",
+  "alert-codes",
+  "alert-instances",
+  "alert-mutes",
+  "webhook-endpoints",
 ] as const;
 
 /** Resource kinds carried by the /completion-index endpoint. */
