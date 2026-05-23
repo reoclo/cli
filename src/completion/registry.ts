@@ -133,4 +133,49 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       return { id, value, name, desc: `${name} — ${providerType}` };
     },
   },
+  "alert-codes": {
+    kind: "alert-codes",
+    indexField: "alert_codes",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const value = str(r.value, id);
+      return { id, value, name: value, desc: "alert code" };
+    },
+  },
+  "alert-instances": {
+    kind: "alert-instances",
+    indexField: "alert_instances",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const code = str(r.alert_code, id);
+      const severity = str(r.severity);
+      const state = str(r.state);
+      return {
+        id,
+        value: id,
+        name: id,
+        desc: [code, severity, state].filter(Boolean).join("/"),
+      };
+    },
+  },
+  "alert-mutes": {
+    kind: "alert-mutes",
+    indexField: "alert_mutes",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const code = str(r.alert_code, "*");
+      const reason = str(r.reason);
+      return { id, value: id, name: id, desc: reason ? `${code} — ${reason}` : code };
+    },
+  },
+  "webhook-endpoints": {
+    kind: "webhook-endpoints",
+    indexField: "webhook_endpoints",
+    toEntry: (r) => {
+      const id = str(r.id);
+      const name = str(r.name, id);
+      const url = str(r.url);
+      return { id, value: id, name, desc: url ? `${name} — ${url}` : name };
+    },
+  },
 };
