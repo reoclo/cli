@@ -62,6 +62,8 @@ export interface BootstrapOptions {
   profile?: string; // --profile
   api?: string; // --api
   streams?: string; // --streams
+  /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
+  mcpSource?: boolean;
 }
 
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
@@ -153,6 +155,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token,
     profile: profileName,
     refreshToken: refreshTokenCallback,
+    mcpSource: opts.mcpSource,
   });
 
   return {

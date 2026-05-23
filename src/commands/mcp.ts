@@ -10,7 +10,7 @@ export function registerMcp(program: Command): void {
     .description("start the stdio MCP server")
     .option("--profile <name>", "profile name")
     .action(async (opts: { profile?: string }) => {
-      const ctx = await bootstrap({ profile: opts.profile });
+      const ctx = await bootstrap({ profile: opts.profile, mcpSource: true });
 
       // stdout is sacred for MCP protocol framing — redirect any incidental
       // console.log to stderr while the server is running.
