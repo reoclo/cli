@@ -28,6 +28,7 @@ import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
+import { registerAlerts } from "./commands/alerts";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
 import { bootstrap } from "./client/bootstrap";
@@ -85,6 +86,7 @@ if (import.meta.main) {
   registerExec(program);
   registerShell(program);
   registerTunnel(program);
+  registerAlerts(program);
   registerAudit(program);
   registerDashboard(program);
 
