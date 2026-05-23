@@ -1,6 +1,7 @@
 // src/commands/alerts.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import type { ResolvedContext } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
@@ -432,9 +433,9 @@ export function registerAlerts(program: Command): void {
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const routes: Record<string, unknown> = {};
-          if (opts.critical !== undefined) routes.critical = parseChannels(opts.critical);
-          if (opts.warn !== undefined) routes.warn = parseChannels(opts.warn);
-          if (opts.info !== undefined) routes.info = parseChannels(opts.info);
+          if (opts.critical !== undefined) routes.critical = await parseChannels(opts.critical, ctx, tid);
+          if (opts.warn !== undefined) routes.warn = await parseChannels(opts.warn, ctx, tid);
+          if (opts.info !== undefined) routes.info = await parseChannels(opts.info, ctx, tid);
           const result = await ctx.client.patch<Record<string, unknown>>(
             `/tenants/${tid}/alerts/routing/overrides/${alertCode}`,
             { routes },
@@ -469,16 +470,34 @@ function resolveMuteExpiry(duration: string): string {
   return new Date(Date.now() + ms).toISOString();
 }
 
-/** Parse a comma-separated channel spec like "email,channel:<id>" into ChannelRef objects. */
-function parseChannels(spec: string): Array<{ kind: string; channel_id?: string }> {
+/** Fetch a channel by id and return the ChannelRef shape the API expects. */
+async function resolveChannelRef(
+  ctx: ResolvedContext,
+  tid: string,
+  channelId: string,
+): Promise<{ kind: string; endpoint_id: string }> {
+  const ch = await ctx.client.get<{ kind: string }>(
+    `/tenants/${tid}/notification-channels/${channelId}`,
+  );
+  return { kind: ch.kind, endpoint_id: channelId };
+}
+
+/** Parse a comma-separated channel spec like "channel:<id>" into ChannelRef objects. */
+async function parseChannels(
+  spec: string,
+  ctx: ResolvedContext,
+  tid: string,
+): Promise<Array<{ kind: string; endpoint_id: string }>> {
   if (spec === "") return [];
-  return spec.split(",").map((ch) => {
+  const out: Array<{ kind: string; endpoint_id: string }> = [];
+  for (const ch of spec.split(",")) {
     const trimmed = ch.trim();
-    if (trimmed.startsWith("channel:")) {
-      return { kind: "channel", channel_id: trimmed.slice(8) };
+    if (!trimmed.startsWith("channel:")) {
+      throw new Error(`Invalid channel ref: "${trimmed}" — expected format: channel:<id>`);
     }
-    return { kind: trimmed };
-  });
+    out.push(await resolveChannelRef(ctx, tid, trimmed.slice("channel:".length)));
+  }
+  return out;
 }
 
 // Export the alert codes list for use in completion registry
