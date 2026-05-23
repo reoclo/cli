@@ -29,6 +29,7 @@ import { registerExec } from "./commands/exec";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
 import { registerAlerts } from "./commands/alerts";
+import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
 import { bootstrap } from "./client/bootstrap";
@@ -87,6 +88,7 @@ if (import.meta.main) {
   registerShell(program);
   registerTunnel(program);
   registerAlerts(program);
+  registerChannels(program);
   registerAudit(program);
   registerDashboard(program);
 

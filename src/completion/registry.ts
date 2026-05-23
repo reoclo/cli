@@ -168,14 +168,23 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       return { id, value: id, name: id, desc: reason ? `${code} — ${reason}` : code };
     },
   },
-  "webhook-endpoints": {
-    kind: "webhook-endpoints",
-    indexField: "webhook_endpoints",
+  "channel-ids": {
+    kind: "channel-ids",
+    indexField: "channel_id",
     toEntry: (r) => {
       const id = str(r.id);
       const name = str(r.name, id);
-      const url = str(r.url);
-      return { id, value: id, name, desc: url ? `${name} — ${url}` : name };
+      const kind = str(r.kind);
+      return { id, value: id, name, desc: kind ? `${name} — ${kind}` : name };
+    },
+  },
+  "channel-kinds": {
+    kind: "channel-kinds",
+    indexField: "channel_kind",
+    toEntry: (r) => {
+      const id = str(r.kind);
+      const label = str(r.label, id);
+      return { id, value: id, name: label, desc: label };
     },
   },
 };
