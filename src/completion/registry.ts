@@ -170,7 +170,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
   },
   "channel-ids": {
     kind: "channel-ids",
-    indexField: "channel_ids",
+    indexField: "channel_id",
     toEntry: (r) => {
       const id = str(r.id);
       const name = str(r.name, id);
@@ -180,7 +180,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
   },
   "channel-kinds": {
     kind: "channel-kinds",
-    indexField: "channel_kinds",
+    indexField: "channel_kind",
     toEntry: (r) => {
       const id = str(r.kind);
       const label = str(r.label, id);
