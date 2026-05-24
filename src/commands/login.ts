@@ -5,6 +5,7 @@
 // CI/CD continues to use `REOCLO_AUTOMATION_KEY` (`rca_*`) on the bootstrap
 // path, which does not go through this command.
 import type { Command } from "commander";
+import { apiUrl, authUrl } from "../lib/urls";
 import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
 import { resolveStore } from "../config/token-store";
 import { HttpClient } from "../client/http";
@@ -168,8 +169,8 @@ export function registerLogin(program: Command): void {
     .command("login")
     .description("sign in via OAuth device flow (browser-based)")
     .option("--profile <name>", "profile name", "default")
-    .option("--api <url>", "API base URL", "https://api.reoclo.com")
-    .option("--auth <url>", "auth service base URL", "https://auth.reoclo.com")
+    .option("--api <url>", "API base URL", apiUrl())
+    .option("--auth <url>", "auth service base URL", authUrl())
     .option(
       "--streams <url>",
       "Cloudflare-bypass host for terminal WS and large uploads (defaults to streams.reoclo.com for prod, otherwise to --api)",

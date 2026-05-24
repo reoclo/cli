@@ -1,5 +1,6 @@
 // src/commands/env.ts
 import type { Command } from "commander";
+import { appUrl } from "../lib/urls";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
@@ -101,7 +102,7 @@ export function registerEnv(program: Command): void {
         process.stderr.write(
           "Error: env values are write-only via the Reoclo API and cannot be read back.\n",
         );
-        process.stderr.write("View the value in the dashboard at https://app.reoclo.com\n");
+        process.stderr.write(`View the value in the dashboard at ${appUrl()}\n`);
         process.exit(1);
       }),
     { args: [{ slot: 0, resource: "envKeys" }], flags: { "--app": "apps" } },
