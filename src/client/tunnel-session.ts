@@ -13,7 +13,26 @@ export interface ForwardSpec {
   proto: Proto;
 }
 
-export type SessionStatus = "connecting" | "active" | "reconnecting" | "closed";
+export type SessionStatus = "connecting" | "active" | "reconnecting" | "closed" | "failed";
+
+/**
+ * WebSocket close codes that indicate a fatal, non-retryable failure. When the
+ * gateway closes the tunnel WS with one of these, we surface the reason and
+ * exit instead of reconnect-looping forever.
+ *
+ *  4401 — unauthorized (token expired/revoked)
+ *  4403 — forbidden (caller lacks permission for this server)
+ *  4404 — server / route not found
+ *  4410 — runner gone past grace window (gateway already waited
+ *         TUNNEL_INTERRUPT_GRACE_MS ~90 s before signalling this; further CLI-
+ *         side retries reconnect, get 4410'd again, and reset the deadline
+ *         timer — surfaces as an infinite reconnect loop. Treating fatal
+ *         exits cleanly; user can re-run the command once the runner returns)
+ *  4501 — protocol violation (CLI sent malformed frames)
+ *  4502 — runner connection failed (runner offline/unreachable)
+ *  4503 — service unavailable (gateway can't serve this tenant right now)
+ */
+const FATAL_CLOSE_CODES = new Set<number>([4401, 4403, 4404, 4410, 4501, 4502, 4503]);
 
 export interface ReverseSpec {
   remoteBind: "127.0.0.1" | "0.0.0.0"; // server-side bind address
@@ -29,7 +48,7 @@ export interface TunnelSessionOptions {
   forwards?: ForwardSpec[];
   reverses?: ReverseSpec[];
   reconnectDeadlineMs?: number; // default 5 * 60_000
-  onStatus?: (s: SessionStatus) => void;
+  onStatus?: (s: SessionStatus, reason?: string) => void;
 }
 
 export interface ReadyState {
@@ -133,8 +152,8 @@ export class TunnelSession {
     this.opts.onStatus?.("closed");
   }
 
-  private status(s: SessionStatus): void {
-    this.opts.onStatus?.(s);
+  private status(s: SessionStatus, reason?: string): void {
+    this.opts.onStatus?.(s, reason);
   }
 
   private async connect(): Promise<void> {
@@ -158,7 +177,9 @@ export class TunnelSession {
         this.reconnectStartedAt = null; // success — clear the disconnect timer
         this.status("active");
         ws.on("message", (raw) => this.onWsMessage(raw));
-        ws.on("close", () => this.onWsClose());
+        ws.on("close", (code: number, reasonBuf: Buffer) =>
+          this.onWsClose(code, reasonBuf?.toString() || undefined),
+        );
         resolve();
       };
       const onError = (err: Error) => {
@@ -256,7 +277,7 @@ export class TunnelSession {
     this.send({ type: "tunnel_close", stream_id: streamId, reason });
   }
 
-  private onWsClose(): void {
+  private onWsClose(code?: number, reason?: string): void {
     // A full WS reconnect is a clean slate — any prior runner-interrupt state
     // (signalled over the now-dead WS) no longer applies. Clear it so the
     // accept-guard doesn't stay stuck after the WS comes back.
@@ -285,9 +306,23 @@ export class TunnelSession {
     // reverseListeners intentionally preserved — re-armed on reconnect
 
     if (this.stopped) return;
+
+    // Fatal close codes (e.g. 4502 Runner connection failed) mean retrying is
+    // pointless — the gateway already classified the failure as non-recoverable.
+    // Stop the session and surface the reason instead of looping reconnect.
+    if (code !== undefined && FATAL_CLOSE_CODES.has(code)) {
+      this.stopped = true;
+      for (const s of this.tcpListeners) s.close();
+      for (const s of this.udpListeners) s.close();
+      this.tcpListeners = [];
+      this.udpListeners = [];
+      this.status("failed", reason ?? `connection closed (code ${code})`);
+      return;
+    }
+
     // Record the start of the first consecutive disconnect only
     if (this.reconnectStartedAt === null) this.reconnectStartedAt = Date.now();
-    this.status("reconnecting");
+    this.status("reconnecting", code !== undefined ? `${code}${reason ? ` ${reason}` : ""}` : undefined);
     this.scheduleReconnect();
   }
 
@@ -297,11 +332,14 @@ export class TunnelSession {
     const tryAgain = (): void => {
       if (this.stopped) return;
       if (Date.now() > deadline) {
-        // Give up — emit closed and propagate via stop() so the CLI can exit non-zero.
-        this.status("closed");
-        // Don't call stop() (it sends frames on closed WS); just clean local listeners
+        // Give up — emit failed (not closed) so the CLI exits non-zero.
+        // Don't call stop() (it sends frames on closed WS); just clean local listeners.
+        this.stopped = true;
         for (const s of this.tcpListeners) s.close();
         for (const s of this.udpListeners) s.close();
+        this.tcpListeners = [];
+        this.udpListeners = [];
+        this.status("failed", `reconnect deadline exceeded (${Math.round(this.opts.reconnectDeadlineMs / 1000)}s)`);
         return;
       }
       this.reconnectAttempt++;
