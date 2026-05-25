@@ -30,7 +30,18 @@ async function resolve(
 
   const found = lookup(entries, identifier);
   if (!found) {
-    const e = new Error(`${label} '${identifier}' not found`) as Error & { exitCode: number };
+    // Include candidate slugs to make the error actionable. Typo'd names are
+    // the common case — listing what's actually available saves a round-trip
+    // to `<resource> ls`.
+    const CAP = 10;
+    let message = `${label} '${identifier}' not found`;
+    if (entries.length > 0) {
+      const shown = entries.slice(0, CAP).map((e) => e.value);
+      const remainder = entries.length - shown.length;
+      message += `. available: ${shown.join(", ")}`;
+      if (remainder > 0) message += ` (+${remainder} more)`;
+    }
+    const e = new Error(message) as Error & { exitCode: number };
     e.exitCode = 5;
     throw e;
   }
