@@ -1,5 +1,6 @@
 // src/commands/providers.ts
 import type { Command } from "commander";
+import { appUrl, gatewayUrl } from "../lib/urls";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { resolveProvider } from "../client/resolve";
@@ -18,7 +19,7 @@ function deriveDashboardOrigin(apiUrl: string): string {
     }
     return url.origin;
   } catch {
-    return "https://app.reoclo.com";
+    return appUrl();
   }
 }
 
@@ -30,7 +31,7 @@ function deriveGatewayOrigin(apiUrl: string): string {
     }
     return url.origin;
   } catch {
-    return "https://gateway.reoclo.com";
+    return gatewayUrl();
   }
 }
 

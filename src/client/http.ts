@@ -17,6 +17,12 @@ export interface HttpClientOptions {
    * is retried exactly once with the new token.
    */
   refreshToken?: () => Promise<string | null>;
+  /**
+   * When true, adds `X-Reoclo-Source: mcp` to every request.
+   * Set by the MCP server command so that API-side traffic attribution
+   * works without affecting regular CLI usage.
+   */
+  mcpSource?: boolean;
 }
 
 export class HttpClient {
@@ -34,11 +40,15 @@ export class HttpClient {
   }
 
   private headers(token?: string): HeadersInit {
-    return {
+    const h: Record<string, string> = {
       Authorization: `Bearer ${token ?? this.currentToken}`,
       "User-Agent": this.opts.userAgent ?? "reoclo-cli",
       Accept: "application/json",
     };
+    if (this.opts.mcpSource) {
+      h["X-Reoclo-Source"] = "mcp";
+    }
+    return h;
   }
 
   get<T>(path: string): Promise<T> {

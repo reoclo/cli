@@ -3,6 +3,7 @@ import { resolveStore } from "../config/token-store";
 import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
+import { apiUrl, streamsUrl as defaultStreamsUrlHelper, authUrl as defaultAuthUrl } from "../lib/urls";
 
 export interface ResolvedContext {
   client: HttpClient;
@@ -27,8 +28,8 @@ export interface ResolvedContext {
   tenantId?: string;
 }
 
-const PROD_API_URL = "https://api.reoclo.com";
-const PROD_STREAMS_URL = "https://streams.reoclo.com";
+const PROD_API_URL = apiUrl();
+const PROD_STREAMS_URL = defaultStreamsUrlHelper();
 
 /**
  * Derive a default streams URL from the API URL. Production API gets the
@@ -62,6 +63,8 @@ export interface BootstrapOptions {
   profile?: string; // --profile
   api?: string; // --api
   streams?: string; // --streams
+  /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
+  mcpSource?: boolean;
 }
 
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
@@ -120,9 +123,9 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
         const storedRefresh = await store.get(refreshTokenKey);
         if (!storedRefresh) return null;
 
-        const authUrl = capturedProfile.oauth_auth_url ?? "https://auth.reoclo.com";
+        const resolvedAuthUrl = capturedProfile.oauth_auth_url ?? defaultAuthUrl();
         const clientId = capturedProfile.oauth_client_id ?? "reoclo-cli";
-        const newTokens = await refreshAccessToken(authUrl, storedRefresh, clientId);
+        const newTokens = await refreshAccessToken(resolvedAuthUrl, storedRefresh, clientId);
 
         // Persist new tokens
         await store.set(capturedProfileName, newTokens.access_token);
@@ -153,6 +156,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token,
     profile: profileName,
     refreshToken: refreshTokenCallback,
+    mcpSource: opts.mcpSource,
   });
 
   return {
