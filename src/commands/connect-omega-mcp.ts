@@ -97,11 +97,18 @@ async function runConnectOmegaMcp(opts: {
     ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
     : new Date(Date.now() + 3600 * 1000).toISOString();
 
+  // omega-mcp's API routes live under the `/mcp` prefix on the gateway
+  // (e.g. /mcp/auth/me/acl). Bake the prefix into the stored api_url so
+  // omega-mcp's client can concatenate request paths without knowing the
+  // prefix exists. If --api was passed with /mcp already, don't double it.
+  const apiBase = api.replace(/\/+$/, "");
+  const apiWithPrefix = apiBase.endsWith("/mcp") ? apiBase : `${apiBase}/mcp`;
+
   const tokenFile: OmegaMcpTokenFile = {
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: expiresAt,
-    api_url: api,
+    api_url: apiWithPrefix,
     auth_url: auth,
     client_id: CLIENT_ID,
     scope: SCOPE,
@@ -121,7 +128,7 @@ async function runConnectOmegaMcp(opts: {
   console.log("    - -i");
   console.log(`    - -v`);
   console.log(`    - ${path}:/auth/token.json`);
-  console.log("    - ghcr.io/reoclo/reoclo-omega-mcp:latest");
+  console.log("    - ghcr.io/reoclo/omega-mcp:latest");
 }
 
 export function registerConnectOmegaMcp(program: Command): void {
