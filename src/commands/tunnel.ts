@@ -353,10 +353,15 @@ Examples:
             forwards: parsed.forwards,
             reverses: parsed.reverses,
             reconnectDeadlineMs: parsed.reconnectDeadlineMs,
-            onStatus: (s) => {
+            onStatus: (s, reason) => {
               if (s === "active") process.stderr.write("tunnel: connected\n");
-              else if (s === "reconnecting") process.stderr.write("tunnel: reconnecting...\n");
+              else if (s === "reconnecting")
+                process.stderr.write(`tunnel: reconnecting${reason ? ` (${reason})` : "..."}\n`);
               else if (s === "closed") process.stderr.write("tunnel: closed\n");
+              else if (s === "failed") {
+                process.stderr.write(`tunnel: ${reason ?? "connection failed"}\n`);
+                process.exit(1);
+              }
             },
           });
 

@@ -11,8 +11,9 @@ interface MockGateway {
   stop: () => Promise<void>;
   /** Force-drop all active WS connections without waiting */
   dropConnections: () => void;
-  /** Send a proper WS close frame from the server side — causes the CLI's close event to fire */
-  closeActiveConnection: () => void;
+  /** Send a proper WS close frame from the server side — causes the CLI's close event to fire.
+   *  Optionally include a WS close code (e.g. 4502 for "Runner connection failed") and reason. */
+  closeActiveConnection: (code?: number, reason?: string) => void;
   /** Frames received from the CLI, in order */
   received: object[];
   /** Send a frame to whatever CLI is currently connected */
@@ -72,9 +73,15 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
         (client as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
       }
     },
-    closeActiveConnection: () => {
+    closeActiveConnection: (code, reason) => {
       // Sends a proper WS close frame so the CLI-side WS fires its "close" event.
-      activeWs?.close();
+      // Forwards (code, reason) when provided so fatal-code tests can simulate
+      // gateway-level rejections like 4502 "Runner connection failed".
+      if (code !== undefined) {
+        activeWs?.close(code, reason);
+      } else {
+        activeWs?.close();
+      }
     },
     stop: () =>
       new Promise((r) => {
@@ -676,5 +683,77 @@ describe("TunnelSession — interrupt/resume", () => {
     expect(tunnelOpensAfter).toBe(tunnelOpensBefore);
 
     await session.stop();
+  });
+});
+
+describe("TunnelSession — fatal close codes", () => {
+  it("emits 'failed' status with reason on WS close 4502 (Runner connection failed) and does not reconnect", async () => {
+    const gw = await startMockGateway();
+    const statuses: { s: string; reason?: string }[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [
+        { localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" },
+      ],
+      reconnectDeadlineMs: 30_000,
+      onStatus: (s, reason) => {
+        statuses.push({ s, reason });
+      },
+    });
+    await session.start();
+
+    // Gateway sends a fatal close code (4502 = runner connection failed)
+    gw.closeActiveConnection(4502, "Runner connection failed");
+
+    // Wait long enough that a reconnect would have been attempted (BACKOFF_BASE_MS = 500ms)
+    await new Promise((r) => setTimeout(r, 800));
+
+    // Must have emitted 'failed' with the reason
+    const failed = statuses.find((x) => x.s === "failed");
+    expect(failed).toBeDefined();
+    expect(failed!.reason).toContain("Runner connection failed");
+
+    // Must NOT have transitioned to 'reconnecting' after the fatal close
+    const failedIdx = statuses.findIndex((x) => x.s === "failed");
+    const reconnectAfter = statuses.slice(failedIdx + 1).some((x) => x.s === "reconnecting");
+    expect(reconnectAfter).toBe(false);
+
+    // Must NOT have re-opened a second WS connection to the gateway
+    expect(gw.received.filter(
+      (m: object) => (m as { type?: string }).type === "tunnel_open",
+    ).length).toBe(0);
+
+    await session.stop();
+    await gw.stop();
+  });
+
+  it("transitions through 'reconnecting' on transient WS close 1006 (abnormal closure)", async () => {
+    const gw = await startMockGateway();
+    const statuses: { s: string; reason?: string }[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [
+        { localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" },
+      ],
+      reconnectDeadlineMs: 10_000,
+      onStatus: (s, reason) => {
+        statuses.push({ s, reason });
+      },
+    });
+    await session.start();
+
+    // Close with code 1011 (Server error / idle reaper) — transient, retryable
+    gw.closeActiveConnection(1011, "transient");
+
+    // Wait for the reconnect status to be emitted
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(statuses.some((x) => x.s === "reconnecting")).toBe(true);
+    expect(statuses.some((x) => x.s === "failed")).toBe(false);
+
+    await session.stop();
+    await gw.stop();
   });
 });
