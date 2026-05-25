@@ -125,6 +125,57 @@ describe("resolveServer", () => {
     }
     expect(threw).toBe(true);
   });
+
+  test("not-found error lists available candidate slugs from the fetched list", async () => {
+    resetCache([]);
+    const client = fakeClient([
+      { id: "srv-1", slug: "reoclo-production", name: "Reoclo Production", status: "active" },
+      { id: "srv-2", slug: "reoclo-lb-prod-01", name: "Reoclo Load Balancer", status: "active" },
+      { id: "srv-3", slug: "devops-core-production", name: "DevOPS Core Production", status: "unreachable" },
+    ]);
+    const err = await resolveServer(client as never, "t1", "staging-server").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain("staging-server");
+    expect(msg).toContain("not found");
+    expect(msg).toContain("reoclo-production");
+    expect(msg).toContain("reoclo-lb-prod-01");
+    expect(msg).toContain("devops-core-production");
+  });
+
+  test("not-found candidate list caps at 10 and notes the remainder", async () => {
+    resetCache([]);
+    const many = Array.from({ length: 13 }, (_, i) => ({
+      id: `srv-${i + 1}`,
+      slug: `srv-slug-${i + 1}`,
+      name: `Server ${i + 1}`,
+      status: "active",
+    }));
+    const client = fakeClient(many);
+    const err = await resolveServer(client as never, "t1", "missing").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    // First 10 candidates appear
+    for (let i = 1; i <= 10; i++) {
+      expect(msg).toContain(`srv-slug-${i}`);
+    }
+    // 11th candidate does NOT appear inline
+    expect(msg).not.toContain("srv-slug-11");
+    // Remainder is summarised
+    expect(msg).toMatch(/3 more|\(\+3\)/);
+  });
+
+  test("not-found with zero candidates does not add a candidate list", async () => {
+    resetCache([]);
+    const client = fakeClient([]);
+    const err = await resolveServer(client as never, "t1", "anything").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain("anything");
+    expect(msg).toContain("not found");
+    // No "available:" or candidate enumeration when the org has zero servers.
+    expect(msg.toLowerCase()).not.toContain("available");
+  });
 });
 
 // ---------------------------------------------------------------------------
