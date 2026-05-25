@@ -5,12 +5,13 @@ import {
   chmodSync,
   constants,
   existsSync,
+  readFileSync,
   realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { argv0, execPath, platform as nodePlatform, arch as nodeArch } from "node:process";
 import { createHash } from "node:crypto";
 import { VERSION } from "../index";
@@ -62,6 +63,152 @@ function resolveSelfPath(): string {
   }
   throw new Error(`cannot resolve running CLI binary path (argv0=${argv0}, execPath=${execPath})`);
 }
+
+// ── Install-method detection ─────────────────────────────────────────────────
+//
+// `reoclo upgrade` must NOT in-place-swap a managed install (brew, npm, pnpm,
+// yarn, mise, asdf) — those have their own update paths. Detection runs in
+// two layers:
+//
+//   Layer A — path-substring heuristics. Fast, no I/O. Matches the most
+//             common install layouts. Anchored on directory components rather
+//             than bare substrings to limit false positives (a raw binary
+//             under ~/projects/homebrew-tap/reoclo must not trip the brew
+//             branch).
+//
+//   Layer B — filesystem marker probe. Walks up from the binary looking for
+//             package-manager fingerprint files (brew's INSTALL_RECEIPT.json
+//             or our own package.json with name=@reoclo/cli). Definitive
+//             when present; falls through to Layer A when absent.
+//
+// Layer B runs FIRST: if a marker is found, trust it over the path. This is
+// what catches edge cases like a brew tap symlinked into a non-standard
+// prefix, or a pnpm install whose path doesn't trip our pnpm pattern.
+
+export type InstallMethod =
+  | "homebrew"
+  | "npm"
+  | "pnpm"
+  | "yarn"
+  | "mise"
+  | "asdf"
+  | "raw";
+
+export interface InstallDetectionContext {
+  /** stat-existence check — injectable for testing */
+  fileExists?: (path: string) => boolean;
+  /** read-to-string — injectable for testing. Return null on any error. */
+  readFile?: (path: string) => string | null;
+}
+
+const MAX_WALK_DEPTH = 12;
+const JS_PACKAGE_NAME = "@reoclo/cli";
+
+function defaultReadFile(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Layer A: anchored path-component substring patterns. */
+function probePathPatterns(selfPath: string): InstallMethod | null {
+  // pnpm / yarn must come BEFORE npm because their install layouts include
+  // a `node_modules` directory deeper inside.
+  if (/\/(?:\.local\/share\/)?pnpm\/(?:global|store)\//.test(selfPath)) return "pnpm";
+  if (selfPath.includes("/.pnpm/")) return "pnpm";
+  if (selfPath.includes("/yarn/global/") || selfPath.includes("/.yarn/")) return "yarn";
+
+  // mise / asdf
+  if (selfPath.includes("/mise/installs/")) return "mise";
+  if (selfPath.includes("/.asdf/installs/")) return "asdf";
+
+  // brew. Anchor on /Cellar/ or the canonical brew prefixes so a folder
+  // *named* "homebrew" in a user's home (e.g. tap experiments) doesn't trip
+  // a false positive.
+  if (selfPath.includes("/Cellar/")) return "homebrew";
+  if (
+    selfPath.startsWith("/opt/homebrew/") ||
+    selfPath.startsWith("/usr/local/Cellar/") ||
+    selfPath.startsWith("/home/linuxbrew/")
+  ) {
+    return "homebrew";
+  }
+
+  // npm (generic — last because pnpm/yarn would have matched first)
+  if (selfPath.includes("/node_modules/")) return "npm";
+
+  return null;
+}
+
+/** Layer B: walk up the directory tree looking for marker files. */
+function probeMarkers(
+  selfPath: string,
+  ctx: InstallDetectionContext,
+): InstallMethod | null {
+  const fileExists = ctx.fileExists ?? existsSync;
+  const readFile = ctx.readFile ?? defaultReadFile;
+
+  let current = dirname(selfPath);
+  for (let i = 0; i < MAX_WALK_DEPTH; i++) {
+    // brew receipt: <prefix>/Cellar/<formula>/<version>/INSTALL_RECEIPT.json
+    if (fileExists(join(current, "INSTALL_RECEIPT.json"))) return "homebrew";
+
+    // JS package manager: package.json whose name matches our package
+    const pkgPath = join(current, "package.json");
+    if (fileExists(pkgPath)) {
+      const raw = readFile(pkgPath);
+      if (raw) {
+        try {
+          const pkg = JSON.parse(raw) as { name?: unknown };
+          if (pkg.name === JS_PACKAGE_NAME) {
+            // Disambiguate the JS family from the path
+            return classifyJsManager(selfPath);
+          }
+        } catch {
+          // corrupt — skip
+        }
+      }
+    }
+
+    const parent = dirname(current);
+    if (parent === current) break; // hit filesystem root
+    current = parent;
+  }
+  return null;
+}
+
+function classifyJsManager(selfPath: string): InstallMethod {
+  if (/\/(?:\.local\/share\/)?pnpm\//.test(selfPath) || selfPath.includes("/.pnpm/")) {
+    return "pnpm";
+  }
+  if (selfPath.includes("/yarn/") || selfPath.includes("/.yarn/")) return "yarn";
+  return "npm";
+}
+
+/**
+ * Resolve which package manager (if any) owns this CLI binary.
+ *
+ * @param selfPath  realpath of the running binary (output of `resolveSelfPath`)
+ * @param ctx       optional filesystem injectors for tests
+ */
+export function detectInstallMethod(
+  selfPath: string,
+  ctx: InstallDetectionContext = {},
+): InstallMethod {
+  // Marker files first — definitive when present.
+  const marker = probeMarkers(selfPath, ctx);
+  if (marker) return marker;
+
+  // Path-substring fallback.
+  const pattern = probePathPatterns(selfPath);
+  if (pattern) return pattern;
+
+  return "raw";
+}
+
+// ── Build target detection ────────────────────────────────────────────────────
 
 function detectTarget(): BuildTarget {
   let os: BuildTarget["os"];
@@ -301,16 +448,41 @@ export function registerUpgrade(program: Command): void {
         }
 
         const self = resolveSelfPath();
+        const method = detectInstallMethod(self);
+        const bareVersion = latest.replace(/^v/, "");
 
-        if (self.includes("/node_modules/")) {
-          process.stdout.write("Installed via npm. Upgrade with:\n");
-          process.stdout.write(`  npm i -g @reoclo/cli@${latest.replace(/^v/, "")}\n`);
-          return;
-        }
-        if (self.includes("/Cellar/") || self.toLowerCase().includes("/homebrew/")) {
-          process.stdout.write("Installed via Homebrew. Upgrade with:\n");
-          process.stdout.write("  brew upgrade reoclo/tap/reoclo\n");
-          return;
+        switch (method) {
+          case "homebrew":
+            process.stdout.write("Installed via Homebrew. Upgrade with:\n");
+            process.stdout.write("  brew upgrade reoclo/tap/reoclo\n");
+            return;
+          case "npm":
+            process.stdout.write("Installed via npm. Upgrade with:\n");
+            process.stdout.write(`  npm i -g @reoclo/cli@${bareVersion}\n`);
+            return;
+          case "pnpm":
+            process.stdout.write("Installed via pnpm. Upgrade with:\n");
+            process.stdout.write(`  pnpm add -g @reoclo/cli@${bareVersion}\n`);
+            return;
+          case "yarn":
+            process.stdout.write("Installed via yarn. Upgrade with:\n");
+            process.stdout.write(`  yarn global add @reoclo/cli@${bareVersion}\n`);
+            return;
+          case "mise":
+            process.stdout.write("Installed via mise. Upgrade with:\n");
+            process.stdout.write(
+              `  mise install reoclo@${bareVersion} && mise use -g reoclo@${bareVersion}\n`,
+            );
+            return;
+          case "asdf":
+            process.stdout.write("Installed via asdf. Upgrade with:\n");
+            process.stdout.write(
+              `  asdf install reoclo ${bareVersion} && asdf global reoclo ${bareVersion}\n`,
+            );
+            return;
+          case "raw":
+            // fall through to in-place swap
+            break;
         }
 
         // Raw-binary install — perform the in-place swap.
