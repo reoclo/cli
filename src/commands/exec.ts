@@ -92,7 +92,7 @@ const MASK_TOKEN = "***";
  *  don't pre-empt longer matches. Uses literal split/join, not regex. */
 export function maskOutput(text: string, env: Record<string, string>): string {
   const values = Object.values(env)
-    .filter((v) => typeof v === "string" && v.length >= 5)
+    .filter((v) => typeof v === "string" && v.length >= MASK_MIN_LENGTH)
     .sort((a, b) => b.length - a.length);
   let out = text;
   for (const v of values) {

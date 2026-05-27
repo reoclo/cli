@@ -102,12 +102,12 @@ describe("maskOutput", () => {
   });
 
   test("masks longer values before shorter substrings", () => {
-    // If we masked "secret" first, the longer "secret-extra" would no longer match.
-    const out = maskOutput("secret-extra and secret alone", {
-      A: "secret-extra",
-      B: "secret",
+    // If we masked "tokenABC" first, the longer "tokenABC-extra" would no
+    // longer match. Both values are >= MASK_MIN_LENGTH (8).
+    const out = maskOutput("tokenABC-extra and tokenABC alone", {
+      A: "tokenABC-extra",
+      B: "tokenABC",
     });
-    // "secret-extra" and "secret" can both appear, but the long one is replaced first.
     expect(out).toBe("*** and *** alone");
   });
 
