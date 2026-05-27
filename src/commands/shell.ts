@@ -1,5 +1,5 @@
 // src/commands/shell.ts
-import type { Command } from "commander";
+import { type Command, Help } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { withCompletion } from "../client/command-meta";
@@ -34,6 +34,21 @@ export function registerShell(program: Command): void {
       .command("shell <serverIdOrName>")
       .description("open an interactive shell on a server via the runner")
       .option("--allow-no-tty", "skip the TTY-required check (mostly for tests; bypasses raw mode)")
+      .configureHelp({
+        formatHelp: (cmd, helper) => {
+          const base = Help.prototype.formatHelp.call(helper, cmd, helper);
+          return (
+            base +
+            [
+              "",
+              "Examples:",
+              "  reoclo shell my-server",
+              "  reoclo shell --allow-no-tty my-server   # mostly for tests",
+              "",
+            ].join("\n")
+          );
+        },
+      })
       .action(async (idOrName: string, opts: ShellOptions) => {
         const stdin = process.stdin;
         const stdout = process.stdout;

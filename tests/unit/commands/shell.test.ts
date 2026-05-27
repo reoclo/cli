@@ -1,10 +1,12 @@
 // tests/unit/commands/shell.test.ts
 import { expect, test, describe } from "bun:test";
+import { Command } from "commander";
 import {
   base64url,
   buildShellSubprotocol,
   buildShellWsUrl,
   SUBPROTOCOL_VERSION,
+  registerShell,
 } from "../../../src/commands/shell";
 
 describe("base64url", () => {
@@ -72,5 +74,17 @@ describe("buildShellSubprotocol", () => {
   test("never embeds the raw key", () => {
     const sp = buildShellSubprotocol("rk_t_secret_value");
     expect(sp).not.toContain("rk_t_secret_value");
+  });
+});
+
+describe("reoclo shell --help", () => {
+  test("includes an Examples block", () => {
+    const p = new Command().name("reoclo").exitOverride();
+    registerShell(p);
+    const cmd = p.commands.find((c) => c.name() === "shell")!;
+    const help = cmd.helpInformation();
+    expect(help).toContain("Examples:");
+    expect(help).toContain("reoclo shell my-server");
+    expect(help).toContain("--allow-no-tty");
   });
 });
