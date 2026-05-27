@@ -9,7 +9,7 @@
 // `mcp:omega` scope live on the API; this command is just the local mint.
 
 import type { Command } from "commander";
-import { apiUrl, authUrl } from "../lib/urls";
+import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { HttpClient } from "../client/http";
 import type { Me } from "../client/types";
 import { initiateDeviceFlow, pollForToken } from "../auth/oauth-device";
@@ -139,9 +139,16 @@ export function registerConnectOmegaMcp(program: Command): void {
     .command("connect-omega-mcp", { hidden: true })
     .description("mint an OAuth token scoped to omega-mcp (internal)")
     .option("--api <url>", "API base URL", apiUrl())
-    .option("--auth <url>", "auth service base URL", authUrl())
+    .option(
+      "--auth <url>",
+      "auth service base URL (derived from --api when omitted; falls back to auth.<root-domain>)",
+    )
     .option("--no-browser", "do not auto-open the browser during device-flow login")
-    .action(async (opts: { api: string; auth: string; browser?: boolean }) => {
-      await runConnectOmegaMcp({ api: opts.api, auth: opts.auth, browser: opts.browser });
+    .action(async (opts: { api: string; auth?: string; browser?: boolean }) => {
+      await runConnectOmegaMcp({
+        api: opts.api,
+        auth: opts.auth ?? deriveAuthFromApi(opts.api) ?? authUrl(),
+        browser: opts.browser,
+      });
     });
 }

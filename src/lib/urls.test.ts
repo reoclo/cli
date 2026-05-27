@@ -19,14 +19,11 @@ import {
   streamsUrl,
   appUrl,
   gatewayUrl,
-  docsUrl,
-  cdnUrl,
-  getUrl,
-  siteUrl,
   directWsUrl,
   uptimeHost,
   supportEmail,
   appHost,
+  deriveAuthFromApi,
 } from "./urls.ts";
 
 describe("urls (default reoclo.com)", () => {
@@ -121,5 +118,38 @@ describe("urls — directWsUrl converts scheme", () => {
 describe("urls — uptimeHost", () => {
   test("returns bare host by default", () => {
     expect(uptimeHost()).toBe("uptime.reoclo.com");
+  });
+});
+
+describe("deriveAuthFromApi", () => {
+  test("derives staging auth url from staging api url", () => {
+    expect(deriveAuthFromApi("https://api.reoclo.dev")).toBe("https://auth.reoclo.dev");
+  });
+
+  test("derives prod auth url from prod api url", () => {
+    expect(deriveAuthFromApi("https://api.reoclo.com")).toBe("https://auth.reoclo.com");
+  });
+
+  test("preserves http scheme for local dev", () => {
+    expect(deriveAuthFromApi("http://api.reoclo.test")).toBe("http://auth.reoclo.test");
+  });
+
+  test("strips trailing path when deriving", () => {
+    expect(deriveAuthFromApi("https://api.reoclo.dev/v1/ping")).toBe("https://auth.reoclo.dev");
+  });
+
+  test("returns null when host is not api.<root>", () => {
+    expect(deriveAuthFromApi("https://reoclo.dev")).toBeNull();
+    expect(deriveAuthFromApi("https://gateway.reoclo.dev")).toBeNull();
+  });
+
+  test("returns null for localhost / raw IP", () => {
+    expect(deriveAuthFromApi("http://localhost:8000")).toBeNull();
+    expect(deriveAuthFromApi("http://127.0.0.1:8000")).toBeNull();
+  });
+
+  test("returns null for malformed URL", () => {
+    expect(deriveAuthFromApi("not a url")).toBeNull();
+    expect(deriveAuthFromApi("")).toBeNull();
   });
 });

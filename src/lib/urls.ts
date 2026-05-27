@@ -68,3 +68,23 @@ export const directWsUrl = (path = ""): string => {
 
 export const uptimeHost = (): string => resolveHost(["REOCLO_UPTIME_HOST"], "uptime");
 export const supportEmail = (): string => `support@${ROOT_DOMAIN}`;
+
+/**
+ * Derive an auth-service URL from a given API URL when the API host is shaped
+ * as `api.<root>`. Returns null when the host doesn't match that pattern, so
+ * callers can fall back to authUrl() (or any other default).
+ *
+ * Exists because `reoclo login --api https://api.reoclo.dev` used to silently
+ * default --auth to `https://auth.reoclo.com` — the device-flow approval URL
+ * pointed at prod even though the API was staging.
+ */
+export function deriveAuthFromApi(api: string): string | null {
+  try {
+    const u = new URL(api);
+    const match = u.host.match(/^api\.(.+)$/);
+    if (!match) return null;
+    return `${u.protocol}//auth.${match[1]}`;
+  } catch {
+    return null;
+  }
+}

@@ -5,7 +5,7 @@
 // CI/CD continues to use `REOCLO_AUTOMATION_KEY` (`rca_*`) on the bootstrap
 // path, which does not go through this command.
 import type { Command } from "commander";
-import { apiUrl, authUrl } from "../lib/urls";
+import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
 import { resolveStore } from "../config/token-store";
 import { HttpClient } from "../client/http";
@@ -170,7 +170,10 @@ export function registerLogin(program: Command): void {
     .description("sign in via OAuth device flow (browser-based)")
     .option("--profile <name>", "profile name", "default")
     .option("--api <url>", "API base URL", apiUrl())
-    .option("--auth <url>", "auth service base URL", authUrl())
+    .option(
+      "--auth <url>",
+      "auth service base URL (derived from --api when omitted; falls back to auth.<root-domain>)",
+    )
     .option(
       "--streams <url>",
       "Cloudflare-bypass host for terminal WS and large uploads (defaults to streams.reoclo.com for prod, otherwise to --api)",
@@ -182,7 +185,7 @@ export function registerLogin(program: Command): void {
       async (opts: {
         profile: string;
         api: string;
-        auth: string;
+        auth?: string;
         streams?: string;
         keyring?: boolean;
         browser?: boolean;
@@ -190,7 +193,7 @@ export function registerLogin(program: Command): void {
         await runDeviceFlow({
           profile: opts.profile,
           api: opts.api,
-          auth: opts.auth,
+          auth: opts.auth ?? deriveAuthFromApi(opts.api) ?? authUrl(),
           streams: opts.streams,
           keyring: opts.keyring,
           browser: opts.browser,
