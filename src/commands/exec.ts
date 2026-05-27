@@ -12,6 +12,23 @@ interface ExecResponse {
   truncated: boolean;
 }
 
+export type SupportedShell = "bash" | "sh";
+
+/** Wrap argv into "<shell> -c '<joined>'" with POSIX-safe single-quote escaping. */
+export function buildShellWrappedCommand(
+  shell: SupportedShell | string,
+  commandParts: string[],
+): string {
+  if (shell !== "bash" && shell !== "sh") {
+    throw new Error(`unsupported shell: ${shell} (expected 'bash' or 'sh')`);
+  }
+  const joined = commandParts.join(" ");
+  // POSIX-safe: every single quote in the body becomes '\'' (close-quote,
+  // escaped-quote, reopen-quote). The body is then wrapped in single quotes.
+  const escaped = joined.replace(/'/g, "'\\''");
+  return `${shell} -c '${escaped}'`;
+}
+
 export function registerExec(program: Command): void {
   const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
     args: [{ slot: 0, resource: "servers" }],
