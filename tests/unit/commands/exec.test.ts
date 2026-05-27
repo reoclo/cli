@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellWrappedCommand, parseEnvFile } from "../../../src/commands/exec";
+import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH } from "../../../src/commands/exec";
 
 describe("buildShellWrappedCommand", () => {
   test("wraps simple argv in bash -c with single quotes", () => {
@@ -86,5 +86,46 @@ describe("parseEnvFile", () => {
 
   test("accepts a trailing newline-less file", () => {
     expect(parseEnvFile("FOO=1", "x")).toEqual({ FOO: "1" });
+  });
+});
+
+describe("maskOutput", () => {
+  test("replaces literal value occurrences with *** in a string", () => {
+    expect(maskOutput("token=supersecretvalue here", { TOKEN: "supersecretvalue" })).toBe(
+      "token=*** here",
+    );
+  });
+
+  test("masks across multiple occurrences", () => {
+    expect(maskOutput("abc abc abc", { A: "abc12345" })).toBe("abc abc abc");
+    expect(maskOutput("abc12345 abc12345", { A: "abc12345" })).toBe("*** ***");
+  });
+
+  test("masks longer values before shorter substrings", () => {
+    // If we masked "secret" first, the longer "secret-extra" would no longer match.
+    const out = maskOutput("secret-extra and secret alone", {
+      A: "secret-extra",
+      B: "secret",
+    });
+    // "secret-extra" and "secret" can both appear, but the long one is replaced first.
+    expect(out).toBe("*** and *** alone");
+  });
+
+  test("does not mask values shorter than MASK_MIN_LENGTH", () => {
+    expect(MASK_MIN_LENGTH).toBe(8);
+    expect(maskOutput("1 1 1", { X: "1" })).toBe("1 1 1");
+    expect(maskOutput("PROD here", { ENV: "PROD" })).toBe("PROD here");
+  });
+
+  test("does not crash on empty values", () => {
+    expect(maskOutput("hello", { X: "" })).toBe("hello");
+  });
+
+  test("handles values containing regex metacharacters", () => {
+    expect(maskOutput("found a.b*c+(d) here", { X: "a.b*c+(d)" })).toBe("found *** here");
+  });
+
+  test("returns input unchanged when env dict is empty", () => {
+    expect(maskOutput("anything", {})).toBe("anything");
   });
 });

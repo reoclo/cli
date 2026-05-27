@@ -84,6 +84,23 @@ export function parseEnvFile(body: string, filename: string): Record<string, str
   return out;
 }
 
+export const MASK_MIN_LENGTH = 8;
+const MASK_TOKEN = "***";
+
+/** Replace every literal occurrence of each env value (length >= MASK_MIN_LENGTH)
+ *  in `text` with "***". Longer values are masked first so shorter substrings
+ *  don't pre-empt longer matches. Uses literal split/join, not regex. */
+export function maskOutput(text: string, env: Record<string, string>): string {
+  const values = Object.values(env)
+    .filter((v) => typeof v === "string" && v.length >= 5)
+    .sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const v of values) {
+    out = out.split(v).join(MASK_TOKEN);
+  }
+  return out;
+}
+
 export function registerExec(program: Command): void {
   const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
     args: [{ slot: 0, resource: "servers" }],
