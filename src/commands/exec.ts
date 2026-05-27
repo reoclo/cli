@@ -39,8 +39,21 @@ export function buildShellWrappedCommand(
 
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Parse a dotenv-style file body into a {KEY: VAL} dict. `filename` is used
- *  only in error messages. No variable expansion; no escape sequences. */
+/**
+ * Parse a dotenv-style file body into a {KEY: VAL} dict.
+ *
+ * - Keys: leading/trailing whitespace ignored; key shape must match
+ *   `^[A-Za-z_][A-Za-z0-9_]*$`.
+ * - Values: split on the first `=` only (so URLs with embedded `=` work).
+ *   Whitespace is preserved verbatim; wrap in quotes if you need unambiguous
+ *   leading/trailing spaces.
+ * - One matching outer layer of `'...'` or `"..."` is stripped. Mismatched or
+ *   unclosed quotes are preserved literally — no error is raised for the
+ *   ambiguous `'a'b'` case.
+ * - No variable expansion. No escape sequences.
+ *
+ * `filename` is used only in error messages.
+ */
 export function parseEnvFile(body: string, filename: string): Record<string, string> {
   const out: Record<string, string> = {};
   const lines = body.split(/\r?\n/);

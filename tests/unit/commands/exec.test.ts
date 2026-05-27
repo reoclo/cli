@@ -47,6 +47,11 @@ describe("parseEnvFile", () => {
     expect(out).toEqual({ FOO: "1", BAR: "hello" });
   });
 
+  test("preserves embedded '=' in values (splits on first '=' only)", () => {
+    const out = parseEnvFile("URL=https://x.com/?a=b&c=d\n", "x");
+    expect(out.URL).toBe("https://x.com/?a=b&c=d");
+  });
+
   test("ignores blank lines and # comments", () => {
     const out = parseEnvFile("# a comment\n\nFOO=1\n  # indented comment\nBAR=2\n", "x");
     expect(out).toEqual({ FOO: "1", BAR: "2" });
