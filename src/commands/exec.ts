@@ -101,6 +101,16 @@ export function maskOutput(text: string, env: Record<string, string>): string {
   return out;
 }
 
+/** True if argv looks like 'sh -c <X> <Y> ...' (3+ args after -c), which is
+ *  almost always a shell-quoting mistake by the caller. */
+export function detectShCQuotingFootgun(commandParts: string[]): boolean {
+  return (
+    (commandParts[0] === "sh" || commandParts[0] === "bash") &&
+    commandParts[1] === "-c" &&
+    commandParts.length > 3
+  );
+}
+
 export function registerExec(program: Command): void {
   const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
     args: [{ slot: 0, resource: "servers" }],

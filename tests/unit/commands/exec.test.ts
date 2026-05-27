@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH } from "../../../src/commands/exec";
+import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun } from "../../../src/commands/exec";
 
 describe("buildShellWrappedCommand", () => {
   test("wraps simple argv in bash -c with single quotes", () => {
@@ -127,5 +127,28 @@ describe("maskOutput", () => {
 
   test("returns input unchanged when env dict is empty", () => {
     expect(maskOutput("anything", {})).toBe("anything");
+  });
+});
+
+describe("detectShCQuotingFootgun", () => {
+  test("flags sh -c followed by 2+ extra args", () => {
+    expect(detectShCQuotingFootgun(["sh", "-c", "echo", "hello"])).toBe(true);
+  });
+
+  test("flags bash -c followed by 2+ extra args", () => {
+    expect(detectShCQuotingFootgun(["bash", "-c", "echo", "a", "b"])).toBe(true);
+  });
+
+  test("does not flag sh -c with exactly one script arg", () => {
+    expect(detectShCQuotingFootgun(["sh", "-c", "echo hello"])).toBe(false);
+  });
+
+  test("does not flag other commands", () => {
+    expect(detectShCQuotingFootgun(["docker", "ps", "-a"])).toBe(false);
+    expect(detectShCQuotingFootgun(["printenv", "X", "Y"])).toBe(false);
+  });
+
+  test("does not flag empty argv", () => {
+    expect(detectShCQuotingFootgun([])).toBe(false);
   });
 });
