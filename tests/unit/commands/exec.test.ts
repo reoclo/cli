@@ -88,6 +88,10 @@ describe("parseEnvFile", () => {
   test("accepts a trailing newline-less file", () => {
     expect(parseEnvFile("FOO=1", "x")).toEqual({ FOO: "1" });
   });
+
+  test("returns an empty dict for an empty body", () => {
+    expect(parseEnvFile("", "x")).toEqual({});
+  });
 });
 
 describe("maskOutput", () => {

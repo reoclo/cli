@@ -84,6 +84,12 @@ export function parseEnvFile(body: string, filename: string): Record<string, str
   return out;
 }
 
+/**
+ * Mask threshold. Values shorter than this are not replaced — short common
+ * strings like "PROD", "1", or short keywords would otherwise garble normal
+ * output. Real secrets (JWTs, DB URLs, API keys) comfortably exceed 8 chars;
+ * users with shorter secrets can pass `--no-mask-env`.
+ */
 export const MASK_MIN_LENGTH = 8;
 const MASK_TOKEN = "***";
 
@@ -144,9 +150,12 @@ export function registerExec(program: Command): void {
       "--shell <sh|bash>",
       "wrap the command in '<shell> -c ...' so pipes, redirects and globs work without manual quoting",
     )
-    .option("--mask-env", "replace values from --env/--env-file with *** in output (default: on)", true)
+    .option("--mask-env", "replace values from --env/--env-file with *** in output", true)
     .option("--no-mask-env", "disable masking of --env/--env-file values in output")
     .option("--scope <scope>", "execution scope: host or rootless (default host)", "host")
+    // Commander v12 quirk: addHelpText() output is NOT included in helpInformation();
+    // override formatHelp so our Examples block appears in both `--help` and programmatic
+    // help (which tests assert on).
     .configureHelp({
       formatHelp: (cmd, helper) => {
         const base = Help.prototype.formatHelp.call(helper, cmd, helper);
@@ -204,7 +213,7 @@ export function registerExec(program: Command): void {
             body = await fs.readFile(opts.envFile, "utf8");
           } catch (cause) {
             const e = new Error(
-              `failed to read --env-file ${opts.envFile}: ${(cause as Error).message}`,
+              `failed to read --env-file: ${(cause as Error).message}`,
             ) as Error & { exitCode: number };
             e.exitCode = 2;
             throw e;
