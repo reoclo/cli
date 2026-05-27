@@ -37,6 +37,40 @@ export function buildShellWrappedCommand(
   return `${shell} -c '${escaped}'`;
 }
 
+const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Parse a dotenv-style file body into a {KEY: VAL} dict. `filename` is used
+ *  only in error messages. No variable expansion; no escape sequences. */
+export function parseEnvFile(body: string, filename: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const lines = body.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    const trimmed = raw.trim();
+    if (trimmed === "") continue;
+    if (trimmed.startsWith("#")) continue;
+    const eq = raw.indexOf("=");
+    if (eq < 0) {
+      throw new Error(`${filename}: line ${i + 1}: expected KEY=VAL, got: ${raw}`);
+    }
+    const key = raw.slice(0, eq).trim();
+    if (!KEY_RE.test(key)) {
+      throw new Error(`${filename}: line ${i + 1}: invalid key: ${key}`);
+    }
+    let value = raw.slice(eq + 1);
+    // Strip matching outer single or double quotes (exactly one layer).
+    if (
+      value.length >= 2 &&
+      ((value.startsWith("'") && value.endsWith("'")) ||
+        (value.startsWith('"') && value.endsWith('"')))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function registerExec(program: Command): void {
   const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
     args: [{ slot: 0, resource: "servers" }],
