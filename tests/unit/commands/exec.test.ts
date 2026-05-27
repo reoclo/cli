@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun } from "../../../src/commands/exec";
+import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun, registerExec } from "../../../src/commands/exec";
+import { Command } from "commander";
 
 describe("buildShellWrappedCommand", () => {
   test("wraps simple argv in bash -c with single quotes", () => {
@@ -150,5 +151,43 @@ describe("detectShCQuotingFootgun", () => {
 
   test("does not flag empty argv", () => {
     expect(detectShCQuotingFootgun([])).toBe(false);
+  });
+});
+
+function execCommand(): Command {
+  const p = new Command().name("reoclo").exitOverride();
+  registerExec(p);
+  return p.commands.find((c) => c.name() === "exec")!;
+}
+
+describe("reoclo exec registration", () => {
+  test("declares --shell, --env-file, --mask-env, --no-mask-env flags", () => {
+    const e = execCommand();
+    const flagNames = e.options.map((o) => o.long);
+    expect(flagNames).toContain("--shell");
+    expect(flagNames).toContain("--env-file");
+    expect(flagNames).toContain("--mask-env");
+    expect(flagNames).toContain("--no-mask-env");
+  });
+
+  test("--shell default is undefined (current join behavior)", () => {
+    const e = execCommand();
+    const shell = e.options.find((o) => o.long === "--shell")!;
+    expect(shell.defaultValue).toBeUndefined();
+  });
+
+  test("--mask-env defaults to true (masking on by default)", () => {
+    const e = execCommand();
+    const maskOpt = e.options.find((o) => o.long === "--mask-env")!;
+    expect(maskOpt.defaultValue).toBe(true);
+  });
+
+  test("--help output contains Examples section", () => {
+    const e = execCommand();
+    const help = e.helpInformation();
+    expect(help).toContain("Examples:");
+    expect(help).toContain("reoclo exec my-server -- docker ps");
+    expect(help).toContain("--shell bash");
+    expect(help).toContain("--env-file");
   });
 });

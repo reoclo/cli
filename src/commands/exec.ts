@@ -1,5 +1,5 @@
 // src/commands/exec.ts
-import type { Command } from "commander";
+import { type Command, Help } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { globalOutput, printObject, resolveFormat } from "../ui/output";
@@ -136,7 +136,34 @@ export function registerExec(program: Command): void {
       },
       {} as Record<string, string>,
     )
+    .option(
+      "--env-file <path>",
+      "load env vars from a dotenv-style file (KEY=VAL per line). --env overrides on key collision.",
+    )
+    .option(
+      "--shell <sh|bash>",
+      "wrap the command in '<shell> -c ...' so pipes, redirects and globs work without manual quoting",
+    )
+    .option("--mask-env", "replace values from --env/--env-file with *** in output (default: on)", true)
+    .option("--no-mask-env", "disable masking of --env/--env-file values in output")
     .option("--scope <scope>", "execution scope: host or rootless (default host)", "host")
+    .configureHelp({
+      formatHelp: (cmd, helper) => {
+        const base = Help.prototype.formatHelp.call(helper, cmd, helper);
+        return (
+          base +
+          [
+            "",
+            "Examples:",
+            "  reoclo exec my-server -- docker ps",
+            "  reoclo exec --shell bash my-server -- 'docker exec backend env | wc -l'",
+            "  reoclo exec --env DATABASE_URL=\"$DB\" my-server -- ./migrate.sh",
+            "  reoclo exec --env-file .env.prod my-server -- ./script",
+            "",
+          ].join("\n")
+        );
+      },
+    })
     .action(
       async (
         serverIdOrName: string,
@@ -145,6 +172,9 @@ export function registerExec(program: Command): void {
           timeout?: string;
           cwd?: string;
           env?: Record<string, string>;
+          envFile?: string;
+          shell?: string;
+          maskEnv?: boolean;
           scope?: string;
         },
       ) => {
@@ -155,7 +185,49 @@ export function registerExec(program: Command): void {
           e.exitCode = 2;
           throw e;
         }
-        const command = commandParts.join(" ");
+
+        // Validate --shell up front for a clear error before any I/O.
+        if (opts.shell !== undefined && opts.shell !== "bash" && opts.shell !== "sh") {
+          const e = new Error(
+            `--shell expects 'bash' or 'sh', got: ${opts.shell}`,
+          ) as Error & { exitCode: number };
+          e.exitCode = 2;
+          throw e;
+        }
+
+        // Merge --env-file then --env (CLI flags win on collision).
+        let mergedEnv: Record<string, string> = {};
+        if (opts.envFile) {
+          const fs = await import("node:fs/promises");
+          let body: string;
+          try {
+            body = await fs.readFile(opts.envFile, "utf8");
+          } catch (cause) {
+            const e = new Error(
+              `failed to read --env-file ${opts.envFile}: ${(cause as Error).message}`,
+            ) as Error & { exitCode: number };
+            e.exitCode = 2;
+            throw e;
+          }
+          mergedEnv = parseEnvFile(body, opts.envFile);
+        }
+        if (opts.env) {
+          mergedEnv = { ...mergedEnv, ...opts.env };
+        }
+
+        // Advisory footgun warning — non-blocking.
+        if (detectShCQuotingFootgun(commandParts)) {
+          process.stderr.write(
+            "warning: 'sh -c' followed by multiple arguments is usually a quoting issue. " +
+              "Try: reoclo exec --shell sh ... -- '<your script as a single arg>'\n",
+          );
+        }
+
+        // Build the command string for the API.
+        const command =
+          opts.shell !== undefined
+            ? buildShellWrappedCommand(opts.shell, commandParts)
+            : commandParts.join(" ");
 
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
@@ -165,7 +237,7 @@ export function registerExec(program: Command): void {
         const body: Record<string, unknown> = { command };
         if (opts.timeout) body["timeout"] = Number.parseInt(opts.timeout, 10);
         if (opts.cwd) body["working_directory"] = opts.cwd;
-        if (opts.env && Object.keys(opts.env).length > 0) body["env"] = opts.env;
+        if (Object.keys(mergedEnv).length > 0) body["env"] = mergedEnv;
         if (opts.scope && opts.scope !== "host") body["scope"] = opts.scope;
 
         const res = await ctx.client.post<ExecResponse>(
@@ -173,21 +245,31 @@ export function registerExec(program: Command): void {
           body,
         );
 
+        // Apply masking before any output (default on; --no-mask-env opts out).
+        const masked: ExecResponse =
+          opts.maskEnv === false
+            ? res
+            : {
+                ...res,
+                stdout: maskOutput(res.stdout, mergedEnv),
+                stderr: maskOutput(res.stderr, mergedEnv),
+              };
+
         if (fmt === "json" || fmt === "yaml") {
-          printObject(res as unknown as Record<string, unknown>, fmt);
+          printObject(masked as unknown as Record<string, unknown>, fmt);
         } else {
-          if (res.stdout) process.stdout.write(res.stdout);
-          if (res.stderr) process.stderr.write(res.stderr);
-          if (res.truncated) {
+          if (masked.stdout) process.stdout.write(masked.stdout);
+          if (masked.stderr) process.stderr.write(masked.stderr);
+          if (masked.truncated) {
             process.stderr.write("\n[output truncated]\n");
           }
         }
 
-        if (res.exit_code !== 0) {
-          const e = new Error(`command exited ${res.exit_code}`) as Error & {
+        if (masked.exit_code !== 0) {
+          const e = new Error(`command exited ${masked.exit_code}`) as Error & {
             exitCode: number;
           };
-          e.exitCode = res.exit_code;
+          e.exitCode = masked.exit_code;
           throw e;
         }
       },
