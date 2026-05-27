@@ -36,7 +36,7 @@ describe("buildShellWrappedCommand", () => {
   });
 
   test("rejects unsupported shells", () => {
-    expect(() => buildShellWrappedCommand("zsh" as "bash", ["echo", "hi"])).toThrow(
+    expect(() => buildShellWrappedCommand("zsh", ["echo", "hi"])).toThrow(
       /unsupported shell/i,
     );
   });
