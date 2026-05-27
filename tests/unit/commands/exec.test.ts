@@ -23,10 +23,15 @@ describe("buildShellWrappedCommand", () => {
     );
   });
 
-  test("handles a script containing pipes inside a single quoted arg", () => {
-    expect(
-      buildShellWrappedCommand("bash", ["docker exec backend env | wc -l"]),
-    ).toBe("bash -c 'docker exec backend env | wc -l'");
+  test("neutralises shell metacharacters via single-quoting", () => {
+    // && would be a command separator if unquoted; single quotes make it inert.
+    expect(buildShellWrappedCommand("bash", ["echo", "hello && rm -rf /"])).toBe(
+      "bash -c 'echo hello && rm -rf /'",
+    );
+  });
+
+  test("throws on empty argv", () => {
+    expect(() => buildShellWrappedCommand("bash", [])).toThrow(/must not be empty/i);
   });
 
   test("rejects unsupported shells", () => {

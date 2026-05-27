@@ -14,13 +14,21 @@ interface ExecResponse {
 
 export type SupportedShell = "bash" | "sh";
 
-/** Wrap argv into "<shell> -c '<joined>'" with POSIX-safe single-quote escaping. */
+/**
+ * Wrap argv into "<shell> -c '<joined>'" with POSIX-safe single-quote escaping.
+ * @param shell - must be "bash" or "sh"; throws otherwise.
+ * @param commandParts - non-empty argv; throws on empty.
+ * @throws {Error} if shell is unsupported or commandParts is empty.
+ */
 export function buildShellWrappedCommand(
-  shell: SupportedShell | string,
+  shell: string,
   commandParts: string[],
 ): string {
   if (shell !== "bash" && shell !== "sh") {
     throw new Error(`unsupported shell: ${shell} (expected 'bash' or 'sh')`);
+  }
+  if (commandParts.length === 0) {
+    throw new Error("commandParts must not be empty");
   }
   const joined = commandParts.join(" ");
   // POSIX-safe: every single quote in the body becomes '\'' (close-quote,
