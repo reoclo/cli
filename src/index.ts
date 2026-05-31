@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { basename } from "node:path";
 import { Command } from "commander";
 import pkg from "../package.json" with { type: "json" };
 import { registerOrg } from "./commands/org";
@@ -39,17 +38,9 @@ import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { getActiveProfile } from "./config/store";
+import { detectProgramName } from "./lib/program-name";
 
 export const VERSION = pkg.version;
-
-// Detect how the user invoked us. We accept `rc` as a short alias for
-// `reoclo`; everything else falls back to "reoclo" so the tool always
-// has a stable name in help output and error messages.
-function detectProgramName(): string {
-  const argv0 = process.argv[0] ?? "";
-  const name = basename(argv0).toLowerCase().replace(/\.exe$/, "");
-  return name === "rc" ? "rc" : "reoclo";
-}
 
 if (import.meta.main) {
   const PROGRAM_NAME = detectProgramName();
