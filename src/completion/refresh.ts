@@ -12,16 +12,27 @@ const REFRESH_SENTINEL = "__refresh-completion";
 
 /**
  * Given a process argv, return [executable, args] to re-invoke the CLI with
- * `__refresh-completion`. Handles both the compiled-binary form (argv =
- * [binary, ...userArgs]) and the runtime form (argv = [runtime, script, ...]).
+ * `__refresh-completion`. Handles both the compiled-binary form and the
+ * runtime form.
+ *
+ * IMPORTANT: do not use `argv[0]` as the executable. In a `bun build --compile`
+ * standalone binary, Bun sets `process.argv[0]` to the literal string "bun"
+ * (not a path), so spawning it fails with ENOENT on machines without Bun.
+ * `process.execPath` always points at the actual running executable — the
+ * standalone binary when compiled, or the `bun` runtime in dev — so we re-spawn
+ * that instead. The script path is only re-passed when the runtime is itself
+ * Bun (the dev/`bun run src/index.ts` form).
  */
-export function reinvokeArgv(argv: string[]): [string, string[]] {
-  const exe = argv[0] ?? process.execPath;
+export function reinvokeArgv(
+  argv: string[],
+  execPath: string = process.execPath,
+): [string, string[]] {
+  const runtimeIsBun = /(^|[/\\])bun(\.exe)?$/i.test(execPath);
   const maybeScript = argv[1] ?? "";
-  if (/\.(ts|js|mjs|cjs)$/.test(maybeScript)) {
-    return [exe, [maybeScript, REFRESH_SENTINEL]];
+  if (runtimeIsBun && /\.(ts|js|mjs|cjs)$/.test(maybeScript)) {
+    return [execPath, [maybeScript, REFRESH_SENTINEL]];
   }
-  return [exe, [REFRESH_SENTINEL]];
+  return [execPath, [REFRESH_SENTINEL]];
 }
 
 /**
@@ -45,6 +56,10 @@ export function maybeSpawnBackgroundRefresh(): void {
     if (!indexIsStale()) return;
     const [exe, args] = reinvokeArgv(process.argv);
     const child = spawn(exe, args, { detached: true, stdio: "ignore" });
+    // A missing/unspawnable executable surfaces as an async 'error' event, not
+    // a synchronous throw, so the surrounding try/catch cannot swallow it.
+    // Attach a no-op handler so a failed background refresh stays silent.
+    child.on("error", () => {});
     child.unref();
   } catch {
     // background refresh is best-effort
