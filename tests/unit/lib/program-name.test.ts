@@ -14,8 +14,11 @@ describe("detectProgramName", () => {
     expect(detectProgramName("/usr/local/bin/rc")).toBe("rc");
   });
 
-  test("resolves the rc alias case-insensitively with a .exe suffix (Windows)", () => {
-    expect(detectProgramName("C:\\bin\\RC.exe")).toBe("rc");
+  test("strips a .exe suffix and matches case-insensitively", () => {
+    // Bare names only: node:path.basename is POSIX in the test env and does
+    // not split on backslashes, so Windows drive paths can't be asserted here.
+    expect(detectProgramName("RC.exe")).toBe("rc");
+    expect(detectProgramName("reoclo.exe")).toBe("reoclo");
   });
 
   test("resolves to reoclo for the canonical name", () => {
