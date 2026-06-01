@@ -44,6 +44,13 @@ export function registerApps(program: Command): void {
         ],
         fmt,
       );
+      if (fmt === "text" && appsRes.items.length === 0) {
+        process.stderr.write(
+          "note: no Reoclo-managed applications. 'apps' / 'deployments' track apps deployed " +
+            "through Reoclo — not raw Docker Swarm services. Use 'reoclo containers ls' to see " +
+            "running containers/services.\n",
+        );
+      }
     });
 
   withCompletion(

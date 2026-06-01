@@ -32,7 +32,7 @@ import { registerAlerts } from "./commands/alerts";
 import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
-import { bootstrap, setGlobalProfileOverride } from "./client/bootstrap";
+import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import { filterCommandsByCapability } from "./client/help-filter";
@@ -56,6 +56,10 @@ if (import.meta.main) {
     .option(
       "--profile <name>",
       "use a named profile (overrides the active profile and $REOCLO_PROFILE)",
+    )
+    .option(
+      "--org <slug>",
+      "run against this organization for one invocation (overrides $REOCLO_ORG and the active org)",
     );
 
   registerOrg(program);
@@ -138,6 +142,8 @@ if (import.meta.main) {
     // then the active profile). A command-local --profile still wins downstream
     // via opts.profile.
     setGlobalProfileOverride(actionCommand.optsWithGlobals().profile as string | undefined);
+    // Same for the global --org flag → per-invocation organization override.
+    setGlobalOrgOverride(actionCommand.optsWithGlobals().org as string | undefined);
 
     // For nested commands like `apps deploy`, actionCommand is the leaf
     // ("deploy"), and its parent is the group ("apps"). For top-level

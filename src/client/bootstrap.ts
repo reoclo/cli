@@ -5,6 +5,9 @@ import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { apiUrl, streamsUrl as defaultStreamsUrlHelper, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
+import { resolveOrgOverride } from "../config/org-resolve";
+import { mintTenantSwitchToken } from "../auth/tenant-switch";
+import type { Me } from "./types";
 
 /**
  * Profile name captured from the global `--profile` flag by index.ts's
@@ -15,6 +18,16 @@ import { resolveProfileName } from "../config/profile-resolve";
 let globalProfileOverride: string | undefined;
 export function setGlobalProfileOverride(name: string | undefined): void {
   globalProfileOverride = name;
+}
+
+/**
+ * Organization slug captured from the global `--org` flag by index.ts's
+ * preAction hook — the per-invocation org override counterpart to
+ * {@link setGlobalProfileOverride}. Reaches bootstrap() the same way.
+ */
+let globalOrgOverride: string | undefined;
+export function setGlobalOrgOverride(slug: string | undefined): void {
+  globalOrgOverride = slug;
 }
 
 export interface ResolvedContext {
@@ -73,6 +86,7 @@ export function requireTenantId(ctx: ResolvedContext): string {
 export interface BootstrapOptions {
   token?: string; // --token
   profile?: string; // --profile
+  org?: string; // --org (per-invocation organization override)
   api?: string; // --api
   streams?: string; // --streams
   /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
@@ -125,12 +139,15 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     profile?.streams_url ??
     defaultStreamsUrl(api);
 
-  // Build refresh callback for OAuth profiles
-  let refreshTokenCallback: (() => Promise<string | null>) | undefined;
+  // Build the OAuth refresh callback up front so it's available to BOTH the
+  // org-override probe below and the final client. It refreshes + persists the
+  // PROFILE's token; the final client only attaches it when we haven't minted a
+  // separate org-override token (see suppressRefresh).
+  let profileRefreshCallback: (() => Promise<string | null>) | undefined;
   if (profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
     const capturedProfileName = profileName;
     const capturedProfile = profile;
-    refreshTokenCallback = async (): Promise<string | null> => {
+    profileRefreshCallback = async (): Promise<string | null> => {
       try {
         const store = await resolveStore();
         const refreshTokenKey = capturedProfile.refresh_token_ref!;
@@ -167,11 +184,66 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     };
   }
 
+  // Per-invocation organization override (`--org` / $REOCLO_ORG). Resolves the
+  // target org slug -> tenant_id via /auth/me, then mints a token scoped to it
+  // through the OAuth tenant_switch grant — in-memory only, never persisted, so
+  // parallel agents / CI never clobber the stored active org. When the override
+  // already equals the profile's org it's a no-op (no extra network calls).
+  let tenantId = profile?.tenant_id;
+  let effectiveToken = token;
+  let suppressRefresh = false;
+  const orgOverride = resolveOrgOverride({
+    flagOrg: opts.org ?? globalOrgOverride,
+    envOrg: process.env.REOCLO_ORG,
+  });
+  if (orgOverride && orgOverride !== profile?.tenant_slug) {
+    if (!profile || profile.auth_kind !== "oauth") {
+      const err = new Error(
+        "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
+      ) as Error & { exitCode: number };
+      err.exitCode = 4;
+      throw err;
+    }
+    // The probe reuses the profile's refresh callback so a stale-but-refreshable
+    // token transparently refreshes here, matching the non-override path.
+    const probe = new HttpClient({
+      baseUrl: api,
+      token,
+      profile: profileName,
+      refreshToken: profileRefreshCallback,
+    });
+    const me = await probe.get<Me>("/auth/me");
+    const target = (me.memberships ?? []).find((m) => m.tenant_slug === orgOverride);
+    if (!target) {
+      const granted = (me.memberships ?? []).map((m) => m.tenant_slug).join(", ") || "(none)";
+      const err = new Error(
+        `org '${orgOverride}' is not in your granted organizations.\n` +
+          `Granted: ${granted}\nRe-run 'reoclo login' to expand the consent.`,
+      ) as Error & { exitCode: number };
+      err.exitCode = 5;
+      throw err;
+    }
+    tenantId = target.tenant_id;
+    // Only mint a fresh token when actually crossing org boundaries — a
+    // tenant_switch back to the profile's own org is unnecessary.
+    if (target.tenant_id !== profile.tenant_id) {
+      effectiveToken = await mintTenantSwitchToken({
+        authUrl: profile.oauth_auth_url ?? defaultAuthUrl(),
+        clientId: profile.oauth_client_id ?? "reoclo-cli",
+        currentAccessToken: token,
+        tenantId: target.tenant_id,
+      });
+      // The minted token is fresh and bound to the override org; a 401-driven
+      // refresh would re-bind to the profile's default org, so suppress it.
+      suppressRefresh = true;
+    }
+  }
+
   const client = new HttpClient({
     baseUrl: api,
-    token,
+    token: effectiveToken,
     profile: profileName,
-    refreshToken: refreshTokenCallback,
+    refreshToken: suppressRefresh ? undefined : profileRefreshCallback,
     mcpSource: opts.mcpSource,
   });
 
@@ -180,8 +252,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     profileName,
     api,
     streamsUrl,
-    token,
-    tokenType: detectKeyType(token),
-    tenantId: profile?.tenant_id,
+    token: effectiveToken,
+    tokenType: detectKeyType(effectiveToken),
+    tenantId,
   };
 }

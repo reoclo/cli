@@ -34,6 +34,36 @@ interface LiveLogResponse {
   fetched_at: string;
 }
 
+/** Write an advisory line to stderr (kept off stdout so piped JSON stays clean). */
+function notice(msg: string): void {
+  process.stderr.write(`note: ${msg}\n`);
+}
+
+/**
+ * Printed when a centralized-log query returns zero rows. Reoclo only has logs
+ * to search once ingestion is active for the tenant; until then these queries
+ * are legitimately empty — not a malformed query — so say so explicitly and
+ * point at the live container-log fallback instead of leaving the user guessing.
+ */
+export function noLogsNotice(serverId?: string): void {
+  const scope = serverId ? "this server" : "this tenant";
+  notice(
+    `no ingested logs matched for ${scope}. ` +
+      "If log ingestion isn't active yet this stays empty regardless of the query — " +
+      "use 'reoclo containers logs <server> <name>' or 'reoclo logs tail' for live container logs.",
+  );
+}
+
+/**
+ * True when a `logs usage` payload reports no ingested data — used to flag that
+ * centralized ingestion looks inactive even though a retention window is set.
+ */
+export function ingestionLooksInactive(usage: Record<string, unknown>): boolean {
+  const streams = Number(usage["total_streams"] ?? 0);
+  const bytes = Number(usage["total_bytes"] ?? 0);
+  return (!Number.isFinite(streams) || streams === 0) && (!Number.isFinite(bytes) || bytes === 0);
+}
+
 export function registerLogs(program: Command): void {
   const g = program.command("logs").description("logs");
 
@@ -156,6 +186,7 @@ export function registerLogs(program: Command): void {
       .option("--from <spec>", "earliest time (e.g. 24h, 7d, ISO 8601)")
       .option("--to <spec>", "latest time")
       .option("--limit <n>", "max rows (default 100, cap 1000)", "100")
+      .option("--count", "print only the total match count (triage mode)")
       .action(
         async (
           query: string | undefined,
@@ -168,6 +199,7 @@ export function registerLogs(program: Command): void {
             from?: string;
             to?: string;
             limit: string;
+            count?: boolean;
           },
         ) => {
           const fmt = resolveFormat(globalOutput(program));
@@ -187,13 +219,8 @@ export function registerLogs(program: Command): void {
           const fromDate = opts.from ? parseTimeSpec(opts.from).toISOString() : undefined;
           const toDate = opts.to ? parseTimeSpec(opts.to).toISOString() : undefined;
 
-          const items: SearchLogEntry[] = [];
-          let page = 1;
-          while (items.length < limit) {
-            const q = new URLSearchParams({
-              page: String(page),
-              page_size: String(pageSize),
-            });
+          const mkQuery = (page: number, size: number): URLSearchParams => {
+            const q = new URLSearchParams({ page: String(page), page_size: String(size) });
             if (query) q.set("search", query);
             if (serverId) q.set("server_id", serverId);
             if (sourceType) q.set("source_type", sourceType);
@@ -202,8 +229,27 @@ export function registerLogs(program: Command): void {
             if (level) q.set("level", level);
             if (fromDate) q.set("from_date", fromDate);
             if (toDate) q.set("to_date", toDate);
+            return q;
+          };
+
+          // --count: ask for a single row only and report the server-side total.
+          if (opts.count) {
             const res = await ctx.client.get<SearchLogResponse>(
-              `/tenants/${tid}/logs?${q.toString()}`,
+              `/tenants/${tid}/logs?${mkQuery(1, 1).toString()}`,
+            );
+            if (fmt === "json" || fmt === "yaml") {
+              printObject({ total: res.total ?? 0 }, fmt);
+            } else {
+              process.stdout.write(`${res.total ?? 0}\n`);
+            }
+            return;
+          }
+
+          const items: SearchLogEntry[] = [];
+          let page = 1;
+          while (items.length < limit) {
+            const res = await ctx.client.get<SearchLogResponse>(
+              `/tenants/${tid}/logs?${mkQuery(page, pageSize).toString()}`,
             );
             for (const row of res.items) {
               if (items.length >= limit) break;
@@ -217,6 +263,10 @@ export function registerLogs(program: Command): void {
             for (const item of items) {
               printObject(item as unknown as Record<string, unknown>, fmt);
             }
+            return;
+          }
+          if (items.length === 0) {
+            noLogsNotice(serverId);
             return;
           }
           const rows = items.map((r) => ({
@@ -331,6 +381,10 @@ export function registerLogs(program: Command): void {
       const total = r.total ?? 0;
       const errors = r.error_count ?? 0;
       const warns = r.warn_count ?? 0;
+      if (total === 0) {
+        noLogsNotice();
+        return;
+      }
       process.stdout.write("By level\n");
       const levelRows = Object.entries(byLevel).map(([level, count]) => ({ level, count }));
       printList(
@@ -363,6 +417,13 @@ export function registerLogs(program: Command): void {
       const tid = requireTenantId(ctx);
       const r = await ctx.client.get<Record<string, unknown>>(`/tenants/${tid}/logs/usage`);
       printObject(r, fmt);
+      if (fmt === "text" && ingestionLooksInactive(r)) {
+        notice(
+          "log ingestion is not active for this tenant (0 streams / 0 bytes) — " +
+            "the retention window applies only once streams start arriving. " +
+            "Until then, use 'reoclo containers logs' / 'reoclo logs tail' for live container logs.",
+        );
+      }
     });
 
   withCompletion(
@@ -392,6 +453,14 @@ export function registerLogs(program: Command): void {
         // is unavailable; treat as empty so printList doesn't crash.
         const containers = res.containers ?? [];
         const journalUnits = res.journal_units ?? [];
+        if (containers.length === 0 && journalUnits.length === 0) {
+          notice(
+            "no log sources reported for this server. The runner snapshot may be stale or " +
+              "unavailable — try 'reoclo containers refresh', then " +
+              "'reoclo containers ls --server <server>' for the live container list.",
+          );
+          return;
+        }
         process.stdout.write("Containers\n");
         printList(
           containers as unknown as Array<Record<string, unknown>>,
