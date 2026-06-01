@@ -32,12 +32,13 @@ import { registerAlerts } from "./commands/alerts";
 import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
-import { bootstrap } from "./client/bootstrap";
+import { bootstrap, setGlobalProfileOverride } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
-import { getActiveProfile } from "./config/store";
+import { loadConfig } from "./config/store";
+import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
 import { detectProgramName } from "./lib/program-name";
 
 export const VERSION = pkg.version;
@@ -51,7 +52,11 @@ if (import.meta.main) {
     .option("-o, --output <fmt>", "output format: text|json|yaml", "text")
     .option("--no-color", "disable ANSI colors")
     .option("--quiet", "suppress non-error output")
-    .option("--verbose", "log HTTP requests (tokens redacted)");
+    .option("--verbose", "log HTTP requests (tokens redacted)")
+    .option(
+      "--profile <name>",
+      "use a named profile (overrides the active profile and $REOCLO_PROFILE)",
+    );
 
   registerOrg(program);
   registerProfile(program);
@@ -85,12 +90,20 @@ if (import.meta.main) {
   registerAudit(program);
   registerDashboard(program);
 
-  // Load capabilities from the active profile (best-effort — failure hides all gated commands,
-  // which is correct behaviour for unauthenticated users).
+  // Load capabilities for the profile this invocation will actually use, so the
+  // visible/gated command set reflects --profile / $REOCLO_PROFILE — not just the
+  // config's active profile. The flag is read straight from argv since commander
+  // hasn't parsed yet at this point. Best-effort: failure hides all gated
+  // commands, which is correct behaviour for unauthenticated users.
   let capabilities: string[] | undefined;
   try {
-    const profile = await getActiveProfile();
-    capabilities = profile?.capabilities;
+    const cfg = await loadConfig();
+    const gatingProfile = resolveProfileName({
+      flagProfile: extractProfileFromArgv(process.argv),
+      envProfile: process.env.REOCLO_PROFILE,
+      activeProfile: cfg.active_profile,
+    });
+    capabilities = cfg.profiles[gatingProfile]?.capabilities;
   } catch {
     capabilities = undefined;
   }
@@ -120,6 +133,12 @@ if (import.meta.main) {
   }
 
   program.hook("preAction", async (_thisCommand, actionCommand) => {
+    // Capture the global --profile flag so bootstrap() — called with no args in
+    // most command actions — honors it (then falls through to $REOCLO_PROFILE,
+    // then the active profile). A command-local --profile still wins downstream
+    // via opts.profile.
+    setGlobalProfileOverride(actionCommand.optsWithGlobals().profile as string | undefined);
+
     // For nested commands like `apps deploy`, actionCommand is the leaf
     // ("deploy"), and its parent is the group ("apps"). For top-level
     // commands like `whoami`, parent is the root program.

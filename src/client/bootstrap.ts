@@ -4,6 +4,18 @@ import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { apiUrl, streamsUrl as defaultStreamsUrlHelper, authUrl as defaultAuthUrl } from "../lib/urls";
+import { resolveProfileName } from "../config/profile-resolve";
+
+/**
+ * Profile name captured from the global `--profile` flag by index.ts's
+ * preAction hook. Most command actions call bootstrap() with no args, so this
+ * module-level override is how the global flag reaches them. A command-local
+ * `--profile` (e.g. on `login` / `mcp`) still wins via `opts.profile`.
+ */
+let globalProfileOverride: string | undefined;
+export function setGlobalProfileOverride(name: string | undefined): void {
+  globalProfileOverride = name;
+}
 
 export interface ResolvedContext {
   client: HttpClient;
@@ -79,7 +91,11 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
 
   const cfg = await loadConfig();
-  const profileName = opts.profile ?? process.env.REOCLO_PROFILE ?? cfg.active_profile;
+  const profileName = resolveProfileName({
+    flagProfile: opts.profile ?? globalProfileOverride,
+    envProfile: process.env.REOCLO_PROFILE,
+    activeProfile: cfg.active_profile,
+  });
   const profile = cfg.profiles[profileName];
 
   let token: string | undefined;
