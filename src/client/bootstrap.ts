@@ -1,5 +1,5 @@
 import { loadConfig, saveProfile } from "../config/store";
-import { resolveStore } from "../config/token-store";
+import { resolveStore, refreshTokenKeyCandidates } from "../config/token-store";
 import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
@@ -150,19 +150,33 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     profileRefreshCallback = async (): Promise<string | null> => {
       try {
         const store = await resolveStore();
-        const refreshTokenKey = capturedProfile.refresh_token_ref!;
-        // The ref stored is the keyring key name (e.g. "reoclo-default-refresh")
-        // For file store we use the same key directly.
-        const storedRefresh = await store.get(refreshTokenKey);
-        if (!storedRefresh) return null;
+        // Find the refresh token under the canonical `${profile}-refresh` key
+        // (where login stores it), falling back to any legacy `refresh_token_ref`
+        // recorded in the profile. A past mismatch between these meant refresh
+        // silently never fired until the access token expired.
+        const candidates = refreshTokenKeyCandidates(
+          capturedProfileName,
+          capturedProfile.refresh_token_ref ?? undefined,
+        );
+        let refreshKey: string | undefined;
+        let storedRefresh: string | null = null;
+        for (const key of candidates) {
+          const value = await store.get(key);
+          if (value) {
+            refreshKey = key;
+            storedRefresh = value;
+            break;
+          }
+        }
+        if (!storedRefresh || !refreshKey) return null;
 
         const resolvedAuthUrl = capturedProfile.oauth_auth_url ?? defaultAuthUrl();
         const clientId = capturedProfile.oauth_client_id ?? "reoclo-cli";
         const newTokens = await refreshAccessToken(resolvedAuthUrl, storedRefresh, clientId);
 
-        // Persist new tokens
+        // Persist new tokens under the same keys we read from.
         await store.set(capturedProfileName, newTokens.access_token);
-        await store.set(refreshTokenKey, newTokens.refresh_token);
+        await store.set(refreshKey, newTokens.refresh_token);
 
         // Update expiry in profile
         const expiresAt = newTokens.expires_in
