@@ -1,5 +1,5 @@
 import { detectKeyType, apiPrefix } from "./routing";
-import { mapHttpError, NetworkError } from "./errors";
+import { mapHttpError, NetworkError, ReauthRequiredError } from "./errors";
 import { updateProfileCapabilities as _updateProfileCapabilities } from "../config/store";
 
 export interface HttpClientOptions {
@@ -11,12 +11,15 @@ export interface HttpClientOptions {
   /** Override capability persistence (primarily for testing). */
   onCapabilities?: (profile: string, caps: string[]) => Promise<void>;
   /**
-   * Called when a 401 is received and the profile uses OAuth.
-   * Should attempt to refresh the access token and return the new token,
-   * or return null if refresh fails. When non-null, the original request
-   * is retried exactly once with the new token.
+   * Called when a 401 is received and the profile uses OAuth. Receives the
+   * access token that just failed (so the callback can detect another process
+   * having already refreshed it). Should return the new token, or null if the
+   * failure is transient (the original 401 then surfaces). When non-null, the
+   * original request is retried exactly once with the new token. A thrown
+   * {@link ReauthRequiredError} propagates to the caller unchanged (re-login
+   * required); any other thrown error is swallowed into the original 401.
    */
-  refreshToken?: () => Promise<string | null>;
+  refreshToken?: (failedToken: string) => Promise<string | null>;
   /**
    * When true, adds `X-Reoclo-Source: mcp` to every request.
    * Set by the MCP server command so that API-side traffic attribution
@@ -112,9 +115,12 @@ export class HttpClient {
     if (res.status === 401 && this.opts.refreshToken) {
       let newToken: string | null = null;
       try {
-        newToken = await this.opts.refreshToken();
-      } catch {
-        // refresh threw — fall through to the original 401
+        newToken = await this.opts.refreshToken(this.currentToken);
+      } catch (e) {
+        // A ReauthRequiredError is the callback's deliberate signal that
+        // re-login is needed — surface it instead of the generic 401.
+        if (e instanceof ReauthRequiredError) throw e;
+        // Any other refresh error — fall through to the original 401.
       }
       if (newToken) {
         this.currentToken = newToken;

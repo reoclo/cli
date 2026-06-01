@@ -249,4 +249,29 @@ describe("refreshAccessToken", () => {
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).code).toBe("network");
   });
+
+  test("attaches the HTTP status when the auth server rejects the refresh token", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response('{"error":"invalid_grant"}', {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    const err = await refreshAccessToken(AUTH_BASE, "bad_rt", CLIENT_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceFlowError);
+    expect((err as DeviceFlowError).status).toBe(400);
+  });
+
+  test("leaves status undefined on a genuine network failure", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.reject(new Error("ECONNREFUSED")),
+    ) as unknown as typeof fetch;
+
+    const err = await refreshAccessToken(AUTH_BASE, "rt", CLIENT_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceFlowError);
+    expect((err as DeviceFlowError).status).toBeUndefined();
+  });
 });

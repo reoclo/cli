@@ -35,6 +35,27 @@ export class NotFoundError extends ApiError {
   }
 }
 
+/**
+ * Raised when a 401 cannot be recovered by refreshing — either there is no
+ * stored refresh token (`missing`) or the auth server rejected it (`rejected`,
+ * e.g. expired / revoked / reuse-detected). Carries a profile-specific,
+ * actionable message so the user knows exactly which `reoclo login` to run,
+ * instead of the generic "Invalid or expired token". exitCode 3 matches the
+ * other auth failures.
+ */
+export class ReauthRequiredError extends ApiError {
+  override exitCode = 3;
+  constructor(profile: string, kind: "missing" | "rejected") {
+    const message =
+      kind === "missing"
+        ? `no stored session to refresh for profile '${profile}'`
+        : `session for profile '${profile}' could not be refreshed — the refresh token was rejected (it may be expired or revoked)`;
+    const verb = kind === "missing" ? "sign in" : "re-authenticate";
+    super(401, message, "", `Run 'reoclo login --profile ${profile}' to ${verb}.`);
+    this.name = "ReauthRequiredError";
+  }
+}
+
 export class NetworkError extends Error {
   exitCode = 7;
   constructor(

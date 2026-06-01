@@ -5,6 +5,7 @@ import {
   PermissionError,
   NotFoundError,
   NetworkError,
+  ReauthRequiredError,
   mapHttpError,
 } from "../../../src/client/errors";
 
@@ -35,4 +36,21 @@ test("mapHttpError returns ApiError for other 5xx", () => {
 test("NetworkError exitCode is 7", () => {
   const e = new NetworkError("ECONNREFUSED");
   expect(e.exitCode).toBe(7);
+});
+
+test("ReauthRequiredError(rejected) → exitCode 3, profile-specific message + login hint", () => {
+  const e = new ReauthRequiredError("staging", "rejected");
+  expect(e).toBeInstanceOf(ApiError);
+  expect(e.exitCode).toBe(3);
+  expect(e.message).toContain("staging");
+  expect(e.message).toMatch(/rejected|expired|revoked/i);
+  expect(e.hint).toContain("reoclo login --profile staging");
+});
+
+test("ReauthRequiredError(missing) → message reflects no stored session", () => {
+  const e = new ReauthRequiredError("default", "missing");
+  expect(e.exitCode).toBe(3);
+  expect(e.message).toContain("default");
+  expect(e.message).toMatch(/no stored session/i);
+  expect(e.hint).toContain("reoclo login --profile default");
 });

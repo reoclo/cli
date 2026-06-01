@@ -22,6 +22,10 @@ export class DeviceFlowError extends Error {
   constructor(
     public code: "expired_token" | "access_denied" | "network",
     message: string,
+    /** HTTP status when the failure was a non-2xx response (undefined for
+     *  network/transport failures). Lets callers tell a server rejection
+     *  (4xx → re-auth) from a transient blip (→ retry). */
+    public status?: number,
   ) {
     super(message);
     this.name = "DeviceFlowError";
@@ -203,7 +207,7 @@ export async function refreshAccessToken(
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new DeviceFlowError("network", `token refresh failed (${res.status}): ${text}`);
+    throw new DeviceFlowError("network", `token refresh failed (${res.status}): ${text}`, res.status);
   }
   return res.json() as Promise<TokenResponse>;
 }
