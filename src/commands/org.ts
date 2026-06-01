@@ -4,6 +4,7 @@ import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
 import { getActiveProfile, loadConfig, saveProfile } from "../config/store";
 import { resolveStore } from "../config/token-store";
+import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
 
 /**
@@ -109,41 +110,24 @@ export function registerOrg(program: Command): void {
       }
 
       const authUrl = profile.oauth_auth_url ?? "https://auth.reoclo.com";
-      const body = new URLSearchParams({
-        grant_type: "tenant_switch",
-        client_id: profile.oauth_client_id ?? "reoclo-cli",
-        current_access_token: currentToken,
-        tenant_id: target.tenant_id,
-      });
-      const res = await fetch(`${authUrl.replace(/\/$/, "")}/oauth/token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: body.toString(),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        let detail = text;
-        try {
-          const parsed = JSON.parse(text) as {
-            detail?: { error?: string; error_description?: string };
-          };
-          detail = parsed.detail?.error_description ?? parsed.detail?.error ?? text;
-        } catch {
-          // non-JSON body — surface as-is
-        }
-        process.stderr.write(`tenant_switch failed: ${res.status} — ${detail}\n`);
+      let accessToken: string;
+      try {
+        accessToken = await mintTenantSwitchToken({
+          authUrl,
+          clientId: profile.oauth_client_id ?? "reoclo-cli",
+          currentAccessToken: currentToken,
+          tenantId: target.tenant_id,
+        });
+      } catch (e) {
+        process.stderr.write(`${(e as Error).message}\n`);
         process.exit(1);
       }
-      const data = (await res.json()) as { access_token: string };
       // Persist the new token + bumped tenant context. We don't rotate the
       // refresh token here (the tenant_switch grant doesn't issue one) — the
       // original refresh-token row in the keyring keeps working for the next
       // 401-driven refresh, which will mint a token bound to the new
       // tenant_id via _issue_tokens' granted_tenant_ids[0] path.
-      await store.set(cfg.active_profile, data.access_token);
+      await store.set(cfg.active_profile, accessToken);
       const updated = {
         ...profile,
         tenant_id: target.tenant_id,

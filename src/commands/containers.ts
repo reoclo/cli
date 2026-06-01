@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { resolveServer } from "../client/resolve";
+import { maskInspectResponse } from "../lib/mask-secrets";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 const CONTAINER_STATES = ["created", "restarting", "running", "paused", "exited", "dead"];
@@ -37,6 +38,19 @@ function collectArr(value: string, prev: string[]): string[] {
   return [...prev, value];
 }
 
+/**
+ * Client-side case-insensitive substring filter on container name. Returns the
+ * input unchanged when `substr` is empty/undefined so `--name` is opt-in.
+ */
+export function filterByName<T extends { name: string }>(
+  entries: readonly T[],
+  substr: string | undefined,
+): T[] {
+  const needle = substr?.trim().toLowerCase();
+  if (!needle) return [...entries];
+  return entries.filter((e) => e.name.toLowerCase().includes(needle));
+}
+
 /** Parse `host:container[/proto]` into a port spec object. */
 function parsePort(spec: string): { host: number; container: number; protocol: string } {
   const slash = spec.split("/");
@@ -61,8 +75,10 @@ Examples:
   $ reoclo containers ls
   $ reoclo containers ls --server my-server
   $ reoclo containers ls --server my-server --status running
+  $ reoclo containers ls --name api          # substring filter on the fleet
   $ reoclo containers inspect my-server my-app
   $ reoclo containers logs my-server my-app --tail 100
+  $ reoclo containers logs my-server my-app --since 1h --search error -f
   $ reoclo containers restart my-server my-app
   $ reoclo containers scale my-server my-app 3
   $ reoclo containers recreate my-server my-app --env DEBUG=1
@@ -75,7 +91,8 @@ Examples:
     .option("--server <idOrSlug>", "filter by server")
     .option("--app <idOrSlug>", "filter by application slug or id")
     .option("--status <status>", "filter by container status")
-    .action(async (opts: { server?: string; app?: string; status?: string }) => {
+    .option("--name <substr>", "filter by container name substring (case-insensitive)")
+    .action(async (opts: { server?: string; app?: string; status?: string; name?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
@@ -99,8 +116,11 @@ Examples:
         staleCount += res.stale_servers?.length ?? 0;
         cursor = res.next_cursor ?? undefined;
       } while (cursor);
+      // --name is a client-side substring filter so it works without a
+      // dedicated server-side query param and never scrolls the whole fleet.
+      const rows = filterByName(all, opts.name);
       printList(
-        all as unknown as Array<Record<string, unknown>>,
+        rows as unknown as Array<Record<string, unknown>>,
         [
           { key: "server_hostname", label: "SERVER" },
           { key: "name", label: "NAME" },
@@ -241,40 +261,139 @@ Examples:
 
   const inspectCmd = g
     .command("inspect <server> <name>")
-    .description("inspect a container on a server")
-    .action(async (server: string, name: string) => {
+    .description("inspect a container on a server (env values masked by default)")
+    .option("--show-secrets", "reveal env var values (masked with *** by default)")
+    .addHelpText(
+      "after",
+      `
+Env var VALUES are masked with '***' by default — a running container often
+holds live production secrets (DB URIs, cloud keys, API tokens). Keys stay
+visible. Pass --show-secrets to reveal the values.
+`,
+    )
+    .action(async (server: string, name: string, opts: { showSecrets?: boolean }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
-      const res = await ctx.client.get<Record<string, unknown>>(
+      const res = await ctx.client.get<{ env_vars?: Array<{ key: string; value: string }> }>(
         `/tenants/${tid}/servers/${sid}/containers/${name}/inspect`,
       );
-      printObject(res, fmt);
+      const { response, hiddenCount } = maskInspectResponse(res, opts.showSecrets === true);
+      printObject(response, fmt);
+      if (hiddenCount > 0 && fmt === "text") {
+        process.stderr.write(
+          `note: ${hiddenCount} env value(s) hidden — pass --show-secrets to reveal\n`,
+        );
+      }
     });
   withCompletion(inspectCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(inspectCmd, "container:read");
 
   const logsCmd = g
     .command("logs <server> <name>")
-    .description("fetch a container's logs")
+    .description("fetch (or follow) a container's logs")
     .option("--tail <n>", "number of log lines (default 200)")
-    .action(async (server: string, name: string, opts: { tail?: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
-      const sid = await resolveServer(ctx.client, tid, server);
-      const qs = opts.tail ? `?tail=${encodeURIComponent(opts.tail)}` : "";
-      const res = await ctx.client.get<{ stdout: string; stderr: string } & Record<string, unknown>>(
-        `/tenants/${tid}/servers/${sid}/containers/${name}/logs${qs}`,
-      );
-      if (fmt === "json" || fmt === "yaml") {
-        printObject(res, fmt);
-        return;
-      }
-      if (res.stdout) process.stdout.write(res.stdout.endsWith("\n") ? res.stdout : `${res.stdout}\n`);
-      if (res.stderr) process.stderr.write(res.stderr.endsWith("\n") ? res.stderr : `${res.stderr}\n`);
-    });
+    .option("--since <duration>", "only lines newer than e.g. 1h, 30m (streaming source)")
+    .option("--search <pattern>", "regex to filter messages (streaming source)")
+    .option("-f, --follow", "stream new log lines, polling every 2s (streaming source)")
+    .addHelpText(
+      "after",
+      `
+By default logs are read straight from the container's stdout/stderr (--tail).
+Passing --since, --search, or --follow switches to the runner's streaming
+source (the same one 'reoclo logs tail' uses), which supports time ranges,
+regex filtering, and live follow.
+`,
+    )
+    .action(
+      async (
+        server: string,
+        name: string,
+        opts: { tail?: string; since?: string; search?: string; follow?: boolean },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const sid = await resolveServer(ctx.client, tid, server);
+
+        const useStream =
+          opts.since !== undefined || opts.search !== undefined || opts.follow === true;
+
+        // Simple path: docker stdout/stderr via the per-container logs endpoint.
+        if (!useStream) {
+          const qs = opts.tail ? `?tail=${encodeURIComponent(opts.tail)}` : "";
+          const res = await ctx.client.get<
+            { stdout: string; stderr: string } & Record<string, unknown>
+          >(`/tenants/${tid}/servers/${sid}/containers/${name}/logs${qs}`);
+          if (fmt === "json" || fmt === "yaml") {
+            printObject(res, fmt);
+            return;
+          }
+          if (res.stdout)
+            process.stdout.write(res.stdout.endsWith("\n") ? res.stdout : `${res.stdout}\n`);
+          if (res.stderr)
+            process.stderr.write(res.stderr.endsWith("\n") ? res.stderr : `${res.stderr}\n`);
+          return;
+        }
+
+        // Streaming path: runner live-logs source (supports since/search/follow).
+        interface LiveLogEntry {
+          ts: string;
+          level: string;
+          message: string;
+          [k: string]: unknown;
+        }
+        interface LiveLogResponse {
+          entries: LiveLogEntry[];
+          [k: string]: unknown;
+        }
+        const liveQs = (since: string, tail: string): string => {
+          const p = new URLSearchParams({
+            server_id: sid,
+            source_type: "container",
+            source_name: name,
+            since,
+            tail,
+          });
+          if (opts.search) p.set("search", opts.search);
+          return p.toString();
+        };
+        const printEntries = (entries: LiveLogEntry[]): void => {
+          for (const e of entries) process.stdout.write(`${e.ts} [${e.level}] ${e.message}\n`);
+        };
+
+        const initial = await ctx.client.get<LiveLogResponse>(
+          `/tenants/${tid}/logs/live?${liveQs(opts.since ?? "5m", opts.tail ?? "200")}`,
+        );
+
+        if (!opts.follow && (fmt === "json" || fmt === "yaml")) {
+          printObject(initial, fmt);
+          return;
+        }
+        printEntries(initial.entries);
+        if (!opts.follow) return;
+
+        // Follow: poll every 2s, deduping on the most recent ts seen.
+        let lastTs = initial.entries.at(-1)?.ts ?? new Date().toISOString();
+        let stopped = false;
+        process.once("SIGINT", () => {
+          stopped = true;
+        });
+        while (!stopped) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (stopped) break;
+          const res = await ctx.client.get<LiveLogResponse>(
+            `/tenants/${tid}/logs/live?${liveQs(lastTs, "200")}`,
+          );
+          const fresh = res.entries.filter((e) => e.ts > lastTs);
+          if (fresh.length > 0) {
+            printEntries(fresh);
+            lastTs = fresh.at(-1)!.ts;
+          }
+        }
+      },
+    );
   withCompletion(logsCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(logsCmd, "container:logs:tail");
 

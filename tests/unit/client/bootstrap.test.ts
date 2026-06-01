@@ -11,6 +11,7 @@ beforeEach(() => {
   delete process.env.REOCLO_API_KEY;
   delete process.env.REOCLO_AUTOMATION_KEY;
   delete process.env.REOCLO_PROFILE;
+  delete process.env.REOCLO_ORG;
   delete process.env.REOCLO_API_URL;
   delete process.env.REOCLO_STREAMS_URL;
 });

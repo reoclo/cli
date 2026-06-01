@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { registerContainers } from "../../../src/commands/containers";
+import { registerContainers, filterByName } from "../../../src/commands/containers";
 import { getRequiredCapability } from "../../../src/client/command-meta";
 import { filterCommandsByCapability } from "../../../src/client/help-filter";
 
@@ -8,6 +8,10 @@ function containersCmd(): Command {
   const p = new Command().name("reoclo");
   registerContainers(p);
   return p.commands.find((c) => c.name() === "containers")!;
+}
+
+function optNames(cmd: Command): string[] {
+  return cmd.options.map((o) => o.long ?? o.short ?? "");
 }
 
 describe("reoclo containers", () => {
@@ -66,5 +70,56 @@ describe("reoclo containers", () => {
     expect(getRequiredCapability(g.commands.find((c) => c.name() === "restart")!)).toBe(
       "container:write",
     );
+  });
+
+  test("inspect exposes --show-secrets (masked by default)", () => {
+    const g = containersCmd();
+    const inspect = g.commands.find((c) => c.name() === "inspect")!;
+    expect(optNames(inspect)).toContain("--show-secrets");
+  });
+
+  test("ls exposes the --name substring filter", () => {
+    const g = containersCmd();
+    const ls = g.commands.find((c) => c.name() === "ls")!;
+    expect(optNames(ls)).toContain("--name");
+  });
+
+  test("logs exposes --since/--search/--follow for the streaming source", () => {
+    const g = containersCmd();
+    const logs = g.commands.find((c) => c.name() === "logs")!;
+    const names = optNames(logs);
+    expect(names).toContain("--since");
+    expect(names).toContain("--search");
+    expect(names).toContain("--follow");
+    expect(names).toContain("--tail");
+  });
+});
+
+describe("filterByName", () => {
+  const fleet = [
+    { name: "api-prod", image: "x" },
+    { name: "API-staging", image: "y" },
+    { name: "worker", image: "z" },
+  ];
+
+  test("returns all entries when substr is undefined/empty", () => {
+    expect(filterByName(fleet, undefined)).toHaveLength(3);
+    expect(filterByName(fleet, "")).toHaveLength(3);
+    expect(filterByName(fleet, "   ")).toHaveLength(3);
+  });
+
+  test("matches case-insensitively on a substring", () => {
+    expect(filterByName(fleet, "api").map((e) => e.name)).toEqual(["api-prod", "API-staging"]);
+    expect(filterByName(fleet, "PROD").map((e) => e.name)).toEqual(["api-prod"]);
+  });
+
+  test("returns an empty array when nothing matches", () => {
+    expect(filterByName(fleet, "nope")).toEqual([]);
+  });
+
+  test("does not mutate the input", () => {
+    const copy = [...fleet];
+    filterByName(fleet, "api");
+    expect(fleet).toEqual(copy);
   });
 });
