@@ -7,7 +7,7 @@
 import type { Command } from "commander";
 import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
-import { resolveStore } from "../config/token-store";
+import { resolveStore, refreshTokenKey } from "../config/token-store";
 import { HttpClient } from "../client/http";
 import type { Me } from "../client/types";
 import { fetchCapabilities } from "../client/capabilities";
@@ -134,8 +134,7 @@ async function runDeviceFlow(opts: {
   // — file-only users re-run `reoclo login` when the access token expires.
   await store.set(profileName, tokens.access_token);
   if (store.kind === "keyring") {
-    const refreshKey = `${profileName}-refresh`;
-    await store.set(refreshKey, tokens.refresh_token);
+    await store.set(refreshTokenKey(profileName), tokens.refresh_token);
   }
 
   const oauthProfile: ProfileRecord = {
@@ -148,7 +147,7 @@ async function runDeviceFlow(opts: {
 
   if (store.kind === "keyring") {
     oauthProfile.token_ref = `keyring:reoclo-${profileName}`;
-    oauthProfile.refresh_token_ref = `reoclo-${profileName}-refresh`;
+    oauthProfile.refresh_token_ref = refreshTokenKey(profileName);
   } else {
     // FileStore persisted the access token inline in config.json on the
     // `store.set` call above; carry it forward so the second saveProfile

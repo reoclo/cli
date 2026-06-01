@@ -5,6 +5,29 @@ export interface TokenStore {
   delete(profile: string): Promise<void>;
 }
 
+/**
+ * Keyring key under which a profile's OAuth refresh token is stored. Mirrors
+ * the access token's scheme (the bare profile name) with a `-refresh` suffix.
+ * This is the single source of truth shared by the login WRITE and the
+ * bootstrap-refresh READ so the two can never drift apart again — a mismatch
+ * here silently breaks token refresh until the access token expires.
+ */
+export function refreshTokenKey(profileName: string): string {
+  return `${profileName}-refresh`;
+}
+
+/**
+ * Ordered keyring keys to look up a profile's refresh token. The derived key
+ * (where login stores it) is tried first; a differing `legacyRef` — e.g. the
+ * `reoclo-<profile>-refresh` value some configs recorded before the key was
+ * unified — is kept as a fallback so existing profiles recover without a
+ * re-login. Duplicates are collapsed.
+ */
+export function refreshTokenKeyCandidates(profileName: string, legacyRef?: string): string[] {
+  const primary = refreshTokenKey(profileName);
+  return legacyRef && legacyRef !== primary ? [primary, legacyRef] : [primary];
+}
+
 import { MacOSKeyringStore } from "./keyring/macos";
 import { LinuxKeyringStore } from "./keyring/linux";
 import { WindowsKeyringStore } from "./keyring/windows";
