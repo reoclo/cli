@@ -1,5 +1,9 @@
+import { join } from "node:path";
 import { loadConfig, saveProfile } from "../config/store";
-import { resolveStore, refreshTokenKeyCandidates } from "../config/token-store";
+import { resolveStore } from "../config/token-store";
+import { cacheDir } from "../config/paths";
+import { withFileLock } from "../config/file-lock";
+import { refreshSession, singleFlightRefresh } from "../auth/refresh";
 import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
@@ -143,59 +147,40 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // org-override probe below and the final client. It refreshes + persists the
   // PROFILE's token; the final client only attaches it when we haven't minted a
   // separate org-override token (see suppressRefresh).
-  let profileRefreshCallback: (() => Promise<string | null>) | undefined;
+  let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
   if (profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
     const capturedProfileName = profileName;
     const capturedProfile = profile;
-    profileRefreshCallback = async (): Promise<string | null> => {
-      try {
+    const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
+    // Refresh is serialized cross-process (file lock) and in-process
+    // (single-flight) so concurrent agents/commands never both spend a rotating
+    // refresh token. refreshSession resolves the key, persists rotated tokens,
+    // returns null on transient failures, and throws ReauthRequiredError when a
+    // re-login is genuinely required (which HttpClient surfaces to the user).
+    profileRefreshCallback = (failedToken: string): Promise<string | null> =>
+      singleFlightRefresh(capturedProfileName, async () => {
         const store = await resolveStore();
-        // Find the refresh token under the canonical `${profile}-refresh` key
-        // (where login stores it), falling back to any legacy `refresh_token_ref`
-        // recorded in the profile. A past mismatch between these meant refresh
-        // silently never fired until the access token expired.
-        const candidates = refreshTokenKeyCandidates(
-          capturedProfileName,
-          capturedProfile.refresh_token_ref ?? undefined,
-        );
-        let refreshKey: string | undefined;
-        let storedRefresh: string | null = null;
-        for (const key of candidates) {
-          const value = await store.get(key);
-          if (value) {
-            refreshKey = key;
-            storedRefresh = value;
-            break;
-          }
-        }
-        if (!storedRefresh || !refreshKey) return null;
-
-        const resolvedAuthUrl = capturedProfile.oauth_auth_url ?? defaultAuthUrl();
-        const clientId = capturedProfile.oauth_client_id ?? "reoclo-cli";
-        const newTokens = await refreshAccessToken(resolvedAuthUrl, storedRefresh, clientId);
-
-        // Persist new tokens under the same keys we read from.
-        await store.set(capturedProfileName, newTokens.access_token);
-        await store.set(refreshKey, newTokens.refresh_token);
-
-        // Update expiry in profile
-        const expiresAt = newTokens.expires_in
-          ? new Date(Date.now() + newTokens.expires_in * 1000).toISOString()
-          : undefined;
-        const updatedCfg = await loadConfig();
-        const existingProfile = updatedCfg.profiles[capturedProfileName];
-        if (existingProfile) {
-          await saveProfile(capturedProfileName, {
-            ...existingProfile,
-            access_token_expires_at: expiresAt,
-          });
-        }
-
-        return newTokens.access_token;
-      } catch {
-        return null;
-      }
-    };
+        return refreshSession({
+          store,
+          profileName: capturedProfileName,
+          refreshTokenRef: capturedProfile.refresh_token_ref ?? undefined,
+          failedToken,
+          authUrl: capturedProfile.oauth_auth_url ?? defaultAuthUrl(),
+          clientId: capturedProfile.oauth_client_id ?? "reoclo-cli",
+          refreshFn: refreshAccessToken,
+          withLock: (fn) => withFileLock(lockPath, fn),
+          onExpiry: async (expiresAt) => {
+            const updatedCfg = await loadConfig();
+            const existingProfile = updatedCfg.profiles[capturedProfileName];
+            if (existingProfile) {
+              await saveProfile(capturedProfileName, {
+                ...existingProfile,
+                access_token_expires_at: expiresAt,
+              });
+            }
+          },
+        });
+      });
   }
 
   // Per-invocation organization override (`--org` / $REOCLO_ORG). Resolves the

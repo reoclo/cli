@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
 import { HttpClient } from "../../../src/client/http";
-import { AuthError } from "../../../src/client/errors";
+import { AuthError, ReauthRequiredError } from "../../../src/client/errors";
 
 function jsonRes(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -76,6 +76,44 @@ describe("HttpClient 401 refresh", () => {
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects.toBeInstanceOf() returns void in its type definitions, not a Promise; await is harmless but ESLint incorrectly flags it
     await expect(client.get("/auth/me")).rejects.toBeInstanceOf(AuthError);
+  });
+
+  test("passes the failed token to the refresh callback", async () => {
+    let callCount = 0;
+    globalThis.fetch = mock(() => {
+      callCount++;
+      return callCount === 1
+        ? Promise.resolve(textRes("unauthorized", 401))
+        : Promise.resolve(jsonRes({ data: "ok" }));
+    }) as unknown as typeof fetch;
+
+    let received = "";
+    const client = new HttpClient({
+      baseUrl: "https://api.example.com",
+      token: "eyJold.token",
+      refreshToken: (failedToken: string) => {
+        received = failedToken;
+        return Promise.resolve("eyJnew.token");
+      },
+    });
+
+    await client.get("/auth/me");
+    expect(received).toBe("eyJold.token");
+  });
+
+  test("propagates ReauthRequiredError from the refresh callback (not AuthError)", async () => {
+    globalThis.fetch = mock(() => Promise.resolve(textRes("unauthorized", 401))) as unknown as typeof fetch;
+
+    const client = new HttpClient({
+      baseUrl: "https://api.example.com",
+      token: "eyJold.token",
+      refreshToken: () => {
+        throw new ReauthRequiredError("staging", "rejected");
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects matcher types as void, not a Promise; await is harmless
+    await expect(client.get("/auth/me")).rejects.toBeInstanceOf(ReauthRequiredError);
   });
 
   test("401 with refresh that throws returns AuthError (no loop)", async () => {
