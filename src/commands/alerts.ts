@@ -320,11 +320,11 @@ export function registerAlerts(program: Command): void {
             // Convert duration string to ISO datetime
             body.expires_at = resolveMuteExpiry(opts.for);
           }
-          const mute = await ctx.client.post<Record<string, unknown>>(
+          const mute = await ctx.client.post<{ id?: string } & Record<string, unknown>>(
             `/tenants/${tid}/alerts/mutes`,
             body,
           );
-          printMutation(program, mute, `✓ mute created: ${String(mute.id ?? "")}`);
+          printMutation(program, mute, `✓ mute created: ${mute.id ?? ""}`);
         },
       ),
     { args: [{ slot: 0, resource: "alert-codes" }] },

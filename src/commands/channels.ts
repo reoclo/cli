@@ -147,14 +147,14 @@ export function registerChannels(program: Command): void {
             if (opts.secret !== undefined) body.secret = opts.secret;
             if (opts.events) body.events = parseEvents(opts.events);
           }
-          const channel = await ctx.client.post<Record<string, unknown>>(
+          const channel = await ctx.client.post<{ id?: string } & Record<string, unknown>>(
             `/tenants/${tid}/notification-channels`,
             body,
           );
           printMutation(
             program,
             channel,
-            `✓ channel created: ${String(channel.id ?? "")}`,
+            `✓ channel created: ${channel.id ?? ""}`,
           );
         },
       ),
