@@ -7,10 +7,12 @@ import { createMcpServer } from "../mcp/server";
 export function registerMcp(program: Command): void {
   program
     .command("mcp")
+    // No command-local `--profile` — the global flag is honored by bootstrap()
+    // (which reads the captured global override, then $REOCLO_PROFILE, then the
+    // active profile).
     .description("start the stdio MCP server")
-    .option("--profile <name>", "profile name")
-    .action(async (opts: { profile?: string }) => {
-      const ctx = await bootstrap({ profile: opts.profile, mcpSource: true });
+    .action(async () => {
+      const ctx = await bootstrap({ mcpSource: true });
 
       // stdout is sacred for MCP protocol framing — redirect any incidental
       // console.log to stderr while the server is running.

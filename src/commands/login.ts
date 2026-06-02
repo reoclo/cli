@@ -7,6 +7,7 @@
 import type { Command } from "commander";
 import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
+import { resolveCommandProfile } from "../config/profile-resolve";
 import { resolveStore, refreshTokenKey } from "../config/token-store";
 import { HttpClient } from "../client/http";
 import type { Me } from "../client/types";
@@ -43,14 +44,19 @@ export async function buildProfileWithCapabilities(
   };
 }
 
-async function runDeviceFlow(opts: {
+/** Inputs to the OAuth device-flow runner. `profile` is the already-resolved
+ *  target profile name (see resolveCommandProfile). Exported so tests can inject
+ *  a runner and assert which profile a `login` invocation resolves. */
+export interface LoginFlowOptions {
   profile: string;
   api: string;
   auth: string;
   streams?: string;
   keyring?: boolean;
   browser?: boolean;
-}): Promise<void> {
+}
+
+async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   const { profile: profileName, api, auth, streams, keyring, browser } = opts;
   const clientId = "reoclo-cli";
   const scope = "openid tenant.read";
@@ -163,11 +169,16 @@ async function runDeviceFlow(opts: {
   console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);
 }
 
-export function registerLogin(program: Command): void {
+export function registerLogin(
+  program: Command,
+  runFlow: (opts: LoginFlowOptions) => Promise<void> = runDeviceFlow,
+): void {
   program
     .command("login")
     .description("sign in via OAuth device flow (browser-based)")
-    .option("--profile <name>", "profile name", "default")
+    // NOTE: no command-local `--profile` — it is a global (root-level) flag.
+    // Re-declaring it here would shadow the global value (commander routes the
+    // typed value to the global option), silently logging into `default`.
     .option("--api <url>", "API base URL", apiUrl())
     .option(
       "--auth <url>",
@@ -181,16 +192,20 @@ export function registerLogin(program: Command): void {
     .option("--no-keyring", "force file storage")
     .option("--no-browser", "do not auto-open the browser during device-flow login")
     .action(
-      async (opts: {
-        profile: string;
-        api: string;
-        auth?: string;
-        streams?: string;
-        keyring?: boolean;
-        browser?: boolean;
-      }) => {
-        await runDeviceFlow({
-          profile: opts.profile,
+      async (
+        opts: {
+          api: string;
+          auth?: string;
+          streams?: string;
+          keyring?: boolean;
+          browser?: boolean;
+        },
+        command: Command,
+      ) => {
+        await runFlow({
+          // Resolve from the global --profile flag (then $REOCLO_PROFILE), with a
+          // fresh login defaulting to the "default" profile when neither is set.
+          profile: resolveCommandProfile(command, "default"),
           api: opts.api,
           auth: opts.auth ?? deriveAuthFromApi(opts.api) ?? authUrl(),
           streams: opts.streams,
