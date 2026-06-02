@@ -48,6 +48,40 @@ export function resolveProfileName(opts: {
   return pick(opts.flagProfile) ?? pick(opts.envProfile) ?? opts.activeProfile;
 }
 
+/** Minimal structural view of a commander Command — just the merged-options
+ *  accessor. `--profile` is a ROOT-level (global) option, so a subcommand only
+ *  sees its value through optsWithGlobals(); re-declaring a command-local
+ *  `--profile` shadows it (commander assigns the typed value to the global
+ *  option and leaves the local one at its default). */
+export interface GlobalOptsCommand {
+  optsWithGlobals(): Record<string, unknown>;
+}
+
+/** The global `--profile` flag's value, or undefined when it was not passed
+ *  (or is empty). Reads the flag via optsWithGlobals() — `--profile` is a
+ *  ROOT-level option, so subcommands only see it there. keyring/completion use
+ *  this directly (flag presence selects one profile vs all / cache scope). */
+export function globalProfileFlag(command: GlobalOptsCommand): string | undefined {
+  const flag = command.optsWithGlobals().profile;
+  return typeof flag === "string" && flag.length > 0 ? flag : undefined;
+}
+
+/**
+ * Resolve the profile a command should act on from the GLOBAL `--profile` flag,
+ * then `$REOCLO_PROFILE`, then the supplied `fallback` (e.g. "default" for
+ * `login`, or the config's active profile for `logout`). Reads the flag via
+ * optsWithGlobals() so it works regardless of where on the command line
+ * `--profile` was placed — and so no command needs (or should have) its own
+ * `--profile` option.
+ */
+export function resolveCommandProfile(command: GlobalOptsCommand, fallback: string): string {
+  return resolveProfileName({
+    flagProfile: globalProfileFlag(command),
+    envProfile: process.env.REOCLO_PROFILE,
+    activeProfile: fallback,
+  });
+}
+
 function pick(value: string | undefined): string | undefined {
   if (value == null) return undefined;
   const trimmed = value.trim();

@@ -1,6 +1,7 @@
 // src/commands/keyring.ts
 import type { Command } from "commander";
 import { loadConfig, saveProfile } from "../config/store";
+import { globalProfileFlag } from "../config/profile-resolve";
 import { resolveStore } from "../config/token-store";
 import { FileStore } from "../config/keyring/file";
 
@@ -16,11 +17,11 @@ export function registerKeyring(program: Command): void {
   });
 
   g.command("migrate")
-    .description("move stored tokens from config.json into the OS keyring")
-    .option("--profile <name>", "profile to migrate (default: all with file token)")
-    .action(async (opts: { profile?: string }) => {
+    .description("move stored tokens from config.json into the OS keyring (--profile, else all)")
+    .action(async (_opts: Record<string, unknown>, command: Command) => {
       const cfg = await loadConfig();
-      const names = opts.profile ? [opts.profile] : Object.keys(cfg.profiles);
+      const sel = globalProfileFlag(command);
+      const names = sel ? [sel] : Object.keys(cfg.profiles);
       const kr = await resolveStore({ requireKeyring: true });
       const file = new FileStore();
       for (const n of names) {
@@ -36,11 +37,11 @@ export function registerKeyring(program: Command): void {
     });
 
   g.command("export")
-    .description("move stored tokens from the OS keyring into config.json")
-    .option("--profile <name>", "profile to export (default: all with keyring token)")
-    .action(async (opts: { profile?: string }) => {
+    .description("move stored tokens from the OS keyring into config.json (--profile, else all)")
+    .action(async (_opts: Record<string, unknown>, command: Command) => {
       const cfg = await loadConfig();
-      const names = opts.profile ? [opts.profile] : Object.keys(cfg.profiles);
+      const sel = globalProfileFlag(command);
+      const names = sel ? [sel] : Object.keys(cfg.profiles);
       const kr = await resolveStore({ requireKeyring: true });
       for (const n of names) {
         const tok = await kr.get(n);

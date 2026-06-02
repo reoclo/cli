@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { extractProfileFromArgv, resolveProfileName } from "../../../src/config/profile-resolve";
+import {
+  extractProfileFromArgv,
+  resolveCommandProfile,
+  resolveProfileName,
+} from "../../../src/config/profile-resolve";
 
 describe("extractProfileFromArgv", () => {
   test("returns undefined when --profile is absent", () => {
@@ -60,5 +64,43 @@ describe("resolveProfileName", () => {
 
   test("trims surrounding whitespace on the chosen value", () => {
     expect(resolveProfileName({ flagProfile: " staging ", activeProfile })).toBe("staging");
+  });
+});
+
+describe("resolveCommandProfile", () => {
+  // A minimal stand-in for a commander Command's optsWithGlobals(): the global
+  // --profile flag value lives on the merged opts (it is a ROOT-level option, so
+  // subcommands only see it through optsWithGlobals()).
+  const cmd = (profile?: string) => ({ optsWithGlobals: () => ({ profile }) });
+
+  function withEnv(value: string | undefined, fn: () => void): void {
+    const saved = process.env.REOCLO_PROFILE;
+    if (value === undefined) delete process.env.REOCLO_PROFILE;
+    else process.env.REOCLO_PROFILE = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env.REOCLO_PROFILE;
+      else process.env.REOCLO_PROFILE = saved;
+    }
+  }
+
+  test("reads the global --profile value via optsWithGlobals()", () => {
+    withEnv(undefined, () => {
+      expect(resolveCommandProfile(cmd("staging"), "default")).toBe("staging");
+    });
+  });
+
+  test("falls back to the supplied default when no flag or env is set", () => {
+    withEnv(undefined, () => {
+      expect(resolveCommandProfile(cmd(undefined), "active-x")).toBe("active-x");
+    });
+  });
+
+  test("$REOCLO_PROFILE wins over the fallback but not the flag", () => {
+    withEnv("envp", () => {
+      expect(resolveCommandProfile(cmd(undefined), "active")).toBe("envp");
+      expect(resolveCommandProfile(cmd("flagp"), "active")).toBe("flagp");
+    });
   });
 });

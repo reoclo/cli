@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { getCompletionCandidates } from "../completion/engine";
 import type { Candidate } from "../completion/types";
 import { withCompletion } from "../client/command-meta";
+import { globalProfileFlag } from "../config/profile-resolve";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { fetchCompletionIndex } from "../completion/index-client";
 import { writeAllSlices } from "../completion/cache";
@@ -322,20 +323,19 @@ export function registerCompletion(program: Command): void {
 
   completionCmd
     .command("warm")
+    // No command-local `--profile` — bootstrap()/warmCache honor the global flag.
     .description("pre-populate the local completion cache from the server")
-    .option("--profile <name>", "profile name")
-    .action(async (opts: { profile?: string }) => {
-      const ok = await warmCache(opts.profile);
+    .action(async (_opts: Record<string, unknown>, command: Command) => {
+      const ok = await warmCache(globalProfileFlag(command));
       if (ok) process.stdout.write("✓ completion cache warmed\n");
     });
 
   program
     .command("__refresh-completion", { hidden: true })
     .description("internal: silently refresh the completion cache")
-    .option("--profile <name>", "profile name")
-    .action(async (opts: { profile?: string }) => {
+    .action(async (_opts: Record<string, unknown>, command: Command) => {
       try {
-        await warmCache(opts.profile);
+        await warmCache(globalProfileFlag(command));
       } catch {
         // silent — background refresh must never surface errors
       }
