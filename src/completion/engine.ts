@@ -8,7 +8,8 @@
 import type { Command } from "commander";
 import { getCompletionSpec, type ResourceRef } from "../client/command-meta";
 import { loadConfigSync } from "../config/store";
-import { getEnvKeys, getSlice } from "./cache";
+import { extractProfileFromArgv, resolveProfileName } from "../config/profile-resolve";
+import { getEnvKeys, getSlice, setActiveTenantId } from "./cache";
 import type { Candidate, ResourceKind } from "./types";
 
 const HIDDEN = new Set(["__complete", "__refresh-completion"]);
@@ -89,6 +90,27 @@ function refCandidates(ref: ResourceRef, words: string[]): Candidate[] {
 }
 
 /**
+ * Scope the completion cache to the tenant this completion line targets: a
+ * `--profile <name>` typed on the line (else the active profile), mapped to its
+ * tenant_id via config. Runs in the zero-network __complete process, where
+ * bootstrap() never ran, so the cache would otherwise read whichever tenant was
+ * written last. Never throws.
+ */
+function scopeCacheToProfile(words: string[]): void {
+  try {
+    const cfg = loadConfigSync();
+    const name = resolveProfileName({
+      flagProfile: extractProfileFromArgv(words),
+      envProfile: process.env.REOCLO_PROFILE,
+      activeProfile: cfg.active_profile,
+    });
+    setActiveTenantId(cfg.profiles[name]?.tenant_id);
+  } catch {
+    setActiveTenantId(undefined);
+  }
+}
+
+/**
  * Compute completion candidates. Pure; never throws.
  */
 export function getCompletionCandidates(
@@ -97,6 +119,8 @@ export function getCompletionCandidates(
   current: string,
 ): Candidate[] {
   try {
+    scopeCacheToProfile(words);
+
     // 1. Flag-name completion.
     if (current.startsWith("-")) {
       const { cmd } = walk(program, words);
