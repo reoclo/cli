@@ -10,6 +10,7 @@ import { refreshAccessToken } from "../auth/oauth-device";
 import { apiUrl, streamsUrl as defaultStreamsUrlHelper, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride } from "../config/org-resolve";
+import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import type { Me } from "./types";
 
@@ -237,6 +238,11 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       suppressRefresh = true;
     }
   }
+
+  // Scope the completion cache to the resolved tenant (honors --org override),
+  // so opportunistic cache writes from this command land under the authorised
+  // account — never leaking into another account's completions.
+  setActiveTenantId(tenantId);
 
   const client = new HttpClient({
     baseUrl: api,

@@ -8,6 +8,7 @@ import type { Command } from "commander";
 import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
 import { resolveCommandProfile } from "../config/profile-resolve";
+import { clearTenant } from "../completion/cache";
 import { resolveStore, refreshTokenKey } from "../config/token-store";
 import { HttpClient } from "../client/http";
 import type { Me } from "../client/types";
@@ -164,6 +165,10 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   }
 
   await saveProfile(profileName, oauthProfile);
+
+  // Identity (re)established — drop any stale completion cache for this tenant
+  // so the next completion re-warms fresh data for the account just signed in.
+  clearTenant(me.tenant_id);
 
   // 6. Success
   console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);

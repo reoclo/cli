@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
 import { getActiveProfile, loadConfig, saveProfile } from "../config/store";
+import { clearTenant } from "../completion/cache";
 import { resolveStore } from "../config/token-store";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
@@ -135,6 +136,9 @@ export function registerOrg(program: Command): void {
         saved_at: new Date().toISOString(),
       };
       await saveProfile(cfg.active_profile, updated);
+      // Active org changed — drop the target tenant's completion cache so the
+      // next completion re-warms fresh data for the org just switched to.
+      clearTenant(target.tenant_id);
       process.stdout.write(
         `✓ switched to ${slug} (${target.tenant_name})\n`,
       );
