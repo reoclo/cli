@@ -6,8 +6,9 @@
 // path, which does not go through this command.
 import type { Command } from "commander";
 import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
-import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
-import { resolveCommandProfile } from "../config/profile-resolve";
+import { loadConfig, saveProfile, setActiveProfile, type ProfileRecord } from "../config/store";
+import { resolveCommandProfileWithSource, type ProfileSource } from "../config/profile-resolve";
+import { shouldSetActiveProfile, formatLoginSummary } from "./login-summary";
 import { clearTenant } from "../completion/cache";
 import { resolveStore, refreshTokenKey } from "../config/token-store";
 import { HttpClient } from "../client/http";
@@ -46,10 +47,11 @@ export async function buildProfileWithCapabilities(
 }
 
 /** Inputs to the OAuth device-flow runner. `profile` is the already-resolved
- *  target profile name (see resolveCommandProfile). Exported so tests can inject
+ *  target profile name (see resolveCommandProfileWithSource). Exported so tests can inject
  *  a runner and assert which profile a `login` invocation resolves. */
 export interface LoginFlowOptions {
   profile: string;
+  source: ProfileSource;
   api: string;
   auth: string;
   streams?: string;
@@ -118,6 +120,10 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   const probe = new HttpClient({ baseUrl: api, token: tokens.access_token });
   const me = await probe.get<Me>("/auth/me");
 
+  // Capture whether this is the first profile on the machine BEFORE we write
+  // anything — drives the Option-A active-profile decision below.
+  const hadNoProfiles = Object.keys((await loadConfig()).profiles).length === 0;
+
   // 5. Save profile
   const baseProfile = await buildProfileWithCapabilities(probe, api, me, streams);
   const expiresAt = tokens.expires_in
@@ -166,12 +172,27 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
 
   await saveProfile(profileName, oauthProfile);
 
+  // Option A: set the GLOBAL active profile only on a first/bare login; a
+  // scoped login (--profile / $REOCLO_PROFILE) must not change it.
+  const setActive = shouldSetActiveProfile({ hadNoProfiles, source: opts.source });
+  if (setActive) await setActiveProfile(profileName);
+
   // Identity (re)established — drop any stale completion cache for this tenant
   // so the next completion re-warms fresh data for the account just signed in.
   clearTenant(me.tenant_id);
 
   // 6. Success
-  console.log(`✓ saved to ${store.kind} — authenticated as ${me.email} (organization: ${me.tenant_slug})`);
+  console.log(
+    formatLoginSummary({
+      email: me.email,
+      org: me.tenant_slug,
+      roles: me.roles ?? [],
+      profile: profileName,
+      source: opts.source,
+      storeKind: store.kind,
+      setActive,
+    }),
+  );
 }
 
 export function registerLogin(
@@ -207,10 +228,14 @@ export function registerLogin(
         },
         command: Command,
       ) => {
+        // Resolve from the global --profile flag (then $REOCLO_PROFILE), with a
+        // fresh login defaulting to the "default" profile when neither is set.
+        // `source` records which of those produced the name so login can decide
+        // whether to touch the global active profile and annotate its feedback.
+        const { name: profile, source } = resolveCommandProfileWithSource(command, "default");
         await runFlow({
-          // Resolve from the global --profile flag (then $REOCLO_PROFILE), with a
-          // fresh login defaulting to the "default" profile when neither is set.
-          profile: resolveCommandProfile(command, "default"),
+          profile,
+          source,
           api: opts.api,
           auth: opts.auth ?? deriveAuthFromApi(opts.api) ?? authUrl(),
           streams: opts.streams,
