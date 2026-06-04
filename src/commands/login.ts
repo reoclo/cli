@@ -47,7 +47,7 @@ export async function buildProfileWithCapabilities(
 }
 
 /** Inputs to the OAuth device-flow runner. `profile` is the already-resolved
- *  target profile name (see resolveCommandProfile). Exported so tests can inject
+ *  target profile name (see resolveCommandProfileWithSource). Exported so tests can inject
  *  a runner and assert which profile a `login` invocation resolves. */
 export interface LoginFlowOptions {
   profile: string;
