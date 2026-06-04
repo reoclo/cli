@@ -57,3 +57,24 @@ test("deleteProfile removes entry", async () => {
   const cfg = await withConfigDir(tmp, () => loadConfig());
   expect(cfg.profiles.a).toBeUndefined();
 });
+
+test("saveProfile does not move active_profile (no implicit flip)", async () => {
+  const tmp = makeTmp();
+  // active_profile starts at the EMPTY default "default".
+  await withConfigDir(tmp, () =>
+    saveProfile("default", {
+      api_url: "x", token: "t1", tenant_id: "t", tenant_slug: "s",
+      user_email: "e", token_type: "tenant", saved_at: "now",
+    }),
+  );
+  // Saving a DIFFERENT profile must NOT flip active_profile to it.
+  await withConfigDir(tmp, () =>
+    saveProfile("work", {
+      api_url: "x", token: "t2", tenant_id: "t", tenant_slug: "s",
+      user_email: "e", token_type: "tenant", saved_at: "now",
+    }),
+  );
+  const cfg = await withConfigDir(tmp, () => loadConfig());
+  expect(cfg.active_profile).toBe("default");
+  expect(Object.keys(cfg.profiles).sort()).toEqual(["default", "work"]);
+});

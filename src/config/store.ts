@@ -68,10 +68,13 @@ function writeConfig(cfg: ConfigFile): Promise<void> {
   return Promise.resolve();
 }
 
+// Pure profile write. Setting which profile is *active* is an explicit decision
+// owned by `reoclo login` (and `reoclo profile use`) — NOT a side effect of any
+// write. Token persistence (FileStore.set) and refresh (bootstrap onExpiry) also
+// route through here; they must never change the active profile.
 export async function saveProfile(name: string, profile: ProfileRecord): Promise<void> {
   const cfg = await loadConfig();
   cfg.profiles[name] = profile;
-  if (!cfg.active_profile || cfg.active_profile === "default") cfg.active_profile = name;
   await writeConfig(cfg);
 }
 
