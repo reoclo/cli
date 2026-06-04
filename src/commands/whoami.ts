@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
+import { formatRole } from "../ui/format-role";
 
 export function registerWhoami(program: Command): void {
   program
@@ -27,7 +28,7 @@ export function registerWhoami(program: Command): void {
         const slugWidth = Math.max(...memberships.map((m) => m.tenant_slug.length));
         for (const m of memberships) {
           const slug = m.tenant_slug.padEnd(slugWidth);
-          console.log(`  ${slug}  ${m.tenant_name}  (${m.role})`);
+          console.log(`  ${slug}  ${m.tenant_name}  (${formatRole(m.role)})`);
         }
       }
     });
