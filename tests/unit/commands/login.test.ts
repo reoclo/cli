@@ -37,28 +37,45 @@ function withoutEnvProfile<T>(fn: () => T): T {
 }
 
 describe("login honors the global --profile flag", () => {
-  test("`login --profile staging` targets the staging profile", async () => {
+  test("`login --profile staging` targets staging with source 'flag'", async () => {
     const captured: { opts?: LoginFlowOptions } = {};
     await withoutEnvProfile(() =>
       buildProgram(captured).parseAsync(["node", "reoclo", "login", "--profile", "staging"]),
     );
     expect(captured.opts?.profile).toBe("staging");
+    expect(captured.opts?.source).toBe("flag");
   });
 
-  test("`login --profile=prod` targets the prod profile", async () => {
+  test("`login --profile=prod` targets prod with source 'flag'", async () => {
     const captured: { opts?: LoginFlowOptions } = {};
     await withoutEnvProfile(() =>
       buildProgram(captured).parseAsync(["node", "reoclo", "login", "--profile=prod"]),
     );
     expect(captured.opts?.profile).toBe("prod");
+    expect(captured.opts?.source).toBe("flag");
   });
 
-  test("bare `login` defaults to the 'default' profile", async () => {
+  test("bare `login` defaults to 'default' with source 'default'", async () => {
     const captured: { opts?: LoginFlowOptions } = {};
     await withoutEnvProfile(() =>
       buildProgram(captured).parseAsync(["node", "reoclo", "login"]),
     );
     expect(captured.opts?.profile).toBe("default");
+    expect(captured.opts?.source).toBe("default");
+  });
+
+  test("`login` honors $REOCLO_PROFILE with source 'env'", async () => {
+    const captured: { opts?: LoginFlowOptions } = {};
+    const saved = process.env.REOCLO_PROFILE;
+    process.env.REOCLO_PROFILE = "work";
+    try {
+      await buildProgram(captured).parseAsync(["node", "reoclo", "login"]);
+    } finally {
+      if (saved === undefined) delete process.env.REOCLO_PROFILE;
+      else process.env.REOCLO_PROFILE = saved;
+    }
+    expect(captured.opts?.profile).toBe("work");
+    expect(captured.opts?.source).toBe("env");
   });
 
   test("login declares no command-local --profile option (it is global)", () => {
