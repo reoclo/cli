@@ -1,12 +1,32 @@
 // src/commands/org.ts
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
-import type { Me } from "../client/types";
+import type { Me, OrgMembership } from "../client/types";
 import { getActiveProfile, loadConfig, saveProfile } from "../config/store";
 import { clearTenant } from "../completion/cache";
 import { resolveStore } from "../config/token-store";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
+import type { OutputFormat } from "../ui/output";
+import { formatRole } from "../ui/format-role";
+
+/**
+ * Build the rows for `org ls`. The role is humanized for human/text output but
+ * kept RAW for machine output (`-o json` / `-o yaml`) so scripts still match on
+ * the server value (e.g. "tenant_admin").
+ */
+export function buildOrgRows(
+  memberships: OrgMembership[],
+  activeTenantId: string,
+  fmt: OutputFormat,
+): Array<{ active: string; slug: string; name: string; role: string }> {
+  return memberships.map((m) => ({
+    active: m.tenant_id === activeTenantId ? "*" : "",
+    slug: m.tenant_slug,
+    name: m.tenant_name,
+    role: fmt === "text" ? formatRole(m.role) : m.role,
+  }));
+}
 
 /**
  * `reoclo org` — manage the active organization within the OAuth-granted set.
@@ -35,12 +55,7 @@ export function registerOrg(program: Command): void {
       const ctx = await bootstrap();
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
-      const rows = memberships.map((m) => ({
-        active: m.tenant_id === me.tenant_id ? "*" : "",
-        slug: m.tenant_slug,
-        name: m.tenant_name,
-        role: m.role,
-      }));
+      const rows = buildOrgRows(memberships, me.tenant_id, fmt);
       printList(
         rows as unknown as Array<Record<string, unknown>>,
         [
