@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   extractProfileFromArgv,
   resolveCommandProfile,
+  resolveCommandProfileWithSource,
   resolveProfileName,
 } from "../../../src/config/profile-resolve";
 
@@ -101,6 +102,70 @@ describe("resolveCommandProfile", () => {
     withEnv("envp", () => {
       expect(resolveCommandProfile(cmd(undefined), "active")).toBe("envp");
       expect(resolveCommandProfile(cmd("flagp"), "active")).toBe("flagp");
+    });
+  });
+});
+
+describe("resolveCommandProfileWithSource", () => {
+  const cmd = (profile?: string) => ({ optsWithGlobals: () => ({ profile }) });
+  function withEnv(value: string | undefined, fn: () => void): void {
+    const saved = process.env.REOCLO_PROFILE;
+    if (value === undefined) delete process.env.REOCLO_PROFILE;
+    else process.env.REOCLO_PROFILE = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env.REOCLO_PROFILE;
+      else process.env.REOCLO_PROFILE = saved;
+    }
+  }
+
+  test("flag → source 'flag'", () => {
+    withEnv(undefined, () => {
+      expect(resolveCommandProfileWithSource(cmd("staging"), "default")).toEqual({
+        name: "staging",
+        source: "flag",
+      });
+    });
+  });
+  test("env → source 'env'", () => {
+    withEnv("work", () => {
+      expect(resolveCommandProfileWithSource(cmd(undefined), "default")).toEqual({
+        name: "work",
+        source: "env",
+      });
+    });
+  });
+  test("flag beats env", () => {
+    withEnv("work", () => {
+      expect(resolveCommandProfileWithSource(cmd("staging"), "default")).toEqual({
+        name: "staging",
+        source: "flag",
+      });
+    });
+  });
+  test("blank/whitespace env → fallback with source 'default'", () => {
+    withEnv("   ", () => {
+      expect(resolveCommandProfileWithSource(cmd(undefined), "default")).toEqual({
+        name: "default",
+        source: "default",
+      });
+    });
+  });
+  test("unset env, no flag → fallback with source 'default'", () => {
+    withEnv(undefined, () => {
+      expect(resolveCommandProfileWithSource(cmd(undefined), "default")).toEqual({
+        name: "default",
+        source: "default",
+      });
+    });
+  });
+  test("trims a whitespace-padded flag", () => {
+    withEnv(undefined, () => {
+      expect(resolveCommandProfileWithSource(cmd(" staging "), "default")).toEqual({
+        name: "staging",
+        source: "flag",
+      });
     });
   });
 });

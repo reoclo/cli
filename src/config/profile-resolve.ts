@@ -66,20 +66,38 @@ export function globalProfileFlag(command: GlobalOptsCommand): string | undefine
   return typeof flag === "string" && flag.length > 0 ? flag : undefined;
 }
 
+/** Where a resolved profile name came from. */
+export type ProfileSource = "flag" | "env" | "default";
+
+/**
+ * Like resolveCommandProfile, but also reports WHERE the name came from:
+ * `--profile` flag → `flag`, `$REOCLO_PROFILE` → `env`, else the `fallback`
+ * → `default`. Precedence and empty/whitespace handling match
+ * resolveCommandProfile exactly (blank/unset flag and env are treated as
+ * unset). `login` uses the source to decide whether to touch the global
+ * active profile and to annotate its feedback.
+ */
+export function resolveCommandProfileWithSource(
+  command: GlobalOptsCommand,
+  fallback: string,
+): { name: string; source: ProfileSource } {
+  const flag = pick(globalProfileFlag(command));
+  if (flag) return { name: flag, source: "flag" };
+  const env = pick(process.env.REOCLO_PROFILE);
+  if (env) return { name: env, source: "env" };
+  return { name: fallback, source: "default" };
+}
+
 /**
  * Resolve the profile a command should act on from the GLOBAL `--profile` flag,
  * then `$REOCLO_PROFILE`, then the supplied `fallback` (e.g. "default" for
  * `login`, or the config's active profile for `logout`). Reads the flag via
  * optsWithGlobals() so it works regardless of where on the command line
  * `--profile` was placed — and so no command needs (or should have) its own
- * `--profile` option.
+ * `--profile` option. Thin wrapper over resolveCommandProfileWithSource.
  */
 export function resolveCommandProfile(command: GlobalOptsCommand, fallback: string): string {
-  return resolveProfileName({
-    flagProfile: globalProfileFlag(command),
-    envProfile: process.env.REOCLO_PROFILE,
-    activeProfile: fallback,
-  });
+  return resolveCommandProfileWithSource(command, fallback).name;
 }
 
 function pick(value: string | undefined): string | undefined {
