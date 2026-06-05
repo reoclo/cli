@@ -78,6 +78,7 @@ export function registerCheckout(program: Command): void {
 
         const token = opts.token ?? process.env.GITHUB_TOKEN ?? "";
         const targetPath = opts.path ?? "/opt/deploy/workspace";
+        assertSafeArg(targetPath, "path");
         const clean = opts.clean !== false;
         const depth = Number.parseInt(opts.depth ?? "1", 10);
         const depthFlag = depth > 0 ? `--depth ${depth}` : "";
@@ -101,11 +102,13 @@ export function registerCheckout(program: Command): void {
         const dirExists = dirCheck.stdout.trim() === "exists";
 
         if (dirExists && !clean) {
+          const anonUrl = buildCloneUrl(ci.scmServerUrl, repository, "");
           await run(
             [
               `cd "${targetPath}"`,
               `git remote set-url origin "${cloneUrl}"`,
               `git fetch origin ${depthFlag}`,
+              `git remote set-url origin "${anonUrl}"`,
             ].join(" && "),
             120,
           );
