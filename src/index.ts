@@ -26,6 +26,7 @@ import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
+import { registerCheckout } from "./commands/checkout";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
 import { registerAlerts } from "./commands/alerts";
@@ -87,6 +88,7 @@ if (import.meta.main) {
   registerUpgrade(program);
   registerCompletion(program);
   registerExec(program);
+  registerCheckout(program);
   registerShell(program);
   registerTunnel(program);
   registerAlerts(program);
