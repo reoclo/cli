@@ -23,7 +23,15 @@ export function apiPrefix(t: KeyType): string {
   return t === "automation" ? "/api/automation/v1" : "/mcp";
 }
 
-const AUTOMATION_ALLOWED = new Set(["apps deploy", "apps restart", "exec", "shell"]);
+const AUTOMATION_ALLOWED = new Set([
+  "apps deploy",
+  "apps restart",
+  "exec",
+  "shell",
+  "checkout",
+  "registry login",
+  "registry logout",
+]);
 
 /** Return true if a token of the given type can invoke this command path.
  *  Tenant keys can invoke anything; automation keys are restricted to a

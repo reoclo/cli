@@ -38,6 +38,12 @@ describe("commandSupportedBy", () => {
     expect(commandSupportedBy("shell", "automation")).toBe(true);
   });
 
+  test("automation keys support the CI commands (checkout, registry login/logout)", () => {
+    expect(commandSupportedBy("checkout", "automation")).toBe(true);
+    expect(commandSupportedBy("registry login", "automation")).toBe(true);
+    expect(commandSupportedBy("registry logout", "automation")).toBe(true);
+  });
+
   test("automation keys reject containers restart (leaf-name collision fix)", () => {
     expect(commandSupportedBy("containers restart", "automation")).toBe(false);
   });
