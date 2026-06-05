@@ -1,10 +1,51 @@
 // src/commands/registry.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { detectCiContext } from "../ci/context";
+import {
+  pollUntilComplete,
+  registryLogin,
+  registryLoginDirect,
+  registryLogout,
+  requireAutomationKey,
+  requireServerUuid,
+} from "../ci/automation-client";
 import { RegistryTypeSchema } from "../client/enums";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
 import { readSecret } from "../util/secret";
+
+export type AuthMode = "vault" | "passthrough";
+
+export function resolveAuthMode(
+  credentialId: string,
+  username: string,
+  accessToken: string,
+  registryUrl: string,
+): AuthMode {
+  const hasCredential = credentialId !== "";
+  const fields = { username, access_token: accessToken, registry_url: registryUrl };
+  const setFields = Object.entries(fields).filter(([, v]) => v !== "");
+  const hasAny = setFields.length > 0;
+  const hasAll = setFields.length === 3;
+
+  if (hasCredential && hasAny) {
+    throw new Error("--credential and passthrough fields are mutually exclusive. Provide one mode.");
+  }
+  if (!hasCredential && !hasAny) {
+    throw new Error(
+      "Provide either --credential (vault) OR --username + --access-token + --registry-url (passthrough).",
+    );
+  }
+  if (!hasCredential && hasAny && !hasAll) {
+    const missing = Object.entries(fields)
+      .filter(([, v]) => v === "")
+      .map(([k]) => k)
+      .join(", ");
+    throw new Error(`Passthrough mode requires all three. Missing: ${missing}.`);
+  }
+  return hasCredential ? "vault" : "passthrough";
+}
 
 interface RegistryCredential {
   id: string;
@@ -189,4 +230,81 @@ export function registerRegistry(program: Command): void {
         }
       },
     );
+
+  g.command("login <serverId>")
+    .description("docker login on a managed server via Reoclo (CI)")
+    .option("--credential <uuid>", "registry credential UUID (vault mode)")
+    .option("--username <user>", "registry username (passthrough mode)")
+    .option("--access-token <token>", "registry access token/password (passthrough mode)")
+    .option("--registry-url <url>", "registry URL, e.g. ghcr.io (passthrough mode)")
+    .action(
+      async (
+        serverId: string,
+        opts: { credential?: string; username?: string; accessToken?: string; registryUrl?: string },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        requireAutomationKey(ctx);
+        const sid = requireServerUuid(serverId);
+        const ci = detectCiContext();
+        const mode = resolveAuthMode(
+          opts.credential ?? "",
+          opts.username ?? "",
+          opts.accessToken ?? "",
+          opts.registryUrl ?? "",
+        );
+        const login =
+          mode === "vault"
+            ? await registryLogin(ctx.client, {
+                server_id: sid,
+                credential_id: opts.credential ?? "",
+                run_id: ci.runId,
+                run_context: ci.runContext,
+              })
+            : await registryLoginDirect(ctx.client, {
+                server_id: sid,
+                registry_url: opts.registryUrl ?? "",
+                username: opts.username ?? "",
+                access_token: opts.accessToken ?? "",
+                run_id: ci.runId,
+                run_context: ci.runContext,
+              });
+
+        const detail = await pollUntilComplete(ctx.client, login.operation_id);
+        const exitCode = detail.result?.exit_code ?? 1;
+        if (exitCode !== 0) {
+          if (detail.result?.stderr) process.stderr.write(detail.result.stderr + "\n");
+          const e = new Error(`docker login failed (exit ${exitCode})`) as Error & {
+            exitCode: number;
+          };
+          e.exitCode = exitCode;
+          throw e;
+        }
+
+        const result = {
+          operation_id: login.operation_id,
+          registry_url: login.registry_url,
+          registry_type: login.registry_type,
+        };
+        if (fmt === "json" || fmt === "yaml") printObject(result, fmt);
+        else process.stdout.write(`logged in to ${login.registry_url} on ${sid}\n`);
+      },
+    );
+
+  g.command("logout <serverId>")
+    .description("docker logout on a managed server via Reoclo (CI)")
+    .requiredOption("--registry-url <url>", "registry URL to log out of")
+    .action(async (serverId: string, opts: { registryUrl: string }) => {
+      const ctx = await bootstrap();
+      requireAutomationKey(ctx);
+      const sid = requireServerUuid(serverId);
+      const ci = detectCiContext();
+      await registryLogout(ctx.client, {
+        server_id: sid,
+        registry_url: opts.registryUrl,
+        run_id: ci.runId,
+        run_context: ci.runContext,
+      });
+      process.stdout.write(`logged out of ${opts.registryUrl} on ${sid}\n`);
+    });
 }

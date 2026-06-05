@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { registerRegistry } from "../../../src/commands/registry";
+import { registerRegistry, resolveAuthMode } from "../../../src/commands/registry";
 
 describe("registry command group (reads + rm)", () => {
   test("registers ls, get, rm subcommands (create/update/test come in Task 8)", () => {
@@ -60,5 +60,23 @@ describe("registry create/update/test", () => {
     expect(longs).toContain("--type");
     expect(longs).toContain("--url");
     expect(longs).toContain("--password-stdin");
+  });
+});
+
+describe("resolveAuthMode", () => {
+  test("credential only → vault", () => {
+    expect(resolveAuthMode("cred-1", "", "", "")).toBe("vault");
+  });
+  test("all three passthrough fields → passthrough", () => {
+    expect(resolveAuthMode("", "user", "tok", "ghcr.io")).toBe("passthrough");
+  });
+  test("credential AND passthrough → error (mutually exclusive)", () => {
+    expect(() => resolveAuthMode("cred-1", "user", "", "")).toThrow(/mutually exclusive/);
+  });
+  test("neither → error", () => {
+    expect(() => resolveAuthMode("", "", "", "")).toThrow(/Provide either/);
+  });
+  test("partial passthrough → error listing missing fields", () => {
+    expect(() => resolveAuthMode("", "user", "", "")).toThrow(/access_token, registry_url/);
   });
 });
