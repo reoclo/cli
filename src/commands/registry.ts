@@ -1,6 +1,7 @@
 // src/commands/registry.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { requireCapability } from "../client/command-meta";
 import { detectCiContext } from "../ci/context";
 import {
   pollUntilComplete,
@@ -231,7 +232,9 @@ export function registerRegistry(program: Command): void {
       },
     );
 
-  g.command("login <serverId>")
+  const loginCmd = g.command("login <serverId>");
+  requireCapability(loginCmd, "server:exec");
+  loginCmd
     .description("docker login on a managed server via Reoclo (CI)")
     .option("--credential <uuid>", "registry credential UUID (vault mode)")
     .option("--username <user>", "registry username (passthrough mode)")
@@ -291,7 +294,9 @@ export function registerRegistry(program: Command): void {
       },
     );
 
-  g.command("logout <serverId>")
+  const logoutCmd = g.command("logout <serverId>");
+  requireCapability(logoutCmd, "server:exec");
+  logoutCmd
     .description("docker logout on a managed server via Reoclo (CI)")
     .requiredOption("--registry-url <url>", "registry URL to log out of")
     .action(async (serverId: string, opts: { registryUrl: string }) => {

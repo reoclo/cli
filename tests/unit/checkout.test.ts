@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCloneUrl } from "../../src/commands/checkout";
+import { buildCloneUrl, assertSafeArg } from "../../src/commands/checkout";
 
 describe("buildCloneUrl", () => {
   test("github host with token uses x-access-token form", () => {
@@ -22,5 +22,20 @@ describe("buildCloneUrl", () => {
 
   test("empty serverUrl falls back to github.com", () => {
     expect(buildCloneUrl("", "acme/app", "")).toBe("https://github.com/acme/app.git");
+  });
+});
+
+describe("assertSafeArg", () => {
+  test("accepts normal refs, repos, tags, and empty", () => {
+    expect(() => assertSafeArg("refs/heads/main", "ref")).not.toThrow();
+    expect(() => assertSafeArg("acme/app", "repository")).not.toThrow();
+    expect(() => assertSafeArg("v1.2.3", "ref")).not.toThrow();
+    expect(() => assertSafeArg("", "ref")).not.toThrow();
+  });
+  test("rejects shell metacharacters", () => {
+    expect(() => assertSafeArg("$(curl evil)", "ref")).toThrow(/not allowed/);
+    expect(() => assertSafeArg('"; rm -rf / #', "ref")).toThrow(/not allowed/);
+    expect(() => assertSafeArg("`id`", "ref")).toThrow(/not allowed/);
+    expect(() => assertSafeArg("a b", "ref")).toThrow(/not allowed/);
   });
 });

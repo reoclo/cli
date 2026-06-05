@@ -5,6 +5,21 @@ import { requireCapability, withCompletion } from "../client/command-meta";
 import { detectCiContext } from "../ci/context";
 import { execOnServer, requireAutomationKey, requireServerUuid } from "../ci/automation-client";
 
+const SAFE_ARG_RE = /^[A-Za-z0-9._/@+-]+$/;
+
+/** Reject values containing shell metacharacters before they are interpolated
+ *  into server-side shell commands. Empty string is allowed (means "unset").
+ *  Throws exit-2 on violation. */
+export function assertSafeArg(value: string, label: string): void {
+  if (value && !SAFE_ARG_RE.test(value)) {
+    const e = new Error(
+      `${label} contains characters that are not allowed: "${value}"`,
+    ) as Error & { exitCode: number };
+    e.exitCode = 2;
+    throw e;
+  }
+}
+
 /** Build a git clone URL, deriving the host from CI context. Empty serverUrl
  *  defaults to github.com. With a token, embeds it as x-access-token. */
 export function buildCloneUrl(serverUrl: string, repository: string, token: string): string {
@@ -57,6 +72,10 @@ export function registerCheckout(program: Command): void {
           throw e;
         }
         const ref = opts.ref ?? ci.runContext.sha ?? "";
+
+        assertSafeArg(repository, "repository");
+        assertSafeArg(ref, "ref");
+
         const token = opts.token ?? process.env.GITHUB_TOKEN ?? "";
         const targetPath = opts.path ?? "/opt/deploy/workspace";
         const clean = opts.clean !== false;

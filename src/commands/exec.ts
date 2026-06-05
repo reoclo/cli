@@ -264,6 +264,11 @@ export function registerExec(program: Command): void {
 
         let res: ExecResponse;
         if (ctx.tokenType === "automation") {
+          if (opts.scope && opts.scope !== "host") {
+            process.stderr.write(
+              "warning: --scope is ignored for automation keys (not supported by the automation API)\n",
+            );
+          }
           // CI / automation-key path: flat /api/automation/v1/exec + run_context.
           const sid = requireServerUuid(serverIdOrName);
           const ci = detectCiContext();
