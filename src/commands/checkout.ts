@@ -83,6 +83,10 @@ export function registerCheckout(program: Command): void {
         const depth = Number.parseInt(opts.depth ?? "1", 10);
         const depthFlag = depth > 0 ? `--depth ${depth}` : "";
         const cloneUrl = buildCloneUrl(ci.scmServerUrl, repository, token);
+        // Token-less URL written back to the server's git remote after any
+        // clone/fetch, so a credential never lingers in the checked-out repo's
+        // .git/config.
+        const anonUrl = buildCloneUrl(ci.scmServerUrl, repository, "");
 
         const run = (command: string, timeoutSeconds: number) =>
           execOnServer(ctx.client, {
@@ -102,7 +106,6 @@ export function registerCheckout(program: Command): void {
         const dirExists = dirCheck.stdout.trim() === "exists";
 
         if (dirExists && !clean) {
-          const anonUrl = buildCloneUrl(ci.scmServerUrl, repository, "");
           await run(
             [
               `cd "${targetPath}"`,
@@ -117,6 +120,7 @@ export function registerCheckout(program: Command): void {
             [
               `mkdir -p "$(dirname "${targetPath}")"`,
               `git clone ${depthFlag} "${cloneUrl}" "${targetPath}"`,
+              `cd "${targetPath}" && git remote set-url origin "${anonUrl}"`,
             ].join(" && "),
             300,
           );
