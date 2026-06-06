@@ -9,11 +9,18 @@
 
 const TENANT_ID = "00000000-0000-0000-0000-00000000aaaa";
 const TOKEN = "rk_t_test";
+// Automation (rca_*) key accepted by the external-deploy session route. The
+// CLI's `deploy sync` exchanges it for a short-lived rds_* session token.
+const AUTOMATION_KEY = "rca_test";
 
 export interface FakeGateway {
   url: string;
   tenantId: string;
   token: string;
+  /** rca_* automation key the external-deploy session route accepts. */
+  automationKey: string;
+  /** Session ids passed to DELETE /external-deploy/session/{id} (revoke). */
+  deployRevokes: string[];
   stop: () => void;
 }
 
@@ -181,11 +188,90 @@ export function startFakeGateway(): FakeGateway {
 
   let nextId = 1;
 
+  // External-deploy two-token state (per gateway instance).
+  let deploySessionToken: string | null = null;
+  let deploySessionId: string | null = null;
+  const deployRevokes: string[] = [];
+
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
       const auth = req.headers.get("authorization");
+
+      // External-deploy is ROOT-mounted and uses rca_*/rds_* bearers, so it is
+      // handled before the tenant-token (rk_t_test) auth wall below.
+      if (url.pathname.startsWith("/external-deploy/")) {
+        // POST /external-deploy/session — exchange the rca_* key for an rds_* token.
+        if (req.method === "POST" && url.pathname === "/external-deploy/session") {
+          if (auth !== `Bearer ${AUTOMATION_KEY}`) {
+            return Response.json({ detail: "API key lacks `external_deploy` scope" }, { status: 403 });
+          }
+          const body = (await req.json()) as { container_names?: string[] };
+          const names = body.container_names ?? [];
+          deploySessionId = "sess-int-1";
+          deploySessionToken = "rds_int_token";
+          return Response.json(
+            {
+              session_id: deploySessionId,
+              session_token: deploySessionToken,
+              expires_at: "2026-06-06T00:15:00Z",
+              applications: names.map((n, i) => ({
+                id: `app-${i}`,
+                linked_container_name: n,
+                container_port: 0,
+                bound_fqdns: [`${n}.example.com`],
+              })),
+              unmatched: [],
+            },
+            { status: 201 },
+          );
+        }
+
+        // POST /external-deploy/sync — requires the rds_* session token. A
+        // container whose name contains "conflict" comes back as a conflict; an
+        // all-conflict response is a 409 (mirrors the real API).
+        if (req.method === "POST" && url.pathname === "/external-deploy/sync") {
+          if (!deploySessionToken || auth !== `Bearer ${deploySessionToken}`) {
+            return Response.json(
+              { detail: "Valid rds_* deploy session token required" },
+              { status: 401 },
+            );
+          }
+          const body = (await req.json()) as {
+            deployments?: Array<{ container_name: string; container_port: number }>;
+          };
+          const deployments = body.deployments ?? [];
+          const results = deployments.map((d) => {
+            const conflict = d.container_name.includes("conflict");
+            return {
+              application_id: `app-${d.container_name}`,
+              container_name: d.container_name,
+              status: conflict ? "conflict" : "synced",
+              signature_hash: "sig",
+              synced_fqdns: conflict ? [] : [`${d.container_name}.example.com`],
+              reason: conflict ? "route held by another signature" : null,
+            };
+          });
+          const allConflict = results.length > 0 && results.every((r) => r.status === "conflict");
+          return Response.json(
+            { session_id: deploySessionId, results, errors: [] },
+            { status: allConflict ? 409 : 200 },
+          );
+        }
+
+        // DELETE /external-deploy/session/{id} — self-revoke with the rds_* token.
+        if (req.method === "DELETE" && url.pathname.startsWith("/external-deploy/session/")) {
+          if (!deploySessionToken || auth !== `Bearer ${deploySessionToken}`) {
+            return new Response("unauth", { status: 401 });
+          }
+          deployRevokes.push(url.pathname.split("/").pop() ?? "");
+          return new Response(null, { status: 204 });
+        }
+
+        return new Response("not found", { status: 404 });
+      }
+
       if (auth !== `Bearer ${TOKEN}`) return new Response("unauth", { status: 401 });
 
       // /mcp/auth/me
@@ -1250,6 +1336,8 @@ export function startFakeGateway(): FakeGateway {
     url: `http://localhost:${server.port}`,
     tenantId: TENANT_ID,
     token: TOKEN,
+    automationKey: AUTOMATION_KEY,
+    deployRevokes,
     stop: () => {
       void server.stop();
     },
