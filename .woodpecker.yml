@@ -18,13 +18,29 @@
 # failed upload only ships what wasn't there yet. The homebrew step is also
 # idempotent: an unchanged formula is detected by content compare and skipped.
 
-when:
-  - event: tag
-    ref: refs/tags/v*
-
 steps:
+  # CI on pull requests + main pushes: the same gate the release runs (per-file
+  # unit loop + typecheck + build), minus the publish scripts. Catches breakage
+  # (e.g. a bash-ism in packaging/install.sh) before it reaches a release tag.
+  - name: test
+    image: oven/bun:1.3.11-slim
+    when:
+      - event: pull_request
+      - event: push
+        branch: main
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends curl jq ca-certificates git python3 build-essential
+      - bun install --frozen-lockfile
+      - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f"; done'
+      - bun run typecheck
+      - bun run build
+
   - name: release
     image: oven/bun:1.3.11-slim
+    when:
+      - event: tag
+        ref: refs/tags/v*
     environment:
       GITEA_API_URL: https://git.boxpositron.dev/api/v1
       GITEA_REPO: reoclo/reoclo-cli
