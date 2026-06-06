@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun, registerExec, buildAutomationExecBody } from "../../../src/commands/exec";
+import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun, registerExec, buildAutomationExecBody, buildAutomationExecOutput } from "../../../src/commands/exec";
 import { Command } from "commander";
 
 describe("buildShellWrappedCommand", () => {
@@ -223,5 +223,38 @@ describe("buildAutomationExecBody", () => {
       env: { A: "1" },
     });
     expect(body.env).toEqual({ A: "1" });
+  });
+});
+
+describe("buildAutomationExecOutput", () => {
+  test("carries operation_id and duration_ms into the JSON output (run-action parity)", () => {
+    const out = buildAutomationExecOutput({
+      operation_id: "op-123",
+      exit_code: 0,
+      stdout: "hello",
+      stderr: "",
+      duration_ms: 1234,
+    });
+    expect(out).toEqual({
+      exit_code: 0,
+      stdout: "hello",
+      stderr: "",
+      truncated: false,
+      operation_id: "op-123",
+      duration_ms: 1234,
+    });
+  });
+
+  test("preserves a non-zero exit code", () => {
+    const out = buildAutomationExecOutput({
+      operation_id: "op-9",
+      exit_code: 42,
+      stdout: "",
+      stderr: "boom",
+      duration_ms: 7,
+    });
+    expect(out.exit_code).toBe(42);
+    expect(out.operation_id).toBe("op-9");
+    expect(out.duration_ms).toBe(7);
   });
 });

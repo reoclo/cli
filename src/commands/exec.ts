@@ -6,13 +6,35 @@ import { globalOutput, printObject, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { detectCiContext } from "../ci/context";
 import type { RunContext } from "../ci/context";
-import { execOnServer, requireServerUuid, type AutomationExecRequest } from "../ci/automation-client";
+import {
+  execOnServer,
+  requireServerUuid,
+  type AutomationExecRequest,
+  type AutomationExecResult,
+} from "../ci/automation-client";
 
-interface ExecResponse {
+export interface ExecResponse {
   exit_code: number;
   stdout: string;
   stderr: string;
   truncated: boolean;
+  /** Automation path only — surfaced so the `run` GitHub Action can map them to outputs. */
+  operation_id?: string;
+  duration_ms?: number;
+}
+
+/** Shape the automation exec result into the JSON output object. Carries
+ *  `operation_id` + `duration_ms` (which the `run` action exposes as outputs);
+ *  the tenant path's response has neither and is passed through unchanged. */
+export function buildAutomationExecOutput(r: AutomationExecResult): ExecResponse {
+  return {
+    exit_code: r.exit_code,
+    stdout: r.stdout,
+    stderr: r.stderr,
+    truncated: false,
+    operation_id: r.operation_id,
+    duration_ms: r.duration_ms,
+  };
 }
 
 export type SupportedShell = "bash" | "sh";
@@ -284,7 +306,7 @@ export function registerExec(program: Command): void {
               runContext: ci.runContext,
             }),
           );
-          res = { exit_code: r.exit_code, stdout: r.stdout, stderr: r.stderr, truncated: false };
+          res = buildAutomationExecOutput(r);
         } else {
           const tid = requireTenantId(ctx);
           const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
