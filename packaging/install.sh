@@ -1,14 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # packaging/install.sh
-# Install the Reoclo CLI:  curl -sSL https://get.reoclo.com/cli | bash
-set -euo pipefail
+# Install the Reoclo CLI:  curl -sSL https://get.reoclo.com/cli | sh
+#
+# POSIX sh — works under dash/busybox/bash. (Previously used bash-only [[ ]],
+# which broke when invoked as `sh install.sh` on dash-based systems.)
+set -eu
 
 VERSION="${REOCLO_VERSION:-latest}"
 CHANNEL="${REOCLO_CHANNEL:-stable}"
 INSTALL_DIR_FLAG=""
 NO_MODIFY_PATH=0
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     --channel)        CHANNEL="$2"; shift 2;;
     --version)        VERSION="$2"; shift 2;;
@@ -34,8 +37,8 @@ TARGET="${OS}-${ARCH}"
 
 GH_REPO="reoclo/cli"
 
-if [[ "$VERSION" == "latest" ]]; then
-  if [[ "$CHANNEL" != "stable" ]]; then
+if [ "$VERSION" = "latest" ]; then
+  if [ "$CHANNEL" != "stable" ]; then
     echo "install.sh only supports --channel stable for auto-resolve." >&2
     echo "Install stable first, then switch channels with:" >&2
     echo "  reoclo upgrade --channel ${CHANNEL}" >&2
@@ -49,7 +52,7 @@ if [[ "$VERSION" == "latest" ]]; then
     "https://api.github.com/repos/${GH_REPO}/releases/latest" \
     | grep -E '"tag_name":' | head -1 \
     | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')
-  if [[ -z "$VERSION" ]]; then
+  if [ -z "$VERSION" ]; then
     echo "failed to resolve latest version from GitHub Releases API" >&2
     exit 1
   fi
@@ -59,31 +62,39 @@ URL="https://github.com/${GH_REPO}/releases/download/${VERSION}/reoclo-${TARGET}
 SUMS_URL="https://github.com/${GH_REPO}/releases/download/${VERSION}/SHA256SUMS"
 
 # Resolve install dir
-if [[ -n "$INSTALL_DIR_FLAG" ]]; then
+if [ -n "$INSTALL_DIR_FLAG" ]; then
   INSTALL_DIR="$INSTALL_DIR_FLAG"
   mkdir -p "$INSTALL_DIR"
-elif [[ -w /usr/local/bin ]]; then
+elif [ -w /usr/local/bin ]; then
   INSTALL_DIR=/usr/local/bin
 else
   INSTALL_DIR="${HOME}/.local/bin"
   mkdir -p "$INSTALL_DIR"
 fi
 
-TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 echo "==> Downloading reoclo ${VERSION} (${TARGET})"
 # Interactive progress bar on the binary fetch when stdout is a TTY;
 # fall back to silent mode for pipes/CI logs.
-if [[ -t 1 ]]; then
+if [ -t 1 ]; then
   CURL_PROGRESS="--progress-bar"
 else
   CURL_PROGRESS="-sS"
 fi
+# shellcheck disable=SC2086 # intentional word-split of the progress flag
 curl -fL $CURL_PROGRESS -o "${TMP}/reoclo" "$URL"
 curl -sSLf -o "${TMP}/SHA256SUMS" "$SUMS_URL"
 echo "==> Verifying checksum..."
+# Prefer coreutils sha256sum (Linux); fall back to shasum (macOS/perl).
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA_CHECK="sha256sum -c -"
+else
+  SHA_CHECK="shasum -a 256 -c -"
+fi
+# shellcheck disable=SC2086 # SHA_CHECK is a deliberate command + args split
 (cd "$TMP" && grep "reoclo-${TARGET}$" SHA256SUMS \
   | awk -v t="${TMP}/reoclo" '{print $1"  "t}' \
-  | shasum -a 256 -c -)
+  | $SHA_CHECK)
 
 chmod +x "${TMP}/reoclo"
 mv "${TMP}/reoclo" "${INSTALL_DIR}/reoclo"
@@ -94,7 +105,7 @@ ln -sf reoclo "${INSTALL_DIR}/rc"
 
 echo "✓ installed reoclo ${VERSION} to ${INSTALL_DIR}/reoclo"
 echo "✓ symlinked rc -> reoclo at ${INSTALL_DIR}/rc"
-if ! command -v reoclo >/dev/null && [[ "$NO_MODIFY_PATH" == "0" ]]; then
+if ! command -v reoclo >/dev/null && [ "$NO_MODIFY_PATH" = "0" ]; then
   echo ""
   echo "⚠ ${INSTALL_DIR} is not on your PATH."
   echo "  Add this to your shell rc:"
