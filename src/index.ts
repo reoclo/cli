@@ -26,6 +26,7 @@ import { registerMcp } from "./commands/mcp";
 import { registerUpgrade } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
+import { registerCheckout } from "./commands/checkout";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
 import { registerAlerts } from "./commands/alerts";
@@ -87,6 +88,7 @@ if (import.meta.main) {
   registerUpgrade(program);
   registerCompletion(program);
   registerExec(program);
+  registerCheckout(program);
   registerShell(program);
   registerTunnel(program);
   registerAlerts(program);
@@ -161,7 +163,7 @@ if (import.meta.main) {
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;
       const err = new Error(
-        `'${cmd}' requires an organization key; automation keys can only run 'apps deploy', 'apps restart', 'exec', or 'shell'.`,
+        `'${cmd}' requires an organization key; automation keys can only run a limited set of commands (apps deploy, apps restart, exec, shell, checkout, registry login, registry logout).`,
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

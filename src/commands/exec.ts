@@ -4,6 +4,9 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { globalOutput, printObject, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
+import { detectCiContext } from "../ci/context";
+import type { RunContext } from "../ci/context";
+import { execOnServer, requireServerUuid, type AutomationExecRequest } from "../ci/automation-client";
 
 interface ExecResponse {
   exit_code: number;
@@ -115,6 +118,24 @@ export function detectShCQuotingFootgun(commandParts: string[]): boolean {
     commandParts[1] === "-c" &&
     commandParts.length > 3
   );
+}
+
+export function buildAutomationExecBody(args: {
+  serverId: string;
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  timeoutSeconds?: number;
+  runId?: string;
+  runContext?: RunContext;
+}): AutomationExecRequest {
+  const body: AutomationExecRequest = { server_id: args.serverId, command: args.command };
+  if (args.cwd) body.working_directory = args.cwd;
+  if (args.env && Object.keys(args.env).length > 0) body.env = args.env;
+  if (args.timeoutSeconds !== undefined) body.timeout_seconds = args.timeoutSeconds;
+  if (args.runId) body.run_id = args.runId;
+  if (args.runContext) body.run_context = args.runContext;
+  return body;
 }
 
 export function registerExec(program: Command): void {
@@ -240,19 +261,43 @@ export function registerExec(program: Command): void {
 
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
-        const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
 
-        const body: Record<string, unknown> = { command };
-        if (opts.timeout) body["timeout"] = Number.parseInt(opts.timeout, 10);
-        if (opts.cwd) body["working_directory"] = opts.cwd;
-        if (Object.keys(mergedEnv).length > 0) body["env"] = mergedEnv;
-        if (opts.scope && opts.scope !== "host") body["scope"] = opts.scope;
-
-        const res = await ctx.client.post<ExecResponse>(
-          `/tenants/${tid}/servers/${serverId}/exec`,
-          body,
-        );
+        let res: ExecResponse;
+        if (ctx.tokenType === "automation") {
+          if (opts.scope && opts.scope !== "host") {
+            process.stderr.write(
+              "warning: --scope is ignored for automation keys (not supported by the automation API)\n",
+            );
+          }
+          // CI / automation-key path: flat /api/automation/v1/exec + run_context.
+          const sid = requireServerUuid(serverIdOrName);
+          const ci = detectCiContext();
+          const r = await execOnServer(
+            ctx.client,
+            buildAutomationExecBody({
+              serverId: sid,
+              command,
+              cwd: opts.cwd,
+              env: mergedEnv,
+              timeoutSeconds: opts.timeout ? Number.parseInt(opts.timeout, 10) : undefined,
+              runId: ci.runId,
+              runContext: ci.runContext,
+            }),
+          );
+          res = { exit_code: r.exit_code, stdout: r.stdout, stderr: r.stderr, truncated: false };
+        } else {
+          const tid = requireTenantId(ctx);
+          const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
+          const body: Record<string, unknown> = { command };
+          if (opts.timeout) body["timeout"] = Number.parseInt(opts.timeout, 10);
+          if (opts.cwd) body["working_directory"] = opts.cwd;
+          if (Object.keys(mergedEnv).length > 0) body["env"] = mergedEnv;
+          if (opts.scope && opts.scope !== "host") body["scope"] = opts.scope;
+          res = await ctx.client.post<ExecResponse>(
+            `/tenants/${tid}/servers/${serverId}/exec`,
+            body,
+          );
+        }
 
         // Apply masking before any output (default on; --no-mask-env opts out).
         const masked: ExecResponse =

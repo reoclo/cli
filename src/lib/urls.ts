@@ -60,6 +60,18 @@ export const getUrl = (path = ""): string => resolveUrl(["REOCLO_GET_URL"], "get
 export const streamsUrl = (path = ""): string =>
   resolveUrl(["REOCLO_STREAMS_URL"], "streams", path);
 
+/**
+ * Canonical api / streams URLs for the active deployment, derived from
+ * REOCLO_ROOT_DOMAIN (+ REOCLO_URL_SCHEME) ONLY — the per-service
+ * REOCLO_API_URL / REOCLO_STREAMS_URL overrides are intentionally NOT applied.
+ *
+ * Use these as a stable comparison base (e.g. bootstrap's streams-host
+ * selection): a per-invocation `--api` / REOCLO_API_URL override must not be
+ * able to repoint what counts as the deployment's "standard" host.
+ */
+export const canonicalApiUrl = (): string => resolveUrl([], "api");
+export const canonicalStreamsUrl = (): string => resolveUrl([], "streams");
+
 /** Direct gateway URL converted to WebSocket scheme (wss/ws). */
 export const directWsUrl = (path = ""): string => {
   const url = resolveUrl(["REOCLO_DIRECT_URL"], "direct", path);

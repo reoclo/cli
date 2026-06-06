@@ -1,3 +1,4 @@
 [test]
+preload = ["./tests/helpers/preload-env.ts"]
 coverage = true
 coverageReporter = ["text", "lcov"]

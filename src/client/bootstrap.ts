@@ -7,7 +7,7 @@ import { refreshSession, singleFlightRefresh } from "../auth/refresh";
 import { detectKeyType, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
-import { apiUrl, streamsUrl as defaultStreamsUrlHelper, authUrl as defaultAuthUrl } from "../lib/urls";
+import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride } from "../config/org-resolve";
 import { setActiveTenantId } from "../completion/cache";
@@ -58,8 +58,12 @@ export interface ResolvedContext {
   tenantId?: string;
 }
 
-const PROD_API_URL = apiUrl();
-const PROD_STREAMS_URL = defaultStreamsUrlHelper();
+// Canonical deployment URLs, derived from REOCLO_ROOT_DOMAIN only — NOT the
+// per-invocation REOCLO_API_URL / REOCLO_STREAMS_URL overrides (those are
+// applied explicitly in the precedence chains below). Keeps the streams-host
+// comparison base stable even when --api / REOCLO_API_URL repoints the API.
+const PROD_API_URL = canonicalApiUrl();
+const PROD_STREAMS_URL = canonicalStreamsUrl();
 
 /**
  * Derive a default streams URL from the API URL. Production API gets the
