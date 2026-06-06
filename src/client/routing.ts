@@ -31,6 +31,7 @@ const AUTOMATION_ALLOWED = new Set([
   "checkout",
   "registry login",
   "registry logout",
+  "deploy sync",
 ]);
 
 /** Return true if a token of the given type can invoke this command path.
