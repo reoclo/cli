@@ -148,14 +148,27 @@ export function registerCheckout(program: Command): void {
         const authedUrl = buildCloneUrl(serverUrl, repository, token);
         const bareUrl = buildCloneUrl(serverUrl, repository, "");
 
-        const run = (command: string, timeoutSeconds: number) =>
-          execOnServer(ctx.client, {
+        const run = async (command: string, timeoutSeconds: number) => {
+          const r = await execOnServer(ctx.client, {
             server_id: sid,
             command,
             timeout_seconds: timeoutSeconds,
             run_id: ci.runId,
             run_context: ci.runContext,
           });
+          // Fail loudly on a non-zero server-side exit. Without this, a failed
+          // git step (e.g. an unwritable path or unreachable remote) was silently
+          // ignored and checkout returned exit 0 with an empty commit_sha.
+          if (r.exit_code !== 0) {
+            const detail = (r.stderr || r.stdout || "").trim();
+            throw exitErr(
+              `checkout step failed on server (exit ${r.exit_code})` +
+                (detail ? `: ${detail}` : ""),
+              r.exit_code || 1,
+            );
+          }
+          return r;
+        };
 
         // 1. Clean to a known-empty state if requested.
         if (clean) await run(`rm -rf "${targetPath}"`, 60);
