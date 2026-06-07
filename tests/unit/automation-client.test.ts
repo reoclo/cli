@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   execOnServer,
+  pollBudgetAttempts,
   requireServerUuid,
   requireAutomationKey,
 } from "../../src/ci/automation-client";
@@ -48,6 +49,28 @@ describe("execOnServer", () => {
     const r = await execOnServer(client, { server_id: UUID, command: "slow" }, async () => {});
     expect(r.exit_code).toBe(3);
     expect(calls[1]).toEqual({ method: "GET", path: "/operations/op2" });
+  });
+});
+
+describe("pollBudgetAttempts", () => {
+  test("scales the poll window with the command timeout (+margin)", () => {
+    // 900s timeout + 60s margin = 960s window @2s = 480 polls (was capped at 300).
+    expect(pollBudgetAttempts(900)).toBe(480);
+  });
+
+  test("falls back to the 600s default when no timeout is given", () => {
+    // (600 + 60) * 1000 / 2000 = 330.
+    expect(pollBudgetAttempts(undefined)).toBe(330);
+    expect(pollBudgetAttempts(0)).toBe(330);
+    expect(pollBudgetAttempts(-5)).toBe(330);
+  });
+
+  test("never drops below the historical 300-attempt floor", () => {
+    expect(pollBudgetAttempts(60)).toBe(300); // (60+60)*1000/2000 = 60 -> floored to 300
+  });
+
+  test("honors a custom interval", () => {
+    expect(pollBudgetAttempts(900, 1000)).toBe(960);
   });
 });
 
