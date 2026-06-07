@@ -67,12 +67,38 @@ interface OperationDetail {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+const POLL_INTERVAL_MS = 2000;
+/** Extra slack on top of the command timeout: job pickup, the final result
+ *  write, and clock skew between the runner and the API. */
+const POLL_MARGIN_SECONDS = 60;
+/** Never poll for less than the historical window (300 * 2s = 600s), even when
+ *  the caller asks for a tiny timeout. */
+const MIN_POLL_ATTEMPTS = 300;
+/** Used when the caller doesn't pass --timeout (mirrors the `exec` help text). */
+const DEFAULT_TIMEOUT_SECONDS = 600;
+
+/** Size the poll loop to the command's own timeout (+ margin) so a long build
+ *  isn't abandoned by the client before the server-side timeout elapses. The
+ *  old fixed 300-attempt cap (600s) made >10min builds report a false failure
+ *  even though they finished on the server. */
+export function pollBudgetAttempts(
+  timeoutSeconds: number | undefined,
+  intervalMs: number = POLL_INTERVAL_MS,
+): number {
+  const effective =
+    typeof timeoutSeconds === "number" && timeoutSeconds > 0
+      ? timeoutSeconds
+      : DEFAULT_TIMEOUT_SECONDS;
+  const windowMs = (effective + POLL_MARGIN_SECONDS) * 1000;
+  return Math.max(MIN_POLL_ATTEMPTS, Math.ceil(windowMs / intervalMs));
+}
+
 export async function pollUntilComplete(
   client: Pick<HttpClient, "get">,
   operationId: string,
   sleep: (ms: number) => Promise<void> = defaultSleep,
-  intervalMs = 2000,
-  maxAttempts = 300,
+  intervalMs = POLL_INTERVAL_MS,
+  maxAttempts = MIN_POLL_ATTEMPTS,
 ): Promise<OperationDetail> {
   for (let i = 0; i < maxAttempts; i++) {
     const detail = await client.get<OperationDetail>(`/operations/${operationId}`);
@@ -97,7 +123,13 @@ export async function execOnServer(
       duration_ms: res.duration_ms ?? 0,
     };
   }
-  const detail = await pollUntilComplete(client, res.operation_id, sleep);
+  const detail = await pollUntilComplete(
+    client,
+    res.operation_id,
+    sleep,
+    POLL_INTERVAL_MS,
+    pollBudgetAttempts(req.timeout_seconds),
+  );
   const r = detail.result ?? {};
   return {
     operation_id: res.operation_id,
