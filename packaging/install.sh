@@ -111,4 +111,10 @@ if ! command -v reoclo >/dev/null && [ "$NO_MODIFY_PATH" = "0" ]; then
   echo "  Add this to your shell rc:"
   echo "    export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
-echo "Run 'reoclo login' to authenticate."
+# Post-install hint for interactive installs only. In CI / automation the CLI
+# authenticates via REOCLO_AUTOMATION_KEY (e.g. the reoclo/run GitHub Action), so
+# telling those runs to `reoclo login` is noise — and misleading when a key is
+# already set. Show it only on an interactive TTY with no automation key present.
+if [ -t 1 ] && [ -z "${REOCLO_AUTOMATION_KEY:-}" ]; then
+  echo "Run 'reoclo login' to authenticate."
+fi

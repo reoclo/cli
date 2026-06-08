@@ -27,6 +27,48 @@ export interface RefreshDeps {
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Optional hook to persist the new access-token expiry onto the profile. */
   onExpiry?: (expiresAt: string | undefined) => Promise<void> | void;
+  /** Total attempts at the refresh HTTP call before giving up on a *transient*
+   *  failure. Default {@link DEFAULT_MAX_ATTEMPTS}. A definitive 400/401 never
+   *  retries. */
+  maxAttempts?: number;
+  /** Injectable backoff sleep (tests). Defaults to real setTimeout. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Default total attempts for the refresh HTTP call (1 try + 2 retries). */
+export const DEFAULT_MAX_ATTEMPTS = 3;
+/** Base backoff; doubles each retry (250ms, 500ms, …). */
+const BACKOFF_BASE_MS = 250;
+const DEFAULT_SLEEP = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Call the refresh endpoint with bounded retry + exponential backoff. A 400/401
+ * is a definitive rejection (token expired/revoked/reused) → re-login required,
+ * so it is re-raised immediately as {@link ReauthRequiredError} and never
+ * retried. Everything else (network error, 408/429/5xx) is transient: retry up
+ * to `maxAttempts`, then return `null` so the caller surfaces the original 401.
+ *
+ * This is the fix for spurious daily re-logins: a single transient blip on the
+ * (rate-limited, CDN-fronted) token endpoint previously gave up on the first
+ * failure and forced a full `reoclo login`.
+ */
+async function refreshWithRetry(
+  deps: RefreshDeps,
+  refreshToken: string,
+): Promise<TokenResponse | null> {
+  const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const sleep = deps.sleep ?? DEFAULT_SLEEP;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await deps.refreshFn(deps.authUrl, refreshToken, deps.clientId);
+    } catch (e) {
+      if (e instanceof DeviceFlowError && (e.status === 400 || e.status === 401)) {
+        throw new ReauthRequiredError(deps.profileName, "rejected");
+      }
+      if (attempt >= maxAttempts) return null;
+      await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1));
+    }
+  }
 }
 
 /**
@@ -73,20 +115,13 @@ function refreshBody(deps: RefreshDeps): () => Promise<string | null> {
       throw new ReauthRequiredError(deps.profileName, "missing");
     }
 
-    let tokens: TokenResponse;
-    try {
-      tokens = await deps.refreshFn(deps.authUrl, refreshToken, deps.clientId);
-    } catch (e) {
-      // 400/401 from the auth server means the refresh token itself is bad
-      // (expired / revoked / reuse-detected) → the only fix is to re-login.
-      // Other 4xx (408 timeout, 429 rate-limit) and 5xx are transient: under
-      // parallel-agent load the token endpoint commonly rate-limits, and forcing
-      // a re-login there would be wrong — surface the original 401 and retry.
-      if (e instanceof DeviceFlowError && (e.status === 400 || e.status === 401)) {
-        throw new ReauthRequiredError(deps.profileName, "rejected");
-      }
-      return null;
-    }
+    // 400/401 from the auth server means the refresh token itself is bad
+    // (expired / revoked / reuse-detected) → re-login (thrown inside
+    // refreshWithRetry). Network errors and 408/429/5xx are transient: the
+    // token endpoint is rate-limited and CDN-fronted, so a single blip must not
+    // force a re-login — retry with backoff, then return null (surface the 401).
+    const tokens = await refreshWithRetry(deps, refreshToken);
+    if (!tokens) return null;
 
     await deps.store.set(deps.profileName, tokens.access_token);
     await deps.store.set(refreshKey, tokens.refresh_token);
