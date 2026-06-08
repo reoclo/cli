@@ -38,6 +38,7 @@ const baseDeps = (over: Partial<Parameters<typeof refreshSession>[0]> = {}) => (
   clientId: "cli",
   refreshFn: () => Promise.resolve(tokens()),
   withLock: <T>(fn: () => Promise<T>) => fn(),
+  sleep: () => Promise.resolve(), // no real backoff delay in tests
   ...over,
 });
 
@@ -168,6 +169,71 @@ describe("refreshSession", () => {
     expect(out).toBe("at2");
     expect(await store.get("reoclo-staging-refresh")).toBe("rt2");
     expect(await store.get("staging-refresh")).toBeNull();
+  });
+
+  // ---- transient-failure retry (root cause of the daily re-login bug) ----
+
+  test("retries a transient failure, then succeeds (no forced re-login)", async () => {
+    let calls = 0;
+    let sleeps = 0;
+    const out = await refreshSession(
+      baseDeps({
+        sleep: () => { sleeps++; return Promise.resolve(); },
+        refreshFn: () => {
+          calls++;
+          if (calls === 1) return Promise.reject(new DeviceFlowError("network", "ECONNRESET"));
+          return Promise.resolve(tokens());
+        },
+      }),
+    );
+    expect(out).toBe("at2"); // recovered instead of surfacing the 401
+    expect(calls).toBe(2);
+    expect(sleeps).toBe(1); // backed off once between attempts
+  });
+
+  test("retries a 429 rate-limit before giving up", async () => {
+    let calls = 0;
+    const out = await refreshSession(
+      baseDeps({
+        refreshFn: () => { calls++; return Promise.reject(new DeviceFlowError("network", "Too Many Requests", 429)); },
+      }),
+    );
+    expect(out).toBeNull();
+    expect(calls).toBe(3); // default maxAttempts, not a single shot
+  });
+
+  test("retries a 5xx before giving up", async () => {
+    let calls = 0;
+    const out = await refreshSession(
+      baseDeps({
+        refreshFn: () => { calls++; return Promise.reject(new DeviceFlowError("network", "bad gateway", 502)); },
+      }),
+    );
+    expect(out).toBeNull();
+    expect(calls).toBe(3);
+  });
+
+  test("does NOT retry a definitive 4xx (400) — re-login required immediately", async () => {
+    let calls = 0;
+    const err = await refreshSession(
+      baseDeps({
+        refreshFn: () => { calls++; return Promise.reject(new DeviceFlowError("network", "invalid_grant", 400)); },
+      }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReauthRequiredError);
+    expect(calls).toBe(1); // no wasted retries on a hard rejection
+  });
+
+  test("honors an explicit maxAttempts", async () => {
+    let calls = 0;
+    const out = await refreshSession(
+      baseDeps({
+        maxAttempts: 5,
+        refreshFn: () => { calls++; return Promise.reject(new DeviceFlowError("network", "ECONNREFUSED")); },
+      }),
+    );
+    expect(out).toBeNull();
+    expect(calls).toBe(5);
   });
 });
 
