@@ -71,6 +71,12 @@ EXISTING_GITEA_ASSETS=$(curl -fsS \
   "$GITEA_API_URL/repos/$GITEA_REPO/releases/$GITEA_RELEASE_ID/assets" \
   | jq -r '.[].name')
 
+# A single Gitea asset upload must NOT abort the whole release: the Gitea
+# instance rejects large attachments (e.g. the ~126MB windows .exe → HTTP 500),
+# and if that killed the script the GitHub mirror below — the source of truth
+# for `install.sh`, Homebrew, and the deploy-sync action — would never publish.
+# Tolerate per-asset Gitea failures here; GitHub stays strict.
+GITEA_UPLOAD_FAILS=0
 for f in "${ASSETS[@]}"; do
   name="$(basename "$f")"
   if printf '%s\n' "$EXISTING_GITEA_ASSETS" | grep -Fxq "$name"; then
@@ -78,11 +84,14 @@ for f in "${ASSETS[@]}"; do
     continue
   fi
   echo "  • Gitea $name — uploading"
-  curl -fsS -X POST \
+  if ! curl -fsS -X POST \
     -H "Authorization: token $GITEA_TOKEN" \
     -F "attachment=@$f" \
     "$GITEA_API_URL/repos/$GITEA_REPO/releases/$GITEA_RELEASE_ID/assets?name=$name" \
-    > /dev/null
+    > /dev/null; then
+    echo "  ⚠ Gitea $name — upload failed (likely the Gitea attachment-size limit); continuing — GitHub mirror is authoritative"
+    GITEA_UPLOAD_FAILS=$((GITEA_UPLOAD_FAILS + 1))
+  fi
 done
 
 # ---------------------------------------------------------------------------
@@ -134,5 +143,9 @@ for f in "${ASSETS[@]}"; do
     "$GH_UPLOAD/repos/$GITHUB_REPO/releases/$GH_RELEASE_ID/assets?name=$name" \
     > /dev/null
 done
+
+if [ "${GITEA_UPLOAD_FAILS:-0}" -gt 0 ]; then
+  echo "==> Note: $GITEA_UPLOAD_FAILS Gitea asset upload(s) failed (e.g. the large windows binary — Gitea attachment limit). The GitHub release is complete; raise the Gitea attachment max-size to mirror those too."
+fi
 
 echo "==> Done."
