@@ -13,6 +13,8 @@
 
 export interface DeploySessionCreateRequest {
   container_names: string[];
+  /** Explicit application references (slug or UUID) — match identity independent of container name. */
+  application_refs?: string[];
   workflow_run_id?: string;
   commit_sha?: string;
 }
@@ -34,6 +36,8 @@ export interface DeploySessionCreateResponse {
 
 export interface DeploySyncRequestItem {
   container_name: string;
+  /** Explicit application reference (slug or UUID). `container_name` stays the proxy upstream. */
+  application_ref?: string;
   container_port: number;
   image_tag?: string;
   force?: boolean;
