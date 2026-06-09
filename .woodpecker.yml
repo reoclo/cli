@@ -32,7 +32,7 @@ steps:
       - apt-get update
       - apt-get install -y --no-install-recommends curl jq ca-certificates git python3 build-essential
       - bun install --frozen-lockfile
-      - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f"; done'
+      - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f" > /tmp/reoclo-test.log 2>&1 || { cat /tmp/reoclo-test.log; echo "FAILED: $f"; exit 1; }; done'
       - bun run typecheck
       - bun run build
 
@@ -65,7 +65,7 @@ steps:
       #   2. Cache tests that toggle `process.env.REOCLO_CACHE_DIR` per-test
       #      sometimes see stale state across files inside one process.
       # Per-file invocation gives every file a fresh process and is bulletproof.
-      - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f"; done'
+      - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f" > /tmp/reoclo-test.log 2>&1 || { cat /tmp/reoclo-test.log; echo "FAILED: $f"; exit 1; }; done'
       - bun run typecheck
       - bun run build
       - cd dist && sha256sum reoclo-* > SHA256SUMS && cd ..
