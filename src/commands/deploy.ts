@@ -63,6 +63,18 @@ function hasReocloLabel(labels: RawService["labels"]): boolean {
   return labels["reoclo.managed"] === "true";
 }
 
+/**
+ * Explicit opt-out: a service labelled `reoclo.managed=false` is never
+ * discovered, even if it sits on the `reoclo-proxy` network and exposes a port.
+ * Lets a portless sidecar (or any container) share `reoclo-proxy` without ever
+ * being considered for routing — and without the "no exposed port" warning.
+ */
+function isReocloOptedOut(labels: RawService["labels"]): boolean {
+  if (!labels) return false;
+  if (Array.isArray(labels)) return labels.some((l) => l === "reoclo.managed=false");
+  return labels["reoclo.managed"] === "false";
+}
+
 /** Read a single label value, supporting both array (`["k=v"]`) and map (`{k: v}`) forms. */
 function readLabel(labels: RawService["labels"], key: string): string | undefined {
   if (!labels) return undefined;
@@ -136,6 +148,7 @@ export async function discoverFromCompose(composeFilePath: string): Promise<Disc
   const results: DiscoveredService[] = [];
   for (const [serviceKey, service] of Object.entries(doc.services)) {
     if (!service) continue;
+    if (isReocloOptedOut(service.labels)) continue; // explicit opt-out wins over network/label
     if (!(hasReocloNetwork(service.networks) || hasReocloLabel(service.labels))) continue;
 
     const container_name = service.container_name ?? serviceKey;

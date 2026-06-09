@@ -65,6 +65,38 @@ services:
     expect(map).toEqual([{ container_name: "w", container_port: 5000, image_tag: null }]);
   });
 
+  test("reoclo.managed=false opts a service out of discovery (array + map forms), even on reoclo-proxy", async () => {
+    // Array-label form: opted-out sidecar on reoclo-proxy with a port is skipped silently.
+    const arr = await discoverFromCompose(
+      compose(`
+services:
+  app:
+    networks: [reoclo-proxy]
+    expose: ["3000"]
+  postgres:
+    networks: [reoclo-proxy]
+    expose: ["5432"]
+    labels: ["reoclo.managed=false"]
+`),
+    );
+    expect(arr).toEqual([{ container_name: "app", container_port: 3000, image_tag: null }]);
+
+    // Map-label form: opt-out wins even when reoclo.managed=true would otherwise match.
+    const map = await discoverFromCompose(
+      compose(`
+services:
+  redis:
+    networks:
+      reoclo-proxy: {}
+    expose:
+      - "6379"
+    labels:
+      reoclo.managed: "false"
+`),
+    );
+    expect(map).toEqual([]);
+  });
+
   test("excludes services that are neither on the network nor labelled", async () => {
     const out = await discoverFromCompose(
       compose(`

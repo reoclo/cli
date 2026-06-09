@@ -1,6 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun, registerExec, buildAutomationExecBody, buildAutomationExecOutput } from "../../../src/commands/exec";
+import { buildArgvCommand, buildShellWrappedCommand, parseEnvFile, maskOutput, MASK_MIN_LENGTH, detectShCQuotingFootgun, registerExec, buildAutomationExecBody, buildAutomationExecOutput } from "../../../src/commands/exec";
 import { Command } from "commander";
+
+describe("buildArgvCommand", () => {
+  test("leaves plain argv untouched", () => {
+    expect(buildArgvCommand(["docker", "ps"])).toBe("docker ps");
+    expect(buildArgvCommand(["docker", "ps", "-a"])).toBe("docker ps -a");
+  });
+
+  test("single-quotes an arg containing spaces so the remote shell keeps it as one token", () => {
+    // The classic case: a Go-template arg whose space was eaten by join().
+    expect(buildArgvCommand(["docker", "inspect", "--format", "{{json .State}}", "web"])).toBe(
+      "docker inspect --format '{{json .State}}' web",
+    );
+  });
+
+  test("quotes other shell-significant args (pipes, globs, redirects) as literals", () => {
+    expect(buildArgvCommand(["echo", "a|b", "*.txt", ">out"])).toBe(
+      "echo 'a|b' '*.txt' '>out'",
+    );
+  });
+
+  test("POSIX-escapes embedded single quotes", () => {
+    expect(buildArgvCommand(["echo", "it's"])).toBe("echo 'it'\\''s'");
+  });
+
+  test("quotes an empty arg", () => {
+    expect(buildArgvCommand(["x", ""])).toBe("x ''");
+  });
+});
 
 describe("buildShellWrappedCommand", () => {
   test("wraps simple argv in bash -c with single quotes", () => {
