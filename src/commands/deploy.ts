@@ -8,6 +8,7 @@ import { requireAutomationKey } from "../ci/automation-client";
 import {
   DeploySyncClient,
   type DeploySessionCreateResponse,
+  type DeployStatusResponse,
   type DeploySyncRequestItem,
   type DeploySyncResponse,
 } from "../ci/deploy-client";
@@ -252,6 +253,50 @@ export function summarizeSync(resp: DeploySyncResponse, force: boolean): SyncSum
   };
 }
 
+export interface WaitDeps {
+  status: () => Promise<DeployStatusResponse | null>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  log?: (msg: string) => void;
+}
+
+export type WaitOutcome =
+  | { ok: true; unsupported?: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * Poll deploy convergence until every app is converged or the timeout elapses.
+ * Returns `{ ok: true, unsupported: true }` when the API has no status endpoint
+ * (older Reoclo), so callers can skip waiting instead of failing the deploy.
+ * Time/IO are injected (`status`/`sleep`/`now`) so this is unit-testable.
+ */
+export async function waitForConvergence(
+  deps: WaitDeps,
+  timeoutMs: number,
+  pollMs = 2000,
+): Promise<WaitOutcome> {
+  const start = deps.now();
+  for (;;) {
+    const s = await deps.status();
+    if (s === null) return { ok: true, unsupported: true };
+    if (s.converged) return { ok: true };
+    if (deps.now() - start >= timeoutMs) {
+      const pending = s.applications
+        .filter((a) => !a.converged)
+        .map((a) => `${a.container_name || a.application_id}: ${a.reason ?? "not converged"}`);
+      return {
+        ok: false,
+        reason: `timed out after ${Math.round(timeoutMs / 1000)}s waiting for proxy convergence: ${pending.join("; ")}`,
+      };
+    }
+    if (deps.log) {
+      const ready = s.applications.filter((a) => a.converged).length;
+      deps.log(`waiting for proxy convergence… ${ready}/${s.applications.length} ready`);
+    }
+    await deps.sleep(pollMs);
+  }
+}
+
 export function registerDeploy(program: Command): void {
   const g = program.command("deploy").description("external deploy operations (CI)");
 
@@ -260,7 +305,16 @@ export function registerDeploy(program: Command): void {
     .option("--compose-file <path>", "discover Reoclo-managed services from a docker-compose file")
     .option("--services <list>", "explicit services as name:port[,name2:port2,...]")
     .option("--force", "override conflicts (re-take routes held by another signature)", false)
-    .action(async (opts: { composeFile?: string; services?: string; force?: boolean }) => {
+    .option("--wait", "after sync, wait until each app's proxy route is live (converged)", false)
+    .option("--wait-timeout <seconds>", "max seconds to wait when --wait is set (default 120)")
+    .action(
+      async (opts: {
+        composeFile?: string;
+        services?: string;
+        force?: boolean;
+        wait?: boolean;
+        waitTimeout?: string;
+      }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       requireAutomationKey(ctx);
@@ -352,6 +406,32 @@ export function registerDeploy(program: Command): void {
             `sync errors:\n${summary.errors.map((e) => `${e.container_name}: ${e.reason}`).join("\n")}`,
             1,
           );
+        }
+
+        // Optional: block until the async reconciler has applied the routes and
+        // attached the containers, so a workflow can rely on the final state.
+        if (opts.wait === true) {
+          const parsed = parseInt(opts.waitTimeout ?? "120", 10);
+          const timeoutMs = (Number.isFinite(parsed) && parsed > 0 ? parsed : 120) * 1000;
+          const outcome = await waitForConvergence(
+            {
+              status: () => client.status(),
+              sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+              now: () => Date.now(),
+              log: (m) => process.stderr.write(`${m}\n`),
+            },
+            timeoutMs,
+          );
+          if (!outcome.ok) {
+            throw exitErr(outcome.reason, 1);
+          }
+          if (outcome.unsupported) {
+            process.stderr.write(
+              "warning: this Reoclo API has no deploy status endpoint — skipping --wait (upgrade the server to API >= 1.75.0)\n",
+            );
+          } else {
+            process.stderr.write("proxy routes converged\n");
+          }
         }
       } finally {
         try {

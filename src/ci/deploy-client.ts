@@ -65,6 +65,22 @@ export interface DeploySyncResponse {
 }
 
 /** Injectable for tests; defaults to the global fetch. */
+export interface DeployStatusItem {
+  application_id: string;
+  container_name: string;
+  caddy_running: boolean;
+  route_in_sync: boolean;
+  attached: boolean;
+  converged: boolean;
+  reason: string | null;
+}
+
+export interface DeployStatusResponse {
+  session_id: string;
+  converged: boolean;
+  applications: DeployStatusItem[];
+}
+
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 function exitErr(message: string, code: number): Error & { exitCode: number } {
@@ -161,6 +177,23 @@ export class DeploySyncClient {
       throw exitErr(`deploy sync failed (${status}): ${describe(json)}`, 1);
     }
     return json as DeploySyncResponse;
+  }
+
+  /**
+   * Poll per-application convergence for the session's apps. Returns null if the
+   * API doesn't expose the endpoint (404) so deploys against an older Reoclo
+   * degrade gracefully (the caller skips waiting rather than failing).
+   */
+  async status(): Promise<DeployStatusResponse | null> {
+    if (!this.sessionToken) {
+      throw exitErr("no deploy session — call createSession first", 1);
+    }
+    const { status, json } = await this.send("GET", "/external-deploy/status", this.sessionToken);
+    if (status === 404) return null;
+    if (status !== 200) {
+      throw exitErr(`deploy status failed (${status}): ${describe(json)}`, 1);
+    }
+    return json as DeployStatusResponse;
   }
 
   /** Best-effort self-revocation. Never throws — cleanup must not mask a result. */
