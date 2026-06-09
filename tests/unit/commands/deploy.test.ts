@@ -7,9 +7,88 @@ import {
   discoverFromCompose,
   parseServicesList,
   summarizeSync,
+  waitForConvergence,
   type DiscoveredService,
 } from "../../../src/commands/deploy";
-import type { DeploySyncResponse, DeploySyncResponseItem } from "../../../src/ci/deploy-client";
+import type {
+  DeployStatusResponse,
+  DeploySyncResponse,
+  DeploySyncResponseItem,
+} from "../../../src/ci/deploy-client";
+
+describe("waitForConvergence", () => {
+  const item = (over: Partial<DeployStatusResponse["applications"][number]> = {}) => ({
+    application_id: "a1",
+    container_name: "app",
+    caddy_running: true,
+    route_in_sync: true,
+    attached: true,
+    converged: true,
+    reason: null,
+    ...over,
+  });
+
+  test("returns ok immediately when already converged", async () => {
+    let calls = 0;
+    const out = await waitForConvergence(
+      {
+        status: async () => {
+          calls++;
+          return { session_id: "s", converged: true, applications: [item()] };
+        },
+        sleep: async () => {},
+        now: () => 0,
+      },
+      120_000,
+    );
+    expect(out).toEqual({ ok: true });
+    expect(calls).toBe(1);
+  });
+
+  test("polls until converged", async () => {
+    const seq: DeployStatusResponse[] = [
+      { session_id: "s", converged: false, applications: [item({ converged: false, attached: false, reason: "x" })] },
+      { session_id: "s", converged: false, applications: [item({ converged: false, attached: false, reason: "x" })] },
+      { session_id: "s", converged: true, applications: [item()] },
+    ];
+    let i = 0;
+    const out = await waitForConvergence(
+      { status: async () => seq[i++]!, sleep: async () => {}, now: () => 0 },
+      120_000,
+    );
+    expect(out.ok).toBe(true);
+    expect(i).toBe(3);
+  });
+
+  test("times out with the pending apps' reasons", async () => {
+    let t = 0;
+    const out = await waitForConvergence(
+      {
+        status: async () => ({
+          session_id: "s",
+          converged: false,
+          applications: [item({ converged: false, attached: false, reason: "container not yet attached to reoclo-proxy" })],
+        }),
+        sleep: async () => {},
+        now: () => (t += 60_000), // advances 60s each call → exceeds 120s timeout
+      },
+      120_000,
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).toContain("timed out");
+      expect(out.reason).toContain("not yet attached");
+    }
+  });
+
+  test("treats a missing status endpoint (null) as unsupported and does not block", async () => {
+    const out = await waitForConvergence(
+      { status: async () => null, sleep: async () => {}, now: () => 0 },
+      120_000,
+    );
+    expect(out).toEqual({ ok: true, unsupported: true });
+  });
+});
 
 let dir: string;
 
