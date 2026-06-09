@@ -62,6 +62,27 @@ export function buildShellWrappedCommand(
   return `${shell} -c '${escaped}'`;
 }
 
+// Chars that never need quoting in a POSIX shell word. Anything else (spaces,
+// glob/pipe/redirect metacharacters, braces, quotes, …) forces quoting.
+const SAFE_ARG = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/** POSIX single-quote one argv element unless it is already shell-safe. */
+function shQuoteArg(arg: string): string {
+  if (arg.length > 0 && SAFE_ARG.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Join argv into one command string with **argv-exec** semantics: each element
+ * is individually POSIX-quoted so the remote shell reconstructs the exact
+ * arguments. A space inside a single arg — e.g. a Go-template `{{json .X}}` —
+ * stays one token instead of being split by the remote shell. (Use `--shell`
+ * when you actually want pipes/redirects/globs interpreted.)
+ */
+export function buildArgvCommand(commandParts: string[]): string {
+  return commandParts.map(shQuoteArg).join(" ");
+}
+
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -279,7 +300,7 @@ export function registerExec(program: Command): void {
         const command =
           opts.shell !== undefined
             ? buildShellWrappedCommand(opts.shell, commandParts)
-            : commandParts.join(" ");
+            : buildArgvCommand(commandParts);
 
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
