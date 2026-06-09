@@ -23,6 +23,13 @@ export interface DiscoveredService {
   container_name: string;
   container_port: number;
   image_tag: string | null;
+  /**
+   * Explicit application reference (slug or UUID) from a `reoclo.app` /
+   * `reoclo.app-id` label. Lets a container bind to its Reoclo application by
+   * identity rather than by name — required when the deployed container name
+   * doesn't follow Reoclo's naming scheme.
+   */
+  application_ref?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +61,29 @@ function hasReocloLabel(labels: RawService["labels"]): boolean {
   if (!labels) return false;
   if (Array.isArray(labels)) return labels.some((l) => l === "reoclo.managed=true");
   return labels["reoclo.managed"] === "true";
+}
+
+/** Read a single label value, supporting both array (`["k=v"]`) and map (`{k: v}`) forms. */
+function readLabel(labels: RawService["labels"], key: string): string | undefined {
+  if (!labels) return undefined;
+  if (Array.isArray(labels)) {
+    const prefix = `${key}=`;
+    const hit = labels.find((l) => l.startsWith(prefix));
+    return hit ? hit.slice(prefix.length) : undefined;
+  }
+  const value = labels[key];
+  return value !== undefined ? String(value) : undefined;
+}
+
+/**
+ * Explicit application reference from labels. `reoclo.app-id` (a UUID) takes
+ * precedence over `reoclo.app` (a slug). Returns undefined when neither is set.
+ */
+function extractAppRef(labels: RawService["labels"]): string | undefined {
+  const byId = readLabel(labels, "reoclo.app-id")?.trim();
+  if (byId) return byId;
+  const bySlug = readLabel(labels, "reoclo.app")?.trim();
+  return bySlug || undefined;
 }
 
 function extractPort(service: RawService): number | null {
@@ -111,6 +141,7 @@ export async function discoverFromCompose(composeFilePath: string): Promise<Disc
     const container_name = service.container_name ?? serviceKey;
     const container_port = extractPort(service);
     const image_tag = service.image ?? null;
+    const application_ref = extractAppRef(service.labels);
 
     if (container_port === null) {
       process.stderr.write(
@@ -118,7 +149,12 @@ export async function discoverFromCompose(composeFilePath: string): Promise<Disc
       );
       continue;
     }
-    results.push({ container_name, container_port, image_tag });
+    results.push({
+      container_name,
+      container_port,
+      image_tag,
+      ...(application_ref ? { application_ref } : {}),
+    });
   }
   return results;
 }
@@ -159,13 +195,19 @@ export function buildDeployments(
   const unmatchedSet = new Set(unmatched);
   const out: DeploySyncRequestItem[] = [];
   for (const svc of discovered) {
-    if (unmatchedSet.has(svc.container_name)) continue;
+    // The API reports unmatched names AND refs. Keep a service if it matched by
+    // either dimension — drop only when both its name and its ref are unmatched.
+    const matchedByName = !unmatchedSet.has(svc.container_name);
+    const matchedByRef =
+      svc.application_ref !== undefined && !unmatchedSet.has(svc.application_ref);
+    if (!matchedByName && !matchedByRef) continue;
     const item: DeploySyncRequestItem = {
       container_name: svc.container_name,
       container_port: svc.container_port,
       force,
     };
     if (svc.image_tag !== null) item.image_tag = svc.image_tag;
+    if (svc.application_ref !== undefined) item.application_ref = svc.application_ref;
     out.push(item);
   }
   return out;
@@ -234,9 +276,18 @@ export function registerDeploy(program: Command): void {
       const ci = detectCiContext();
       const client = new DeploySyncClient(ctx.api, ctx.token);
 
+      const appRefs = [
+        ...new Set(
+          discovered
+            .map((s) => s.application_ref)
+            .filter((r): r is string => r !== undefined),
+        ),
+      ];
+
       try {
         const session: DeploySessionCreateResponse = await client.createSession({
           container_names: discovered.map((s) => s.container_name),
+          ...(appRefs.length > 0 ? { application_refs: appRefs } : {}),
           ...(ci.runId ? { workflow_run_id: ci.runId } : {}),
           ...(ci.runContext.sha ? { commit_sha: ci.runContext.sha } : {}),
         });

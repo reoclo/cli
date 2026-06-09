@@ -166,6 +166,69 @@ describe("buildDeployments", () => {
     const out = buildDeployments([discovered[0] as DiscoveredService], [], false);
     expect(out[0]?.force).toBe(false);
   });
+
+  test("carries application_ref and keeps a service matched by ref even when its name is unmatched", () => {
+    const withRef: DiscoveredService[] = [
+      { container_name: "app", container_port: 3000, image_tag: null, application_ref: "quidax-gw" },
+    ];
+    // API reports container_name "app" unmatched, but the ref matched → keep it.
+    const out = buildDeployments(withRef, ["app"], false);
+    expect(out).toEqual([
+      { container_name: "app", container_port: 3000, force: false, application_ref: "quidax-gw" },
+    ]);
+  });
+
+  test("drops a service only when both its name and ref are unmatched", () => {
+    const withRef: DiscoveredService[] = [
+      { container_name: "app", container_port: 3000, image_tag: null, application_ref: "quidax-gw" },
+    ];
+    expect(buildDeployments(withRef, ["app", "quidax-gw"], false)).toEqual([]);
+  });
+});
+
+describe("discoverFromCompose — application_ref labels", () => {
+  test("extracts reoclo.app as application_ref (array label form)", async () => {
+    const out = await discoverFromCompose(
+      compose(`
+services:
+  app:
+    networks: [reoclo-proxy]
+    expose: ["3000"]
+    labels: ["reoclo.app=quidax-gateway"]
+`),
+    );
+    expect(out).toEqual([
+      {
+        container_name: "app",
+        container_port: 3000,
+        image_tag: null,
+        application_ref: "quidax-gateway",
+      },
+    ]);
+  });
+
+  test("reoclo.app-id wins over reoclo.app (map label form)", async () => {
+    const out = await discoverFromCompose(
+      compose(`
+services:
+  app:
+    networks:
+      reoclo-proxy: {}
+    expose: ["3000"]
+    labels:
+      reoclo.app: by-slug
+      reoclo.app-id: 019eaa29-d367-7350-9f68-fb676bee1380
+`),
+    );
+    expect(out).toEqual([
+      {
+        container_name: "app",
+        container_port: 3000,
+        image_tag: null,
+        application_ref: "019eaa29-d367-7350-9f68-fb676bee1380",
+      },
+    ]);
+  });
 });
 
 describe("summarizeSync", () => {
