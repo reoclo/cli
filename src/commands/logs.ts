@@ -64,6 +64,43 @@ export function ingestionLooksInactive(usage: Record<string, unknown>): boolean 
   return (!Number.isFinite(streams) || streams === 0) && (!Number.isFinite(bytes) || bytes === 0);
 }
 
+interface ServerLogStat {
+  server_id: string;
+  server_name: string;
+  bytes: number;
+  streams: number;
+}
+
+/** Shape returned by `GET /tenants/{id}/logs/stats`. */
+interface LogStatsPayload {
+  total_bytes: number;
+  total_entries: number;
+  total_streams: number;
+  retention_days: number;
+  breakdown_by_server: ServerLogStat[];
+}
+
+/**
+ * Build the rendered per-server rows + summary line for `logs stats`, or null
+ * when the tenant has no ingested logs. Pure so it can be unit-tested without a
+ * client. The endpoint reports per-server *streams* (not bytes), so the
+ * breakdown table omits the always-zero per-server byte count; total bytes live
+ * in the summary.
+ */
+export function formatLogStats(
+  r: Partial<LogStatsPayload> & Record<string, unknown>,
+): { rows: Array<{ server: string; streams: number }>; summary: string } | null {
+  if (ingestionLooksInactive(r)) return null;
+  const rows = (r.breakdown_by_server ?? []).map((s) => ({
+    server: s.server_name,
+    streams: s.streams,
+  }));
+  const summary =
+    `Total: ${r.total_entries ?? 0} entries  ${r.total_streams ?? 0} streams  ` +
+    `${r.total_bytes ?? 0} bytes  (retention ${r.retention_days ?? 0}d)`;
+  return { rows, summary };
+}
+
 export function registerLogs(program: Command): void {
   const g = program.command("logs").description("logs");
 
@@ -210,7 +247,8 @@ export function registerLogs(program: Command): void {
           const pageSize = Math.min(limit, SERVER_MAX_PAGE);
 
           const level = opts.level !== undefined ? LogLevelSchema.parse(opts.level) : undefined;
-          const sourceType = opts.sourceType !== undefined ? SourceTypeSchema.parse(opts.sourceType) : undefined;
+          const sourceType =
+            opts.sourceType !== undefined ? SourceTypeSchema.parse(opts.sourceType) : undefined;
           const stream = opts.stream !== undefined ? StreamSchema.parse(opts.stream) : undefined;
 
           let serverId: string | undefined;
@@ -346,7 +384,7 @@ export function registerLogs(program: Command): void {
   );
 
   g.command("stats")
-    .description("show tenant-wide log counts by level and source")
+    .description("show tenant-wide log storage totals and per-server breakdown")
     .option("--from <spec>", "earliest time")
     .option("--to <spec>", "latest time")
     .action(async (opts: { from?: string; to?: string }) => {
@@ -355,17 +393,10 @@ export function registerLogs(program: Command): void {
       const tid = requireTenantId(ctx);
 
       const q = new URLSearchParams();
-      if (opts.from) q.set("since", parseTimeSpec(opts.from).toISOString());
-      if (opts.to) q.set("until", parseTimeSpec(opts.to).toISOString());
+      if (opts.from) q.set("from_date", parseTimeSpec(opts.from).toISOString());
+      if (opts.to) q.set("to_date", parseTimeSpec(opts.to).toISOString());
       const qs = q.toString();
-      interface LogStats {
-        by_level: Record<string, number>;
-        by_source_type: Record<string, number>;
-        total: number;
-        error_count: number;
-        warn_count: number;
-      }
-      const r = await ctx.client.get<LogStats>(
+      const r = await ctx.client.get<LogStatsPayload>(
         `/tenants/${tid}/logs/stats${qs ? `?${qs}` : ""}`,
       );
 
@@ -374,39 +405,24 @@ export function registerLogs(program: Command): void {
         return;
       }
 
-      // The endpoint can return null for the maps when no logs match; treat
-      // those as empty objects so Object.entries / printList don't crash.
-      const byLevel = r.by_level ?? {};
-      const bySource = r.by_source_type ?? {};
-      const total = r.total ?? 0;
-      const errors = r.error_count ?? 0;
-      const warns = r.warn_count ?? 0;
-      if (total === 0) {
+      const formatted = formatLogStats(r as unknown as Record<string, unknown>);
+      if (!formatted) {
         noLogsNotice();
         return;
       }
-      process.stdout.write("By level\n");
-      const levelRows = Object.entries(byLevel).map(([level, count]) => ({ level, count }));
-      printList(
-        levelRows as unknown as Array<Record<string, unknown>>,
-        [
-          { key: "level", label: "LEVEL" },
-          { key: "count", label: "COUNT" },
-        ],
-        "text",
-      );
-      process.stdout.write("\nBy source type\n");
-      const sourceRows = Object.entries(bySource).map(([source, count]) => ({ source, count }));
-      printList(
-        sourceRows as unknown as Array<Record<string, unknown>>,
-        [
-          { key: "source", label: "SOURCE" },
-          { key: "count", label: "COUNT" },
-        ],
-        "text",
-      );
-      const rate = total > 0 ? ((errors / total) * 100).toFixed(2) : "0.00";
-      process.stdout.write(`\nTotal: ${total}  errors: ${errors} (${rate}%)  warnings: ${warns}\n`);
+      if (formatted.rows.length > 0) {
+        process.stdout.write("By server\n");
+        printList(
+          formatted.rows as unknown as Array<Record<string, unknown>>,
+          [
+            { key: "server", label: "SERVER" },
+            { key: "streams", label: "STREAMS" },
+          ],
+          "text",
+        );
+        process.stdout.write("\n");
+      }
+      process.stdout.write(`${formatted.summary}\n`);
     });
 
   g.command("usage")
