@@ -1,5 +1,5 @@
 import { expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { bootstrap, defaultStreamsUrl } from "../../../src/client/bootstrap";
@@ -69,6 +69,24 @@ test("REOCLO_AUTOMATION_KEY env is still respected", async () => {
     expect(ctx.token).toBe("rca_ciauto");
     expect(ctx.tokenType).toBe("automation");
   } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+test("a committed .reoclo is never read under an automation key (CI stays safe)", async () => {
+  // A malformed .reoclo would throw if it were ever parsed — proving the file
+  // is fully inert under automation-key auth, never breaking CI.
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), "{ this is : not json");
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_ciauto");
+    expect(ctx.tokenType).toBe("automation");
+  } finally {
+    process.chdir(origCwd);
     delete process.env.REOCLO_AUTOMATION_KEY;
   }
 });

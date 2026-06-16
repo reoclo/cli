@@ -10,6 +10,7 @@ import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride } from "../config/org-resolve";
+import { projectOrgFor, readProjectOrg } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import type { Me } from "./types";
@@ -188,17 +189,20 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       });
   }
 
-  // Per-invocation organization override (`--org` / $REOCLO_ORG). Resolves the
-  // target org slug -> tenant_id via /auth/me, then mints a token scoped to it
-  // through the OAuth tenant_switch grant — in-memory only, never persisted, so
-  // parallel agents / CI never clobber the stored active org. When the override
-  // already equals the profile's org it's a no-op (no extra network calls).
+  // Per-invocation organization override (`--org` / $REOCLO_ORG / `.reoclo`).
+  // Resolves the target org slug -> tenant_id via /auth/me, then mints a token
+  // scoped to it through the OAuth tenant_switch grant — in-memory only, never
+  // persisted, so parallel agents / CI never clobber the stored active org. When
+  // the override already equals the profile's org it's a no-op (no extra network
+  // calls). The `.reoclo` project file is consulted only for OAuth profiles (and
+  // ranks below the flag/env), so it stays inert under automation-key CI.
   let tenantId = profile?.tenant_id;
   let effectiveToken = token;
   let suppressRefresh = false;
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
+    projectOrg: projectOrgFor(profile?.auth_kind, () => readProjectOrg()),
   });
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
