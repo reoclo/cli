@@ -66,6 +66,30 @@ describe("resolveProfileName", () => {
   test("trims surrounding whitespace on the chosen value", () => {
     expect(resolveProfileName({ flagProfile: " staging ", activeProfile })).toBe("staging");
   });
+
+  test("projectProfile is used when flag and env are absent (beats active)", () => {
+    expect(resolveProfileName({ projectProfile: "work", activeProfile })).toBe("work");
+  });
+
+  test("flag beats projectProfile", () => {
+    expect(resolveProfileName({ flagProfile: "flagp", projectProfile: "work", activeProfile })).toBe(
+      "flagp",
+    );
+  });
+
+  test("env beats projectProfile", () => {
+    expect(resolveProfileName({ envProfile: "envp", projectProfile: "work", activeProfile })).toBe(
+      "envp",
+    );
+  });
+
+  test("blank projectProfile falls through to active", () => {
+    expect(resolveProfileName({ projectProfile: "   ", activeProfile })).toBe("default");
+  });
+
+  test("trims projectProfile", () => {
+    expect(resolveProfileName({ projectProfile: "  work  ", activeProfile })).toBe("work");
+  });
 });
 
 describe("resolveCommandProfile", () => {

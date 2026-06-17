@@ -35,17 +35,21 @@ export function extractProfileFromArgv(argv: readonly string[]): string | undefi
  * Resolve the effective profile name from the precedence chain:
  *   1. explicit `--profile` flag (CLI flag — most specific)
  *   2. `$REOCLO_PROFILE` environment variable
- *   3. the config's active profile (set by `reoclo login` / `reoclo profile use`)
+ *   3. the `.reoclo` project file's `profile` (per-directory binding)
+ *   4. the config's active profile (set by `reoclo login` / `reoclo profile use`)
  *
- * Empty / whitespace-only flag and env values are treated as unset so they
- * don't shadow the active profile.
+ * Empty / whitespace-only flag, env, and project values are treated as unset so
+ * they don't shadow the active profile.
  */
 export function resolveProfileName(opts: {
   flagProfile?: string;
   envProfile?: string;
+  projectProfile?: string;
   activeProfile: string;
 }): string {
-  return pick(opts.flagProfile) ?? pick(opts.envProfile) ?? opts.activeProfile;
+  return (
+    pick(opts.flagProfile) ?? pick(opts.envProfile) ?? pick(opts.projectProfile) ?? opts.activeProfile
+  );
 }
 
 /** Minimal structural view of a commander Command — just the merged-options

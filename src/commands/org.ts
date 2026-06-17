@@ -6,6 +6,8 @@ import { getActiveProfile, loadConfig, saveProfile } from "../config/store";
 import { clearTenant } from "../completion/cache";
 import { resolveStore } from "../config/token-store";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
+import { effectiveOrg } from "../config/org-resolve";
+import { projectOrgFor, readProjectOrg } from "../config/project-config";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
 import type { OutputFormat } from "../ui/output";
 import { formatRole } from "../ui/format-role";
@@ -69,14 +71,32 @@ export function registerOrg(program: Command): void {
     });
 
   g.command("current")
-    .description("print the active organization slug")
+    .description("print the organization the CLI will target in this directory")
     .action(async () => {
       const profile = await getActiveProfile();
       if (!profile) {
         process.stderr.write("not authenticated — run 'reoclo login'\n");
         process.exit(3);
       }
-      process.stdout.write(`${profile.tenant_slug}\n`);
+      // Report the EFFECTIVE org for this directory — honoring `--org`,
+      // $REOCLO_ORG, and a `.reoclo` project binding — not just the stored
+      // active profile, which would mislead inside a bound project tree.
+      const { org, source } = effectiveOrg({
+        flagOrg: program.opts().org as string | undefined,
+        envOrg: process.env.REOCLO_ORG,
+        projectOrg: projectOrgFor(profile.auth_kind, () => readProjectOrg()),
+        profileOrg: profile.tenant_slug,
+      });
+      process.stdout.write(`${org}\n`);
+      const hint: Record<typeof source, string | null> = {
+        flag: "(from --org)",
+        env: "(from $REOCLO_ORG)",
+        reoclo: "(from .reoclo)",
+        active: null,
+      };
+      if (process.stdout.isTTY && hint[source]) {
+        process.stderr.write(`${hint[source]}\n`);
+      }
     });
 
   g.command("use <slug>")

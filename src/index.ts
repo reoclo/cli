@@ -34,13 +34,16 @@ import { registerAlerts } from "./commands/alerts";
 import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
+import { registerInit } from "./commands/init";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
+import { maybeNotifyUpdate, performUpdateCheck, shouldRunUpdateCheck } from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { loadConfig } from "./config/store";
 import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
+import { readProjectConfig } from "./config/project-config";
 import { detectProgramName } from "./lib/program-name";
 
 export const VERSION = pkg.version;
@@ -62,7 +65,8 @@ if (import.meta.main) {
     .option(
       "--org <slug>",
       "run against this organization for one invocation (overrides $REOCLO_ORG and the active org)",
-    );
+    )
+    .option("--no-update-check", "do not check for a newer CLI release on this run");
 
   registerOrg(program);
   registerProfile(program);
@@ -97,6 +101,17 @@ if (import.meta.main) {
   registerChannels(program);
   registerAudit(program);
   registerDashboard(program);
+  registerInit(program);
+
+  // Hidden background worker: refresh the cached "latest release" marker by
+  // asking GitHub. Spawned detached after normal commands (see postAction); runs
+  // before auth and stays silent, so it never blocks or surfaces errors.
+  program
+    .command("__update-check", { hidden: true })
+    .description("internal: refresh the cached latest-version marker")
+    .action(async () => {
+      await performUpdateCheck();
+    });
 
   // Load capabilities for the profile this invocation will actually use, so the
   // visible/gated command set reflects --profile / $REOCLO_PROFILE — not just the
@@ -106,9 +121,16 @@ if (import.meta.main) {
   let capabilities: string[] | undefined;
   try {
     const cfg = await loadConfig();
+    // A `.reoclo` `profile` binding selects the profile too — so the gated
+    // command set matches what bootstrap() will run. Skipped under an automation
+    // key (CI), matching bootstrap's "never read .reoclo in CI" rule.
+    const projectProfile = process.env.REOCLO_AUTOMATION_KEY
+      ? undefined
+      : readProjectConfig()?.profile;
     const gatingProfile = resolveProfileName({
       flagProfile: extractProfileFromArgv(process.argv),
       envProfile: process.env.REOCLO_PROFILE,
+      projectProfile,
       activeProfile: cfg.active_profile,
     });
     capabilities = cfg.profiles[gatingProfile]?.capabilities;
@@ -127,9 +149,11 @@ if (import.meta.main) {
     "completion",
     "__complete",            // hidden completion engine — pure cache reads, never authenticates
     "__refresh-completion", // hidden background refresh — must never block on auth
+    "__update-check",       // hidden release-version probe — no tenant auth, must never block
     "profile",   // ls/use/rm operate on local config; no API needed
     "keyring",   // status/migrate/export operate on local stores
     "mcp",       // bootstrap happens inside the action with proper error handling
+    "init",      // bootstrap happens inside the action with proper error handling
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
   ]);
 
@@ -180,6 +204,21 @@ if (import.meta.main) {
   program.hook("postAction", (_thisCommand, actionCommand) => {
     if (isPassthrough(actionCommand)) return;
     maybeSpawnBackgroundRefresh();
+
+    // Advisory auto-update notice: prints at most one stderr line/day pointing at
+    // the right upgrade command, and schedules a throttled background re-check.
+    // Suppressed in non-interactive / machine-output / CI contexts so it never
+    // disrupts scripts or nags automation.
+    const opts = program.opts();
+    const enabled = shouldRunUpdateCheck({
+      disabledByEnv: Boolean(process.env.REOCLO_NO_UPDATE_CHECK),
+      disabledByFlag: opts.updateCheck === false,
+      isTTY: Boolean(process.stderr.isTTY),
+      outputFormat: String(opts.output ?? "text"),
+      automationKey: Boolean(process.env.REOCLO_AUTOMATION_KEY),
+      quiet: Boolean(opts.quiet),
+    });
+    if (enabled) maybeNotifyUpdate(VERSION);
   });
 
   try {
