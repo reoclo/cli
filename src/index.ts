@@ -43,6 +43,7 @@ import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { loadConfig } from "./config/store";
 import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
+import { readProjectConfig } from "./config/project-config";
 import { detectProgramName } from "./lib/program-name";
 
 export const VERSION = pkg.version;
@@ -120,9 +121,16 @@ if (import.meta.main) {
   let capabilities: string[] | undefined;
   try {
     const cfg = await loadConfig();
+    // A `.reoclo` `profile` binding selects the profile too — so the gated
+    // command set matches what bootstrap() will run. Skipped under an automation
+    // key (CI), matching bootstrap's "never read .reoclo in CI" rule.
+    const projectProfile = process.env.REOCLO_AUTOMATION_KEY
+      ? undefined
+      : readProjectConfig()?.profile;
     const gatingProfile = resolveProfileName({
       flagProfile: extractProfileFromArgv(process.argv),
       envProfile: process.env.REOCLO_PROFILE,
+      projectProfile,
       activeProfile: cfg.active_profile,
     });
     capabilities = cfg.profiles[gatingProfile]?.capabilities;

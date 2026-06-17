@@ -10,7 +10,7 @@ import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride } from "../config/org-resolve";
-import { projectOrgFor, readProjectOrg } from "../config/project-config";
+import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import type { Me } from "./types";
@@ -114,13 +114,31 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const flagToken = opts.token;
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
 
+  // `.reoclo` is ambient, committed repo config: consult it only for interactive
+  // (non-automation-key) use, so under automation-key CI it's never even read and
+  // a malformed file never throws. It can pin the profile (below --profile /
+  // $REOCLO_PROFILE) and, further down, the org.
+  const projectConfig = envAuto ? null : readProjectConfig();
+
   const cfg = await loadConfig();
   const profileName = resolveProfileName({
     flagProfile: opts.profile ?? globalProfileOverride,
     envProfile: process.env.REOCLO_PROFILE,
+    projectProfile: projectConfig?.profile,
     activeProfile: cfg.active_profile,
   });
   const profile = cfg.profiles[profileName];
+
+  // Fail loud when `.reoclo` pins a profile that doesn't exist locally, rather
+  // than surfacing a confusing "not authenticated" below.
+  if (projectConfig?.profile && profileName === projectConfig.profile && !profile) {
+    const err = new Error(
+      `.reoclo selects profile '${projectConfig.profile}', but it doesn't exist — ` +
+        `run 'reoclo login --profile ${projectConfig.profile}'`,
+    ) as Error & { exitCode: number };
+    err.exitCode = 3;
+    throw err;
+  }
 
   let token: string | undefined;
   if (flagToken) {
@@ -202,7 +220,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
-    projectOrg: projectOrgFor(profile?.auth_kind, () => readProjectOrg()),
+    projectOrg: projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {

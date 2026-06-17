@@ -91,6 +91,74 @@ test("a committed .reoclo is never read under an automation key (CI stays safe)"
   }
 });
 
+function seedConfig(dir: string, cfg: object): void {
+  writeFileSync(join(dir, "config.json"), JSON.stringify(cfg));
+}
+
+function profileRecord(token: string, slug: string) {
+  return {
+    api_url: "https://api.reoclo.com",
+    token,
+    token_type: "tenant",
+    tenant_id: `t-${slug}`,
+    tenant_slug: slug,
+    user_email: "dev@example.com",
+    saved_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+test("a .reoclo `profile` binding selects that profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: profileRecord("tok-default", "home"), work: profileRecord("tok-work", "work-org") },
+  });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "work" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.profileName).toBe("work");
+    expect(ctx.token).toBe("tok-work");
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+test("a .reoclo `profile` that doesn't exist fails loud (exit 3, names the profile)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: profileRecord("tok", "home") } });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "ghost" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  let caught: unknown = null;
+  try {
+    await bootstrap();
+  } catch (e) {
+    caught = e;
+  } finally {
+    process.chdir(origCwd);
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(3);
+  expect((caught as Error).message).toMatch(/ghost/);
+});
+
+test("a .reoclo `profile` is ignored under an automation key", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "ghost" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_ciauto");
+    expect(ctx.tokenType).toBe("automation");
+  } finally {
+    process.chdir(origCwd);
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
   expect(defaultStreamsUrl("https://api.reoclo.com")).toBe("https://streams.reoclo.com");
   expect(defaultStreamsUrl("https://api.reoclo.com/")).toBe("https://streams.reoclo.com");

@@ -45,16 +45,33 @@ const defaultFs: ProjectConfigFs = {
   read: (path) => readFileSync(path, "utf8"),
 };
 
+export interface ProjectConfig {
+  org?: string;
+  profile?: string;
+}
+
+/** Read + validate a present `<key>` as a non-empty string. Absent → undefined;
+ *  present-but-invalid → throw (fail loud rather than run against the wrong
+ *  target). */
+function stringField(obj: Record<string, unknown>, key: string, path: string): string | undefined {
+  const value = obj[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${FILE_NAME} at ${path}: "${key}" must be a non-empty string`);
+  }
+  return value.trim();
+}
+
 /**
- * Resolve the org slug bound to `startDir` via the nearest `.reoclo`, or null
- * when no file is found or the file declares no `org`. Throws a clear Error when
- * the file is present but malformed (invalid JSON, not an object, or an `org`
- * that isn't a non-empty string). Unknown keys are ignored for forward-compat.
+ * Parse the nearest `.reoclo` into its recognized fields (`org`, `profile`), or
+ * null when no file is found. Throws a clear Error when the file is present but
+ * malformed (invalid JSON, not an object, or a recognized field that isn't a
+ * non-empty string). Unknown keys are ignored for forward-compat.
  */
-export function readProjectOrg(
+export function readProjectConfig(
   startDir: string = process.cwd(),
   fs: ProjectConfigFs = defaultFs,
-): string | null {
+): ProjectConfig | null {
   const path = findProjectConfigPath(startDir, fs.exists);
   if (!path) return null;
 
@@ -68,12 +85,25 @@ export function readProjectOrg(
     throw new Error(`malformed ${FILE_NAME} at ${path}: expected a JSON object`);
   }
 
-  const org = (parsed as Record<string, unknown>).org;
-  if (org === undefined) return null;
-  if (typeof org !== "string" || org.trim() === "") {
-    throw new Error(`${FILE_NAME} at ${path}: "org" must be a non-empty string`);
-  }
-  return org.trim();
+  const obj = parsed as Record<string, unknown>;
+  const config: ProjectConfig = {};
+  const org = stringField(obj, "org", path);
+  const profile = stringField(obj, "profile", path);
+  if (org !== undefined) config.org = org;
+  if (profile !== undefined) config.profile = profile;
+  return config;
+}
+
+/**
+ * Resolve the org slug bound to `startDir` via the nearest `.reoclo`, or null
+ * when no file is found or the file declares no `org`. Thin wrapper over
+ * {@link readProjectConfig}; shares its fail-loud behaviour on a malformed file.
+ */
+export function readProjectOrg(
+  startDir: string = process.cwd(),
+  fs: ProjectConfigFs = defaultFs,
+): string | null {
+  return readProjectConfig(startDir, fs)?.org ?? null;
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   findProjectConfigPath,
   projectOrgFor,
+  readProjectConfig,
   readProjectOrg,
 } from "../../../src/config/project-config";
 
@@ -86,6 +87,49 @@ describe("readProjectOrg", () => {
   test("throws when org is not a string", () => {
     const fs = fakeFs({ "/a/.reoclo": '{ "org": 42 }' });
     expect(() => readProjectOrg("/a/b/c", fs)).toThrow(/org/);
+  });
+});
+
+describe("readProjectConfig", () => {
+  test("returns org and profile from the nearest .reoclo", () => {
+    const fs = fakeFs({ "/a/.reoclo": '{ "org": "acme", "profile": "work" }' });
+    expect(readProjectConfig("/a/b/c", fs)).toEqual({ org: "acme", profile: "work" });
+  });
+
+  test("returns just the keys that are present", () => {
+    expect(readProjectConfig("/a/b", fakeFs({ "/a/.reoclo": '{ "profile": "work" }' }))).toEqual({
+      profile: "work",
+    });
+    expect(readProjectConfig("/a/b", fakeFs({ "/a/.reoclo": '{ "org": "acme" }' }))).toEqual({
+      org: "acme",
+    });
+  });
+
+  test("returns an empty object when the file has no recognized keys", () => {
+    expect(readProjectConfig("/a/b", fakeFs({ "/a/.reoclo": '{ "future": 1 }' }))).toEqual({});
+  });
+
+  test("returns null when no .reoclo is found", () => {
+    expect(readProjectConfig("/a/b/c", fakeFs({}))).toBeNull();
+  });
+
+  test("trims org and profile", () => {
+    const fs = fakeFs({ "/a/.reoclo": '{ "org": " acme ", "profile": " work " }' });
+    expect(readProjectConfig("/a/b", fs)).toEqual({ org: "acme", profile: "work" });
+  });
+
+  test("throws when profile is an empty string", () => {
+    const fs = fakeFs({ "/a/.reoclo": '{ "profile": "  " }' });
+    expect(() => readProjectConfig("/a/b", fs)).toThrow(/profile/);
+  });
+
+  test("throws when profile is not a string", () => {
+    const fs = fakeFs({ "/a/.reoclo": '{ "profile": 7 }' });
+    expect(() => readProjectConfig("/a/b", fs)).toThrow(/profile/);
+  });
+
+  test("throws on malformed JSON", () => {
+    expect(() => readProjectConfig("/a/b", fakeFs({ "/a/.reoclo": "{ bad" }))).toThrow(/\.reoclo/);
   });
 });
 
