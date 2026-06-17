@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
+import { loadConfig } from "../config/store";
 import { installSkills } from "../init/skills";
 import { mergeMcpServer } from "../init/mcp";
 import { promptChoice, promptYesNo } from "../ui/prompt";
@@ -21,6 +22,24 @@ interface InitOpts {
   mcp?: boolean;
   force?: boolean;
   yes?: boolean;
+}
+
+/**
+ * Build the `.reoclo` binding to write. An org slug is only meaningful relative
+ * to its backend, so when the org was resolved under a NON-active profile (e.g.
+ * `reoclo --profile staging init`), the profile is pinned too — otherwise the
+ * binding silently re-resolves the slug against the active profile later (and
+ * slugs like "platform" can collide across staging/prod). On the active profile
+ * we write only `org`, so the project still floats with the active profile.
+ */
+export function buildProjectBinding(opts: {
+  org: string;
+  profileName: string;
+  activeProfile: string;
+}): { profile?: string; org: string } {
+  return opts.profileName === opts.activeProfile
+    ? { org: opts.org }
+    : { profile: opts.profileName, org: opts.org };
 }
 
 /** Resolve the `--skills` / `--no-skills` option into a concrete intent. */
@@ -65,19 +84,26 @@ export function registerInit(program: Command): void {
         org = memberships[idx]?.tenant_slug ?? me.tenant_slug;
       }
 
-      // 1. Write the `.reoclo` org binding.
+      // 1. Write the `.reoclo` binding. Pin the profile when the org was
+      // resolved under a non-active profile, so the slug doesn't silently
+      // re-resolve against the active profile (and a different backend) later.
+      const { active_profile: activeProfile } = await loadConfig();
+      const binding = buildProjectBinding({ org, profileName: ctx.profileName, activeProfile });
+      const onProfile = binding.profile ? ` on profile '${binding.profile}'` : "";
       const reocloPath = join(process.cwd(), ".reoclo");
       let wroteReoclo = true;
       if (existsSync(reocloPath) && !opts.force && !opts.yes) {
-        const ok = await promptYesNo(`.reoclo already exists — overwrite with org '${org}'? [y/N] `);
+        const ok = await promptYesNo(
+          `.reoclo already exists — overwrite with org '${org}'${onProfile}? [y/N] `,
+        );
         if (!ok) {
           wroteReoclo = false;
           process.stdout.write("• kept the existing .reoclo\n");
         }
       }
       if (wroteReoclo) {
-        writeFileSync(reocloPath, `${JSON.stringify({ org }, null, 2)}\n`);
-        process.stdout.write(`✓ linked this project to '${org}' (.reoclo)\n`);
+        writeFileSync(reocloPath, `${JSON.stringify(binding, null, 2)}\n`);
+        process.stdout.write(`✓ linked this project to '${org}'${onProfile} (.reoclo)\n`);
       }
 
       // 2. Download skills into .claude/skills/.
@@ -116,6 +142,8 @@ export function registerInit(program: Command): void {
         process.stdout.write("✓ registered the reoclo MCP server in .mcp.json\n");
       }
 
-      process.stdout.write(`\nDone. Commands run here now target '${org}'. Try: reoclo whoami\n`);
+      process.stdout.write(
+        `\nDone. Commands run here now target '${org}'${onProfile}. Try: reoclo whoami\n`,
+      );
     });
 }
