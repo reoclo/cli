@@ -34,6 +34,7 @@ import { registerAlerts } from "./commands/alerts";
 import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
+import { registerInit } from "./commands/init";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
@@ -99,6 +100,7 @@ if (import.meta.main) {
   registerChannels(program);
   registerAudit(program);
   registerDashboard(program);
+  registerInit(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
@@ -143,6 +145,7 @@ if (import.meta.main) {
     "profile",   // ls/use/rm operate on local config; no API needed
     "keyring",   // status/migrate/export operate on local stores
     "mcp",       // bootstrap happens inside the action with proper error handling
+    "init",      // bootstrap happens inside the action with proper error handling
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
   ]);
 
