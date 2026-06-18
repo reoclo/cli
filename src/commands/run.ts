@@ -33,7 +33,6 @@ export function registerRun(program: Command): void {
     )
     .option("--commit <sha>", "commit sha for the audit trail")
     .argument("[command...]", "command to run (after --)")
-    .passThroughOptions()
     .addHelpText(
       "after",
       `
