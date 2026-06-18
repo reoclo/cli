@@ -28,6 +28,11 @@ describe("readSecretValue", () => {
   test("falls back to stdin", async () => {
     expect(await readSecretValue({}, "from-stdin\n")).toBe("from-stdin");
   });
+  test("reads --from-file and strips a trailing newline (over stdin)", async () => {
+    const path = `/tmp/reoclo-secret-fromfile-${process.pid}.txt`;
+    await Bun.write(path, "s3cret\n");
+    expect(await readSecretValue({ fromFile: path }, "ignored-stdin")).toBe("s3cret");
+  });
   test("throws when no source", async () => {
     let err: unknown;
     try {
