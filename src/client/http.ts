@@ -32,14 +32,19 @@ export class HttpClient {
   private readonly prefix: string;
   private currentToken: string;
 
-  constructor(readonly opts: HttpClientOptions) {
+  constructor(private readonly opts: HttpClientOptions) {
     this.prefix = apiPrefix(detectKeyType(opts.token));
     this.currentToken = opts.token;
   }
 
-  /** Return a new HttpClient using the given token (re-derives the API prefix). */
+  /**
+   * Return a new HttpClient using the given token (re-derives the API prefix).
+   * `refreshToken` is deliberately dropped: a short-lived session token (rss_)
+   * that 401s should surface the failure, not silently refresh via the parent
+   * (rca_) client's refresh closure.
+   */
   withToken(token: string): HttpClient {
-    return new HttpClient({ ...this.opts, token });
+    return new HttpClient({ ...this.opts, token, refreshToken: undefined });
   }
 
   private url(path: string): string {

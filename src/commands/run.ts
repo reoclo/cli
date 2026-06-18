@@ -39,7 +39,7 @@ export function registerRun(program: Command): void {
       `
 Examples:
   REOCLO_AUTOMATION_KEY=rca_... reoclo run -- node deploy.js
-  REOCLO_AUTOMATION_KEY=rca_... reoclo run -p prod -- printenv SECRET_KEY
+  REOCLO_AUTOMATION_KEY=rca_... reoclo run -p prod -- ./migrate.sh
   REOCLO_AUTOMATION_KEY=rca_... reoclo run --commit abc123 -- ./release.sh`,
     )
     .action(async (command: string[], opts: { project: string[]; commit?: string }) => {
