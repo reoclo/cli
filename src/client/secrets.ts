@@ -68,6 +68,15 @@ export function revealSecret(
   return c.post<{ key: string; value: string }>(`/tenants/${tid}/secrets/${secretId}/reveal`);
 }
 
+export function patchSecret(
+  c: HttpClient,
+  tid: string,
+  secretId: string,
+  value: string,
+): Promise<SecretRead> {
+  return c.patch<SecretRead>(`/tenants/${tid}/secrets/${secretId}`, { value });
+}
+
 export function deleteSecret(c: HttpClient, tid: string, secretId: string): Promise<void> {
   return c.del<void>(`/tenants/${tid}/secrets/${secretId}`);
 }

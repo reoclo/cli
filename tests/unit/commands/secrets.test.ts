@@ -1,6 +1,6 @@
 // tests/unit/commands/secrets.test.ts
 import { describe, expect, test } from "bun:test";
-import { resolveProjectId } from "../../../src/commands/secrets";
+import { resolveProjectId, readSecretValue } from "../../../src/commands/secrets";
 import type { SecretProjectRead } from "../../../src/client/secrets";
 
 describe("resolveProjectId", () => {
@@ -18,5 +18,23 @@ describe("resolveProjectId", () => {
 
   test("throws on unknown", () => {
     expect(() => resolveProjectId(projects, "nope")).toThrow();
+  });
+});
+
+describe("readSecretValue", () => {
+  test("prefers --value", async () => {
+    expect(await readSecretValue({ value: "v" }, "ignored")).toBe("v");
+  });
+  test("falls back to stdin", async () => {
+    expect(await readSecretValue({}, "from-stdin\n")).toBe("from-stdin");
+  });
+  test("throws when no source", async () => {
+    let err: unknown;
+    try {
+      await readSecretValue({}, null);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
   });
 });
