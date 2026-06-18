@@ -32,9 +32,14 @@ export class HttpClient {
   private readonly prefix: string;
   private currentToken: string;
 
-  constructor(private readonly opts: HttpClientOptions) {
+  constructor(readonly opts: HttpClientOptions) {
     this.prefix = apiPrefix(detectKeyType(opts.token));
     this.currentToken = opts.token;
+  }
+
+  /** Return a new HttpClient using the given token (re-derives the API prefix). */
+  withToken(token: string): HttpClient {
+    return new HttpClient({ ...this.opts, token });
   }
 
   private url(path: string): string {

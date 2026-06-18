@@ -11,7 +11,7 @@ export type KeyType = "tenant" | "automation";
  *     with any in-flight requests during rollout.
  */
 export function detectKeyType(token: string): KeyType {
-  if (token.startsWith("rk_a_") || token.startsWith("rca_")) return "automation";
+  if (token.startsWith("rk_a_") || token.startsWith("rca_") || token.startsWith("rss_")) return "automation";
   return "tenant";
 }
 
@@ -32,6 +32,7 @@ const AUTOMATION_ALLOWED = new Set([
   "registry login",
   "registry logout",
   "deploy sync",
+  "run",
 ]);
 
 /** Return true if a token of the given type can invoke this command path.
