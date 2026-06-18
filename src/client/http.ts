@@ -37,6 +37,16 @@ export class HttpClient {
     this.currentToken = opts.token;
   }
 
+  /**
+   * Return a new HttpClient using the given token (re-derives the API prefix).
+   * `refreshToken` is deliberately dropped: a short-lived session token (rss_)
+   * that 401s should surface the failure, not silently refresh via the parent
+   * (rca_) client's refresh closure.
+   */
+  withToken(token: string): HttpClient {
+    return new HttpClient({ ...this.opts, token, refreshToken: undefined });
+  }
+
   private url(path: string): string {
     const p = path.startsWith("/") ? path : `/${path}`;
     return this.opts.baseUrl.replace(/\/$/, "") + this.prefix + p;
