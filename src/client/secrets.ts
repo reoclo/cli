@@ -60,6 +60,24 @@ export function setSecret(
   });
 }
 
+export interface SecretCreate {
+  key: string;
+  value: string;
+  note?: string;
+}
+
+export function bulkCreateSecrets(
+  c: HttpClient,
+  tid: string,
+  projectId: string,
+  secrets: SecretCreate[],
+): Promise<SecretRead[]> {
+  return c.post<SecretRead[]>(
+    `/tenants/${tid}/secret-projects/${projectId}/secrets/bulk`,
+    { secrets },
+  );
+}
+
 export function revealSecret(
   c: HttpClient,
   tid: string,
