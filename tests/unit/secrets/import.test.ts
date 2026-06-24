@@ -66,3 +66,176 @@ describe("chunk", () => {
     expect(BULK_CHUNK_SIZE).toBe(500);
   });
 });
+
+import {
+  runImport,
+  importReportJson,
+  importReportText,
+  type ImportDeps,
+  type ImportOptions,
+} from "../../../src/secrets/import";
+import type { ImportedSecret, SecretSource } from "../../../src/secrets/types";
+import type { SecretCreate } from "../../../src/client/secrets";
+
+function fakeSource(secrets: ImportedSecret[]): SecretSource {
+  return { name: "bitwarden", read: () => Promise.resolve(secrets) };
+}
+
+function deps(
+  over: Partial<ImportDeps> & { source: SecretSource },
+): { deps: ImportDeps; written: SecretCreate[][] } {
+  const written: SecretCreate[][] = [];
+  return {
+    written,
+    deps: {
+      projectLabel: "prod",
+      listExistingKeys: () => Promise.resolve([]),
+      bulkCreate: (s) => {
+        written.push(s);
+        return Promise.resolve();
+      },
+      ...over,
+    },
+  };
+}
+
+const opts = (o: Partial<ImportOptions> = {}): ImportOptions => ({
+  skipExisting: false,
+  dryRun: false,
+  ...o,
+});
+
+async function importError(d: ImportDeps, o: ImportOptions): Promise<Error> {
+  try {
+    await runImport(d, o);
+  } catch (e) {
+    return e as Error;
+  }
+  throw new Error("expected runImport to reject, but it resolved");
+}
+
+describe("runImport", () => {
+  test("imports fresh secrets and skips empties", async () => {
+    const { deps: d, written } = deps({
+      source: fakeSource([
+        { key: "A", value: "1" },
+        { key: "B", value: "2" },
+        { key: "EMPTY", value: "" },
+      ]),
+    });
+    const r = await runImport(d, opts());
+    expect(r.imported).toEqual(["A", "B"]);
+    expect(r.skippedEmpty).toEqual(["EMPTY"]);
+    expect(r.skippedExisting).toEqual([]);
+    expect(written).toEqual([[{ key: "A", value: "1" }, { key: "B", value: "2" }]]);
+  });
+
+  test("in-batch duplicate keys abort before any write", async () => {
+    const { deps: d, written } = deps({
+      source: fakeSource([
+        { key: "A", value: "1" },
+        { key: "A", value: "2" },
+      ]),
+    });
+    expect((await importError(d, opts())).message).toMatch(/duplicate key/i);
+    expect(written).toEqual([]);
+  });
+
+  test("default policy aborts on conflicts without writing", async () => {
+    const { deps: d, written } = deps({
+      source: fakeSource([{ key: "A", value: "1" }, { key: "B", value: "2" }]),
+      listExistingKeys: () => Promise.resolve(["B"]),
+    });
+    expect((await importError(d, opts())).message).toMatch(/already exist.*B/s);
+    expect(written).toEqual([]);
+  });
+
+  test("--skip-existing drops conflicts and records them", async () => {
+    const { deps: d, written } = deps({
+      source: fakeSource([{ key: "A", value: "1" }, { key: "B", value: "2" }]),
+      listExistingKeys: () => Promise.resolve(["B"]),
+    });
+    const r = await runImport(d, opts({ skipExisting: true }));
+    expect(r.imported).toEqual(["A"]);
+    expect(r.skippedExisting).toEqual(["B"]);
+    expect(written).toEqual([[{ key: "A", value: "1" }]]);
+  });
+
+  test("--dry-run writes nothing and reports the plan", async () => {
+    const { deps: d, written } = deps({
+      source: fakeSource([{ key: "A", value: "1" }, { key: "B", value: "2" }]),
+      listExistingKeys: () => Promise.resolve(["B"]),
+    });
+    const r = await runImport(d, opts({ skipExisting: true, dryRun: true }));
+    expect(r.dryRun).toBe(true);
+    expect(r.imported).toEqual(["A"]);
+    expect(r.skippedExisting).toEqual(["B"]);
+    expect(written).toEqual([]);
+  });
+
+  test("chunks writes at the 500 cap", async () => {
+    const many: ImportedSecret[] = Array.from({ length: 501 }, (_, i) => ({
+      key: `K${i}`,
+      value: "v",
+    }));
+    const { deps: d, written } = deps({ source: fakeSource(many) });
+    const r = await runImport(d, opts());
+    expect(written).toHaveLength(2);
+    expect(written[0]).toHaveLength(500);
+    expect(written[1]).toHaveLength(1);
+    expect(r.imported).toHaveLength(501);
+  });
+
+  test("a failed chunk reports how many landed and how to resume", async () => {
+    const many: ImportedSecret[] = Array.from({ length: 501 }, (_, i) => ({
+      key: `K${i}`,
+      value: "v",
+    }));
+    let call = 0;
+    const { deps: d } = deps({
+      source: fakeSource(many),
+      bulkCreate: () => {
+        call += 1;
+        if (call === 2) throw new Error("[403] secret quota exceeded");
+        return Promise.resolve();
+      },
+    });
+    expect((await importError(d, opts())).message).toMatch(/imported 500 of 501.*--skip-existing/s);
+  });
+});
+
+describe("report formatters", () => {
+  const base = {
+    source: "bitwarden",
+    project: "prod",
+    imported: ["A", "B"],
+    skippedExisting: ["X"],
+    skippedEmpty: ["E"],
+  };
+
+  test("importReportJson uses snake_case keys, values absent", () => {
+    expect(importReportJson({ ...base, dryRun: false })).toEqual({
+      source: "bitwarden",
+      project: "prod",
+      imported: ["A", "B"],
+      skipped_existing: ["X"],
+      skipped_empty: ["E"],
+      dry_run: false,
+    });
+  });
+
+  test("importReportText summarizes counts for a real run", () => {
+    const text = importReportText({ ...base, dryRun: false });
+    expect(text).toContain("Imported 2");
+    expect(text).toContain("prod");
+    expect(text).toContain("1 existing");
+    expect(text).toContain("1 empty");
+  });
+
+  test("importReportText marks a dry run and mentions the quota caveat", () => {
+    const text = importReportText({ ...base, dryRun: true });
+    expect(text).toMatch(/dry run/i);
+    expect(text).toMatch(/would import 2/i);
+    expect(text).toMatch(/quota/i);
+  });
+});
