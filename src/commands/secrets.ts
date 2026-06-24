@@ -10,9 +10,18 @@ import {
   patchSecret,
   revealSecret,
   deleteSecret,
+  bulkCreateSecrets,
   type SecretProjectRead,
 } from "../client/secrets";
-import { globalOutput, printList, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
+import { runCommand } from "../secrets/sources/exec";
+import {
+  runImport,
+  importReportJson,
+  importReportText,
+} from "../secrets/import";
+import type { SecretSource } from "../secrets/types";
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
   const byId = projects.find((p) => p.id === nameOrId);
@@ -20,6 +29,23 @@ export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string
   const byName = projects.filter((p) => p.name === nameOrId);
   if (byName.length === 1 && byName[0]) return byName[0].id;
   throw new Error(`secret project not found: ${nameOrId}`);
+}
+
+export interface ImportFlags {
+  from: string;
+  project: string;
+  bwsProject?: string;
+  skipExisting?: boolean;
+  dryRun?: boolean;
+}
+
+/** Dispatch --from to a configured source adapter. Thin by design — adding a
+ *  source is a new case here plus its adapter, not a plugin registry. */
+export function buildSource(flags: ImportFlags, deps: BitwardenDeps): SecretSource {
+  if (flags.from === "bitwarden") {
+    return bitwardenSource({ bwsProject: flags.bwsProject }, deps);
+  }
+  throw new Error(`unknown import source: ${flags.from} (supported: bitwarden)`);
 }
 
 export async function readSecretValue(
@@ -143,6 +169,44 @@ export function registerSecrets(program: Command): void {
         }
         await deleteSecret(ctx.client, tid, secret.id);
         process.stderr.write(`✓ deleted ${key}\n`);
+      }),
+    "secret:write",
+  );
+
+  requireCapability(
+    g
+      .command("import")
+      .description("import secrets from an external source into a project")
+      .requiredOption("--from <source>", "source to import from (bitwarden)")
+      .requiredOption("--project <name>", "target project name or id")
+      .option("--bws-project <id|name>", "limit to a Bitwarden Secrets Manager project")
+      .option("--skip-existing", "skip keys that already exist instead of failing")
+      .option("--dry-run", "print the import plan without writing")
+      .action(async (opts: ImportFlags) => {
+        const ctx = await bootstrap();
+        const tid = requireTenantId(ctx);
+        const source = buildSource(opts, { run: runCommand, env: process.env });
+        const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
+
+        const report = await runImport(
+          {
+            source,
+            projectLabel: opts.project,
+            listExistingKeys: async () =>
+              (await listSecrets(ctx.client, tid, pid)).map((s) => s.key),
+            bulkCreate: async (secrets) => {
+              await bulkCreateSecrets(ctx.client, tid, pid, secrets);
+            },
+          },
+          { skipExisting: opts.skipExisting ?? false, dryRun: opts.dryRun ?? false },
+        );
+
+        const fmt = resolveFormat(globalOutput(program));
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(importReportJson(report), fmt);
+        } else {
+          process.stdout.write(importReportText(report) + "\n");
+        }
       }),
     "secret:write",
   );
