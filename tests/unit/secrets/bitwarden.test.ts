@@ -110,6 +110,20 @@ describe("bitwardenSource.read", () => {
     expect((await readError(src)).message).toMatch(/\[401\] invalid_client/);
   });
 
+  test("non-zero exit never leaks secret values from stdout", async () => {
+    const f = fakeRunner({
+      secret: {
+        code: 1,
+        stdout: JSON.stringify([{ key: "API_KEY", value: "sup3r-s3cret" }]),
+        stderr: "",
+      },
+    });
+    const src = bitwardenSource({}, { run: f.run, env: TOKEN_ENV });
+    const err = await readError(src);
+    expect(err.message).not.toContain("sup3r-s3cret");
+    expect(err.message).toMatch(/bws secret failed/);
+  });
+
   test("non-JSON stdout throws a guarded parse error", async () => {
     const f = fakeRunner({ secret: ok("not json at all") });
     const src = bitwardenSource({}, { run: f.run, env: TOKEN_ENV });

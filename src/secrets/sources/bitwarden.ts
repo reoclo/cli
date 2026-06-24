@@ -89,7 +89,7 @@ async function runBws(args: string[], deps: BitwardenDeps): Promise<CommandResul
     throw e;
   }
   if (res.code !== 0) {
-    const detail = res.stderr.trim() || res.stdout.trim() || `exit code ${res.code}`;
+    const detail = res.stderr.trim() || `exited with status ${res.code}`;
     throw new Error(`bws ${args[0]} failed: ${detail}`);
   }
   return res;
