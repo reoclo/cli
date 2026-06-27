@@ -15,6 +15,7 @@ import {
 } from "../client/secrets";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
+import { onepasswordSource } from "../secrets/sources/onepassword";
 import { runCommand } from "../secrets/sources/exec";
 import {
   runImport,
@@ -35,6 +36,7 @@ export interface ImportFlags {
   from: string;
   project: string;
   bwsProject?: string;
+  opVault?: string;
   skipExisting?: boolean;
   dryRun?: boolean;
 }
@@ -45,7 +47,10 @@ export function buildSource(flags: ImportFlags, deps: BitwardenDeps): SecretSour
   if (flags.from === "bitwarden") {
     return bitwardenSource({ bwsProject: flags.bwsProject }, deps);
   }
-  throw new Error(`unknown import source: ${flags.from} (supported: bitwarden)`);
+  if (flags.from === "onepassword") {
+    return onepasswordSource({ opVault: flags.opVault }, deps);
+  }
+  throw new Error(`unknown import source: ${flags.from} (supported: bitwarden, onepassword)`);
 }
 
 export async function readSecretValue(
@@ -177,9 +182,10 @@ export function registerSecrets(program: Command): void {
     g
       .command("import")
       .description("import secrets from an external source into a project")
-      .requiredOption("--from <source>", "source to import from (bitwarden)")
+      .requiredOption("--from <source>", "source to import from (bitwarden, onepassword)")
       .requiredOption("--project <name>", "target project name or id")
       .option("--bws-project <id|name>", "limit to a Bitwarden Secrets Manager project")
+      .option("--op-vault <id|name>", "limit to a 1Password vault")
       .option("--skip-existing", "skip keys that already exist instead of failing")
       .option("--dry-run", "print the import plan without writing")
       .action(async (opts: ImportFlags) => {
