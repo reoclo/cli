@@ -11,7 +11,8 @@
 //   op item get <id> --format json -> { title, vault: { id }, fields: [
 //     { id, type, purpose, label, value } ] }  (value absent for empty fields)
 
-import type { ImportedSecret } from "../types";
+import type { CommandResult, CommandRunner } from "./exec";
+import type { ImportedSecret, SecretSource } from "../types";
 
 /** A 1Password field — only the keys this adapter reads. */
 export interface OpField {
@@ -63,4 +64,81 @@ export function mapItemFields(item: OpItem, used: Set<string>): ImportedSecret[]
     out.push({ key, value: f.value, note: null });
   }
   return out;
+}
+
+export interface OnePasswordOptions {
+  /** Optional 1Password vault scope — a name or id, resolved by `op` itself. */
+  opVault?: string;
+}
+
+export interface OnePasswordDeps {
+  run: CommandRunner;
+  env: Record<string, string | undefined>;
+}
+
+/** A 1Password item summary (from `op item list`) — only the keys we read. */
+interface OpItemSummary {
+  id: string;
+  vault?: { id?: string };
+}
+
+export function onepasswordSource(
+  opts: OnePasswordOptions,
+  deps: OnePasswordDeps,
+): SecretSource {
+  return {
+    name: "onepassword",
+    read: () => readOnePassword(opts, deps),
+  };
+}
+
+async function readOnePassword(
+  opts: OnePasswordOptions,
+  deps: OnePasswordDeps,
+): Promise<ImportedSecret[]> {
+  const listArgs = ["item", "list"];
+  if (opts.opVault) listArgs.push("--vault", opts.opVault);
+  listArgs.push("--format", "json");
+
+  const listRes = await runOp(listArgs, deps);
+  const summaries = parseJson<OpItemSummary[]>(listRes.stdout, "op item list");
+
+  const used = new Set<string>();
+  const out: ImportedSecret[] = [];
+  for (const s of summaries) {
+    const getArgs = ["item", "get", s.id];
+    if (s.vault?.id) getArgs.push("--vault", s.vault.id);
+    getArgs.push("--format", "json");
+    const getRes = await runOp(getArgs, deps);
+    const item = parseJson<OpItem>(getRes.stdout, "op item get");
+    out.push(...mapItemFields(item, used));
+  }
+  return out;
+}
+
+async function runOp(args: string[], deps: OnePasswordDeps): Promise<CommandResult> {
+  let res: CommandResult;
+  try {
+    res = await deps.run(["op", ...args], { env: deps.env });
+  } catch (e) {
+    if (e && typeof e === "object" && (e as { code?: string }).code === "ENOENT") {
+      throw new Error(
+        'the "op" CLI was not found — install the 1Password CLI: https://developer.1password.com/docs/cli/get-started/',
+      );
+    }
+    throw e;
+  }
+  if (res.code !== 0) {
+    const detail = res.stderr.trim() || `exited with status ${res.code}`;
+    throw new Error(`op ${args[0]} ${args[1]} failed: ${detail}`);
+  }
+  return res;
+}
+
+function parseJson<T>(stdout: string, what: string): T {
+  try {
+    return JSON.parse(stdout) as T;
+  } catch {
+    throw new Error(`could not parse ${what} output as JSON`);
+  }
 }
