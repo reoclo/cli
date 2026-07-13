@@ -43,6 +43,20 @@ const baseDeps = (over: Partial<Parameters<typeof refreshSession>[0]> = {}) => (
 });
 
 describe("refreshSession", () => {
+  test("threads the profile's tenantId to refreshFn so the org survives the refresh", async () => {
+    let seenTenantId: string | undefined = "unset";
+    await refreshSession(
+      baseDeps({
+        tenantId: "b60281d1-843b-4769-bf2d-23ff89bf4b5e",
+        refreshFn: (_a: string, _r: string, _c: string, tenantId?: string) => {
+          seenTenantId = tenantId;
+          return Promise.resolve(tokens());
+        },
+      }),
+    );
+    expect(seenTenantId).toBe("b60281d1-843b-4769-bf2d-23ff89bf4b5e");
+  });
+
   test("double-check: returns an already-refreshed token without calling refreshFn", async () => {
     let called = false;
     const out = await refreshSession(

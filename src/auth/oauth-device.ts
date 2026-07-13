@@ -183,6 +183,7 @@ export async function refreshAccessToken(
   authBaseUrl: string,
   refreshToken: string,
   clientId: string,
+  tenantId?: string,
 ): Promise<TokenResponse> {
   const url = `${authBaseUrl.replace(/\/$/, "")}/oauth/token`;
   const body = new URLSearchParams({
@@ -190,6 +191,11 @@ export async function refreshAccessToken(
     refresh_token: refreshToken,
     client_id: clientId,
   });
+  // State which org this token is for. The server otherwise binds the refreshed
+  // token to the FIRST granted tenant, silently undoing `org use <other-org>`.
+  // Sent per-request rather than stored server-side so parallel invocations
+  // targeting different orgs can't clobber each other.
+  if (tenantId) body.set("tenant_id", tenantId);
 
   let res: Response;
   try {
