@@ -1,6 +1,7 @@
 // tests/unit/commands/run.test.ts
 import { describe, expect, test } from "bun:test";
-import { collectCiMeta, splitRunArgs } from "../../../src/commands/run";
+import { collectCiMeta, selectProjectIds, splitRunArgs } from "../../../src/commands/run";
+import { EXIT } from "../../../src/client/exit-codes";
 import { detectKeyType } from "../../../src/client/routing";
 
 describe("splitRunArgs", () => {
@@ -34,6 +35,60 @@ describe("collectCiMeta", () => {
   });
   test("reads only GITHUB_RUN_ID when no SHA", () => {
     expect(collectCiMeta({ GITHUB_RUN_ID: "99" }, undefined)).toEqual({ workflow_run_id: "99" });
+  });
+});
+
+describe("selectProjectIds", () => {
+  const P = [
+    { id: "id-a", name: "payments-production" },
+    { id: "id-b", name: "shared-infra" },
+  ];
+
+  function codeOf(fn: () => unknown): number | undefined {
+    try {
+      fn();
+    } catch (e) {
+      return (e as { exitCode?: number }).exitCode;
+    }
+    return undefined;
+  }
+
+  test("no -p injects every granted project", () => {
+    expect(selectProjectIds(P, [])).toEqual(["id-a", "id-b"]);
+  });
+  test("-p selects by name", () => {
+    expect(selectProjectIds(P, ["payments-production"])).toEqual(["id-a"]);
+  });
+  test("-p selects by id", () => {
+    expect(selectProjectIds(P, ["id-b"])).toEqual(["id-b"]);
+  });
+  test("-p is repeatable", () => {
+    expect(selectProjectIds(P, ["payments-production", "shared-infra"])).toEqual(["id-a", "id-b"]);
+  });
+  test("a partial match still resolves the projects that did match", () => {
+    expect(selectProjectIds(P, ["shared-infra", "not-granted"])).toEqual(["id-b"]);
+  });
+
+  // The reason RESOLUTION_FAILED exists: `run` passes the child's exit code
+  // straight through, so GENERIC(1) here was indistinguishable from a child
+  // script that merely exited 1 — the exact branch pipelines need most.
+  test("a key with no grants fails with RESOLUTION_FAILED, never GENERIC", () => {
+    expect(codeOf(() => selectProjectIds([], []))).toBe(EXIT.RESOLUTION_FAILED);
+    expect(codeOf(() => selectProjectIds([], []))).not.toBe(EXIT.GENERIC);
+  });
+  test("-p naming an ungranted project fails with RESOLUTION_FAILED", () => {
+    expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).toBe(EXIT.RESOLUTION_FAILED);
+    expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).not.toBe(EXIT.GENERIC);
+  });
+  test("an ungranted project and a nonexistent one are indistinguishable", () => {
+    // Deliberate: a key must not be able to enumerate projects it cannot read.
+    expect(codeOf(() => selectProjectIds(P, ["definitely-not-real"]))).toBe(
+      codeOf(() => selectProjectIds(P, ["also-not-real"])),
+    );
+  });
+  test("fails closed — never returns an empty id list for the caller to resolve", () => {
+    expect(() => selectProjectIds([], [])).toThrow();
+    expect(() => selectProjectIds(P, ["nope"])).toThrow();
   });
 });
 

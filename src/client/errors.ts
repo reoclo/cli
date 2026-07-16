@@ -1,5 +1,7 @@
+import { EXIT } from "./exit-codes";
+
 export class ApiError extends Error {
-  exitCode = 1;
+  exitCode: number = EXIT.GENERIC;
   constructor(
     public status: number,
     message: string,
@@ -12,15 +14,17 @@ export class ApiError extends Error {
 }
 
 export class AuthError extends ApiError {
-  override exitCode = 3;
+  override exitCode: number = EXIT.AUTH;
   constructor(message: string, path: string) {
     super(401, message, path, "Run 'reoclo login' to refresh your credentials.");
     this.name = "AuthError";
   }
 }
 
+/** HTTP 403 — authenticated, but not permitted. Note this is DENIED (4), not
+ *  AUTH (3): 3 means "we don't know who you are", 4 means "we know, and no". */
 export class PermissionError extends ApiError {
-  override exitCode = 4;
+  override exitCode: number = EXIT.DENIED;
   constructor(message: string, path: string) {
     super(403, message, path);
     this.name = "PermissionError";
@@ -28,7 +32,7 @@ export class PermissionError extends ApiError {
 }
 
 export class NotFoundError extends ApiError {
-  override exitCode = 5;
+  override exitCode: number = EXIT.NOT_FOUND;
   constructor(message: string, path: string) {
     super(404, message, path);
     this.name = "NotFoundError";
@@ -44,7 +48,7 @@ export class NotFoundError extends ApiError {
  * other auth failures.
  */
 export class ReauthRequiredError extends ApiError {
-  override exitCode = 3;
+  override exitCode: number = EXIT.AUTH;
   constructor(profile: string, kind: "missing" | "rejected") {
     const message =
       kind === "missing"
@@ -57,7 +61,7 @@ export class ReauthRequiredError extends ApiError {
 }
 
 export class NetworkError extends Error {
-  exitCode = 7;
+  exitCode: number = EXIT.NETWORK;
   constructor(
     message: string,
     public override cause?: unknown,
