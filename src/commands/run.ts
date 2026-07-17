@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
+import { EXIT } from "../client/exit-codes";
 import { detectKeyType } from "../client/routing";
 import { accessibleProjects, mergeEnv, openSession, resolve } from "../client/secrets";
 
@@ -8,6 +9,45 @@ export function splitRunArgs(rest: string[]): { cmd: string; args: string[] } {
     throw new Error("nothing to run: reoclo run [--project p] -- <cmd> [args...]");
   }
   return { cmd: rest[0]!, args: rest.slice(1) };
+}
+
+/**
+ * Pick the project ids to resolve, or throw with RESOLUTION_FAILED.
+ *
+ * Exit code matters more here than anywhere else in the CLI: `run` passes the
+ * child's exit code straight through, so reusing GENERIC (1) — as this did —
+ * made "your key has no grant" indistinguishable from "your migration script
+ * exited 1". Pipelines are told to branch on the exit code, and that is exactly
+ * the branch they most need.
+ *
+ * A project that exists but is not granted and a project that does not exist
+ * are deliberately reported the same way, so a key cannot enumerate projects it
+ * cannot read.
+ */
+export function selectProjectIds(
+  accessible: { id: string; name: string }[],
+  wanted: string[],
+): string[] {
+  if (accessible.length === 0) {
+    const err = new Error("this token has no accessible secret projects") as Error & {
+      exitCode: number;
+    };
+    err.exitCode = EXIT.RESOLUTION_FAILED;
+    throw err;
+  }
+
+  if (wanted.length === 0) return accessible.map((p) => p.id);
+
+  const want = new Set(wanted);
+  const ids = accessible.filter((p) => want.has(p.name) || want.has(p.id)).map((p) => p.id);
+  if (ids.length === 0) {
+    const err = new Error(`no accessible project matched: ${wanted.join(", ")}`) as Error & {
+      exitCode: number;
+    };
+    err.exitCode = EXIT.RESOLUTION_FAILED;
+    throw err;
+  }
+  return ids;
 }
 
 export function collectCiMeta(
@@ -53,33 +93,11 @@ Examples:
         const err = new Error(
           "reoclo run requires an automation key; set REOCLO_AUTOMATION_KEY",
         ) as Error & { exitCode: number };
-        err.exitCode = 4;
+        err.exitCode = EXIT.DENIED;
         throw err;
       }
 
-      const accessible = await accessibleProjects(ctx.client);
-      if (accessible.length === 0) {
-        const err = new Error(
-          "this token has no accessible secret projects",
-        ) as Error & { exitCode: number };
-        err.exitCode = 1;
-        throw err;
-      }
-
-      let ids = accessible.map((p) => p.id);
-      if (opts.project.length > 0) {
-        const wanted = new Set(opts.project);
-        ids = accessible
-          .filter((p) => wanted.has(p.name) || wanted.has(p.id))
-          .map((p) => p.id);
-        if (ids.length === 0) {
-          const err = new Error(
-            `no accessible project matched: ${opts.project.join(", ")}`,
-          ) as Error & { exitCode: number };
-          err.exitCode = 1;
-          throw err;
-        }
-      }
+      const ids = selectProjectIds(await accessibleProjects(ctx.client), opts.project);
 
       const session = await openSession(
         ctx.client,

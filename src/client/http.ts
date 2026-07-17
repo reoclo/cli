@@ -82,19 +82,40 @@ export class HttpClient {
 
   private async doFetch(method: string, path: string, body?: unknown, token?: string): Promise<Response> {
     const ctrl = new AbortController();
+
+    // Build the request BEFORE the try. url()/headers()/JSON.stringify are our
+    // own code — if they throw that is a bug, not a network fault, and it must
+    // not be relabelled as one below. Keeping them out here means the try wraps
+    // fetch() and nothing else.
+    const url = this.url(path);
+    const init: RequestInit = {
+      method,
+      headers: {
+        ...this.headers(token),
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    };
+
     const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 30_000);
     try {
-      return await fetch(this.url(path), {
-        method,
-        headers: {
-          ...this.headers(token),
-          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: ctrl.signal,
-      });
+      return await fetch(url, init);
     } catch (e) {
-      if (e instanceof Error && (e.name === "AbortError" || e.name === "TypeError")) {
+      // fetch() rejects only when the request never completed: DNS failure,
+      // connection refused, TLS failure, or our own abort/timeout. An HTTP
+      // error is NOT a rejection — it resolves with a non-ok Response and is
+      // handled by parseResponse. So every rejection here is a transport
+      // failure, whatever the runtime named it.
+      //
+      // Do NOT reintroduce a name check. The previous guard matched
+      // `e.name === "TypeError"` (Node/undici's `TypeError: fetch failed`), but
+      // this CLI runs on Bun, which throws `name: "Error"` with
+      // `code: "ConnectionRefused"`. Every connection failure escaped unwrapped
+      // and fell through to the generic exit 1, printing Bun's raw
+      // "Unable to connect..." instead of ours. Matching on runtime-specific
+      // error shapes is what rotted; the semantics of fetch() do not.
+      if (e instanceof Error) {
         throw new NetworkError(`network error: ${e.message}`, e);
       }
       throw e;
