@@ -59,7 +59,11 @@ export function base64url(input: string): string {
 export function buildShellWsUrl(streamsUrl: string, serverId: string): string {
   const trimmed = streamsUrl.replace(/\/$/, "");
   const wsBase = trimmed.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-  return `${wsBase}/mcp/ws/terminal/${serverId}`;
+  // The un-stripped automation path. The gateway strips the legacy /mcp prefix
+  // and misroutes /mcp/ws/terminal to the human terminal handler (a 403 on any
+  // gateway host); /api/automation/v1/* is passed through untouched. Requires
+  // api >= 1.124.0. See reoclo/core DAV-192.
+  return `${wsBase}/api/automation/v1/ws/terminal/${serverId}`;
 }
 
 export function buildShellSubprotocol(token: string): string {

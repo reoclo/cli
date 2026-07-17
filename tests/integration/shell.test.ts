@@ -1,7 +1,7 @@
 // tests/integration/shell.test.ts
 //
 // Spins up a small Bun WebSocket server that pretends to be the rbase
-// /mcp/ws/terminal/{server_id} endpoint, then drives `reoclo shell` against
+// /api/automation/v1/ws/terminal/{server_id} endpoint, then drives `reoclo shell` against
 // it via `bun run src/index.ts shell --allow-no-tty`. Validates handshake,
 // subprotocol echo, message round-trip, and exit-code propagation.
 
@@ -58,8 +58,8 @@ function startShellGateway(): ShellGateway {
         });
       }
 
-      // /mcp/ws/terminal/{server_id} — the shell endpoint.
-      if (url.pathname === `/mcp/ws/terminal/${SERVER_ID}`) {
+      // /api/automation/v1/ws/terminal/{server_id} — the shell endpoint.
+      if (url.pathname === `/api/automation/v1/ws/terminal/${SERVER_ID}`) {
         const requested = req.headers.get("sec-websocket-protocol") ?? "";
         fixture.lastRequestedSubprotocol = requested;
         // Echo the requested subprotocol back exactly (RFC 6455 requirement).
