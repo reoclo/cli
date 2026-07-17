@@ -1,10 +1,52 @@
 // src/commands/shell.ts
 import { type Command, Help } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { EXIT } from "../client/exit-codes";
 import { resolveServer } from "../client/resolve";
 import { withCompletion } from "../client/command-meta";
 
 export const SUBPROTOCOL_VERSION = "v1";
+
+/**
+ * Map a gateway WebSocket close code onto the CLI's exit-code contract.
+ *
+ * `current` is whatever an `exited` frame already recorded — the child's own
+ * exit code. A close that carries no failure of its own must leave it alone,
+ * which is what a null `exitCode` means here.
+ *
+ * Extracted from the ws `close` handler so it can be tested: it lived in a
+ * closure, and 4403 quietly returned AUTH(3) for months while an HTTP 403 —
+ * the same condition — returned DENIED(4) via `mapHttpError`.
+ */
+export function shellCloseToExit(
+  code: number,
+  reason: string,
+  current: number,
+): { exitCode: number | null; message: string | null } {
+  switch (code) {
+    case 1000: // normal close
+    case 1005: // no status — nothing to report
+      return { exitCode: null, message: null };
+    case 4001:
+      return { exitCode: EXIT.AUTH, message: `[authentication failed: ${reason}]` };
+    case 4403:
+      // DENIED, not AUTH: authenticated, but not permitted. Mirrors HTTP 403.
+      return { exitCode: EXIT.DENIED, message: `[forbidden: ${reason}]` };
+    case 4404:
+      return { exitCode: EXIT.NOT_FOUND, message: `[not found: ${reason}]` };
+    case 4400:
+      return { exitCode: EXIT.MISUSE, message: `[bad request: ${reason}]` };
+    case 4408:
+      // GENERIC, not NETWORK: the session lapsed; the control plane was reachable.
+      return { exitCode: EXIT.GENERIC, message: "[idle timeout]" };
+    default:
+      // Report it, but never overwrite a non-zero code the child already set.
+      return {
+        exitCode: current === 0 ? EXIT.GENERIC : null,
+        message: `[connection closed: ${code} ${reason}]`,
+      };
+  }
+}
 
 export function base64url(input: string): string {
   return Buffer.from(input, "utf8")
@@ -163,28 +205,15 @@ export function registerShell(program: Command): void {
         const closed: Promise<void> = new Promise((resolve) => {
           ws.addEventListener("close", (event: CloseEvent) => {
             restoreTty();
-            // Map server-side WS close codes to CLI exit codes.
-            if (event.code === 1000) {
-              // Normal close — keep whatever exitCode the 'exited' frame set.
-            } else if (event.code === 4001) {
-              process.stderr.write(`\n[authentication failed: ${event.reason}]\n`);
-              exitCode = 3;
-            } else if (event.code === 4403) {
-              process.stderr.write(`\n[forbidden: ${event.reason}]\n`);
-              exitCode = 3;
-            } else if (event.code === 4404) {
-              process.stderr.write(`\n[not found: ${event.reason}]\n`);
-              exitCode = 5;
-            } else if (event.code === 4400) {
-              process.stderr.write(`\n[bad request: ${event.reason}]\n`);
-              exitCode = 2;
-            } else if (event.code === 4408) {
-              process.stderr.write(`\n[idle timeout]\n`);
-              exitCode = 1;
-            } else if (event.code !== 1005) {
-              process.stderr.write(`\n[connection closed: ${event.code} ${event.reason}]\n`);
-              if (exitCode === 0) exitCode = 1;
-            }
+            // Map server-side WS close codes to CLI exit codes. See
+            // shellCloseToExit — kept pure so the mapping is testable.
+            const { exitCode: mapped, message } = shellCloseToExit(
+              event.code,
+              event.reason,
+              exitCode,
+            );
+            if (message !== null) process.stderr.write(`\n${message}\n`);
+            if (mapped !== null) exitCode = mapped;
             resolve();
           });
         });
