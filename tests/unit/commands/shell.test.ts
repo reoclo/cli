@@ -1,13 +1,68 @@
 // tests/unit/commands/shell.test.ts
 import { expect, test, describe } from "bun:test";
 import { Command } from "commander";
+import { EXIT } from "../../../src/client/exit-codes";
 import {
   base64url,
   buildShellSubprotocol,
   buildShellWsUrl,
+  shellCloseToExit,
   SUBPROTOCOL_VERSION,
   registerShell,
 } from "../../../src/commands/shell";
+
+describe("shellCloseToExit", () => {
+  // The mapping used to live inside a ws.onclose closure, so nothing tested it
+  // and 4403 quietly returned 3 for months while HttpClient returned 4 for the
+  // same condition (an HTTP 403).
+  test("4403 forbidden is DENIED(4), not AUTH(3) — matches HttpClient's 403", () => {
+    const r = shellCloseToExit(4403, "no access to server", 0);
+    expect(r.exitCode).toBe(EXIT.DENIED);
+    expect(r.exitCode).not.toBe(EXIT.AUTH);
+    expect(r.message).toContain("forbidden");
+  });
+
+  test("4001 authentication failed is AUTH(3)", () => {
+    expect(shellCloseToExit(4001, "bad token", 0).exitCode).toBe(EXIT.AUTH);
+  });
+
+  test("4404 is NOT_FOUND(5)", () => {
+    expect(shellCloseToExit(4404, "no such server", 0).exitCode).toBe(EXIT.NOT_FOUND);
+  });
+
+  test("4400 is MISUSE(2)", () => {
+    expect(shellCloseToExit(4400, "bad frame", 0).exitCode).toBe(EXIT.MISUSE);
+  });
+
+  test("4408 idle timeout is GENERIC(1) — the session lapsed, the plane is reachable", () => {
+    const r = shellCloseToExit(4408, "", 0);
+    expect(r.exitCode).toBe(EXIT.GENERIC);
+    expect(r.message).toContain("idle timeout");
+  });
+
+  test("a normal close preserves the child's own exit code", () => {
+    // 1000 after an 'exited' frame recorded 42: the child's code must survive.
+    const r = shellCloseToExit(1000, "", 42);
+    expect(r.exitCode).toBeNull();
+    expect(r.message).toBeNull();
+  });
+
+  test("1005 (no status) is silent and preserves the current code", () => {
+    const r = shellCloseToExit(1005, "", 7);
+    expect(r.exitCode).toBeNull();
+    expect(r.message).toBeNull();
+  });
+
+  test("an unknown close reports, but never overwrites a child's non-zero code", () => {
+    const clean = shellCloseToExit(1006, "abnormal", 0);
+    expect(clean.exitCode).toBe(EXIT.GENERIC);
+    expect(clean.message).toContain("connection closed");
+
+    const alreadyFailed = shellCloseToExit(1006, "abnormal", 42);
+    expect(alreadyFailed.exitCode).toBeNull();
+    expect(alreadyFailed.message).toContain("connection closed");
+  });
+});
 
 describe("base64url", () => {
   test("encodes a simple ASCII key without padding or +/", () => {
