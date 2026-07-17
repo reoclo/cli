@@ -91,25 +91,25 @@ describe("base64url", () => {
 describe("buildShellWsUrl", () => {
   test("rewrites https -> wss and appends the path", () => {
     expect(buildShellWsUrl("https://api.reoclo.com", "abc-123")).toBe(
-      "wss://api.reoclo.com/mcp/ws/terminal/abc-123",
+      "wss://api.reoclo.com/api/automation/v1/ws/terminal/abc-123",
     );
   });
 
   test("rewrites http -> ws for local dev", () => {
     expect(buildShellWsUrl("http://localhost:8000", "abc-123")).toBe(
-      "ws://localhost:8000/mcp/ws/terminal/abc-123",
+      "ws://localhost:8000/api/automation/v1/ws/terminal/abc-123",
     );
   });
 
   test("strips trailing slash from the base URL", () => {
     expect(buildShellWsUrl("https://api.reoclo.com/", "abc")).toBe(
-      "wss://api.reoclo.com/mcp/ws/terminal/abc",
+      "wss://api.reoclo.com/api/automation/v1/ws/terminal/abc",
     );
   });
 
   test("preserves non-default ports", () => {
     expect(buildShellWsUrl("https://api.staging.reoclo.com:8443", "abc")).toBe(
-      "wss://api.staging.reoclo.com:8443/mcp/ws/terminal/abc",
+      "wss://api.staging.reoclo.com:8443/api/automation/v1/ws/terminal/abc",
     );
   });
 });
