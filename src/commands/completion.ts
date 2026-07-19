@@ -300,7 +300,7 @@ export function registerCompletion(program: Command): void {
       )
       .option("--shell <bash|zsh|fish>", "(install only) override shell detection")
       .option("--force", "(install only) overwrite an existing completion file without prompting")
-      .option("--print", "(install only) print what would happen; don't write anything")
+      .option("--print", "(install only) print what would happen without writing anything")
       .action(async (shellOrInstall: string, _installArgs: string[], opts: InstallOpts) => {
         const arg = shellOrInstall.toLowerCase();
         if (arg === "install") {

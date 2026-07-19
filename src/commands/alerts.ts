@@ -155,7 +155,7 @@ export function registerAlerts(program: Command): void {
       .option("--state <state>", "filter by state (firing|acknowledged|resolved)")
       .option("--severity <severity>", "filter by severity (info|warn|critical)")
       .option("--resource <kind:id>", "filter by resource (e.g. server:my-server)")
-      .option("--since <duration>", "filter to instances fired within duration (e.g. 24h, 7d)")
+      .option("--since <duration>", "filter to instances fired within duration (for example 24h, 7d)")
       .action(
         async (opts: {
           state?: string;
@@ -223,7 +223,7 @@ export function registerAlerts(program: Command): void {
     g
       .command("ack <instance-id>")
       .description("acknowledge an alert instance")
-      .option("--note <text>", "acknowledgement note")
+      .option("--note <text>", "acknowledgment note")
       .action(async (instanceId: string, opts: { note?: string }) => {
         const ctx = await bootstrap();
         const tid = requireTenantId(ctx);
@@ -293,7 +293,7 @@ export function registerAlerts(program: Command): void {
       .command("mute [alert-code]")
       .description("mute an alert code for a resource (omit code to mute all alerts)")
       .requiredOption("--resource <kind:id>", "resource to mute (e.g. server:my-server)")
-      .requiredOption("--for <duration>", "mute duration (e.g. 2h, 7d) or 'indefinite'")
+      .requiredOption("--for <duration>", "mute duration (for example 2h, 7d) or 'indefinite'")
       .requiredOption("--reason <text>", "reason for muting")
       .option("--confirm", "required when --for indefinite")
       .action(

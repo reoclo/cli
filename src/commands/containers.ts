@@ -174,7 +174,7 @@ Examples:
   $ reoclo containers recreate my-server my-app --persist  # write env/labels back to app record
 `,
     )
-    .option("--env <kv>", "env var KEY=VALUE — full replacement (repeatable)", collectKV, {})
+    .option("--env <kv>", "env var KEY=VALUE, full replacement (repeatable)", collectKV, {})
     .option("--label <kv>", "label KEY=VALUE (repeatable)", collectKV, {})
     .option("--remove-label <key>", "label key to delete (repeatable)", collectArr, [])
     .option("--port <spec>", "port host:container[/proto] (repeatable)", collectArr, [])
@@ -294,7 +294,7 @@ visible. Pass --show-secrets to reveal the values.
     .command("logs <server> <name>")
     .description("fetch (or follow) a container's logs")
     .option("--tail <n>", "number of log lines (default 200)")
-    .option("--since <duration>", "only lines newer than e.g. 1h, 30m (streaming source)")
+    .option("--since <duration>", "only lines newer than, for example, 1h or 30m (streaming source)")
     .option("--search <pattern>", "regex to filter messages (streaming source)")
     .option("-f, --follow", "stream new log lines, polling every 2s (streaming source)")
     .addHelpText(

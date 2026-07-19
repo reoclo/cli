@@ -121,7 +121,7 @@ export function registerApps(program: Command): void {
       .description("fetch container logs for an application")
       .option("--tail <n>", "number of lines to return", "200")
       .option("--search <term>", "substring filter applied server-side")
-      .option("--since <ts>", "RFC 3339 timestamp; only return lines after this time")
+      .option("--since <ts>", "RFC 3339 timestamp, only returns lines after this time")
       .action(
         async (idOrSlug: string, opts: { tail?: string; search?: string; since?: string }) => {
           const fmt = resolveFormat(globalOutput(program));
@@ -239,7 +239,7 @@ export function registerApps(program: Command): void {
       )
       .option(
         "--set <KEY=VAL>",
-        "set arbitrary field (dot-paths supported; repeatable)",
+        "set arbitrary field (dot-paths supported, repeatable)",
         (val: string, prev?: string[]) => [...(prev ?? []), val],
       )
       .action(

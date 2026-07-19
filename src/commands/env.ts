@@ -95,7 +95,7 @@ export function registerEnv(program: Command): void {
   withCompletion(
     g
       .command("get")
-      .description("(unsupported — values are write-only via the API; view in the dashboard)")
+      .description("(unsupported: values are write-only via the API, view them in the dashboard)")
       .requiredOption("--app <idOrSlug>", "application id or slug")
       .argument("<key>", "the env var key")
       .action(() => {
