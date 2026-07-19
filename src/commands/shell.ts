@@ -79,7 +79,7 @@ export function registerShell(program: Command): void {
     program
       .command("shell <serverIdOrName>")
       .description("open an interactive shell on a server via the runner")
-      .option("--allow-no-tty", "skip the TTY-required check (mostly for tests; bypasses raw mode)")
+      .option("--allow-no-tty", "skip the TTY-required check (mostly for tests, bypasses raw mode)")
       // Commander v12 quirk: addHelpText() output is NOT included in helpInformation();
       // override formatHelp so our Examples block appears in both `--help` and programmatic
       // help (which tests assert on).

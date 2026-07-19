@@ -71,10 +71,10 @@ export function registerCheckout(program: Command): void {
     .option("--no-clean", "fetch into the existing directory instead of removing it")
     .option("--depth <n>", "fetch depth for the ref (0 for full history)", "1")
     .option("--fetch-tags", "fetch tags as well as the ref, even when depth > 0", false)
-    .option("--filter <filter>", "partial-clone filter applied to fetch (e.g. blob:none)", "")
+    .option("--filter <filter>", "partial-clone filter applied to fetch (for example blob:none)", "")
     .option(
       "--sparse-checkout <pattern>",
-      "sparse-checkout pattern (repeatable; enables sparse checkout)",
+      "sparse-checkout pattern (repeatable, enables sparse checkout)",
       collectRepeatable,
       [] as string[],
     )
@@ -86,7 +86,7 @@ export function registerCheckout(program: Command): void {
       "keep the access token in .git/config (default: scrub it for security)",
       false,
     )
-    .option("--github-server-url <url>", "SCM base URL (for GHES; defaults to CI context)")
+    .option("--github-server-url <url>", "SCM base URL (for GHES, defaults to CI context)")
     .action(
       async (
         serverId: string,

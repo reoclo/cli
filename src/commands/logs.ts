@@ -220,7 +220,7 @@ export function registerLogs(program: Command): void {
       .option("--source-name <name>", "filter by source name (container name or systemd unit)")
       .option("--stream <s>", "stdout|stderr|journal")
       .option("--level <level>", "debug|info|warn|error|fatal")
-      .option("--from <spec>", "earliest time (e.g. 24h, 7d, ISO 8601)")
+      .option("--from <spec>", "earliest time (for example 24h, 7d, ISO 8601)")
       .option("--to <spec>", "latest time")
       .option("--limit <n>", "max rows (default 100, cap 1000)", "100")
       .option("--count", "print only the total match count (triage mode)")
@@ -343,7 +343,7 @@ export function registerLogs(program: Command): void {
       .description("fetch systemd journal logs from a server")
       .option("--unit <unit>", "systemd unit (default: kernel)", "kernel")
       .option("--tail <n>", "lines to fetch (default 200)", "200")
-      .option("--since <spec>", "earliest time (e.g. 1h, 24h, ISO)")
+      .option("--since <spec>", "earliest time (for example 1h, 24h, ISO)")
       .option("--search <pattern>", "regex to filter messages")
       .option("--level <level>", "filter by level")
       .action(

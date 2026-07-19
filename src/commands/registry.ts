@@ -239,7 +239,7 @@ export function registerRegistry(program: Command): void {
     .option("--credential <uuid>", "registry credential UUID (vault mode)")
     .option("--username <user>", "registry username (passthrough mode)")
     .option("--access-token <token>", "registry access token/password (passthrough mode)")
-    .option("--registry-url <url>", "registry URL, e.g. ghcr.io (passthrough mode)")
+    .option("--registry-url <url>", "registry URL, for example ghcr.io (passthrough mode)")
     .action(
       async (
         serverId: string,
