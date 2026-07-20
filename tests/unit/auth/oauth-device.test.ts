@@ -240,6 +240,28 @@ describe("refreshAccessToken", () => {
     expect(capturedBody).toContain(`client_id=${CLIENT_ID}`);
   });
 
+  test("sends tenant_id so the refreshed token stays bound to the active org", async () => {
+    let capturedBody = "";
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      capturedBody = init?.body as string;
+      return Promise.resolve(jsonRes({ access_token: "t", refresh_token: "r", scope: "openid" }));
+    }) as unknown as typeof fetch;
+
+    await refreshAccessToken(AUTH_BASE, "my_refresh", CLIENT_ID, "d7f6e5c4-1111-2222-3333-444455556666");
+    expect(capturedBody).toContain("tenant_id=d7f6e5c4-1111-2222-3333-444455556666");
+  });
+
+  test("omits tenant_id when the profile has no org pinned", async () => {
+    let capturedBody = "";
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      capturedBody = init?.body as string;
+      return Promise.resolve(jsonRes({ access_token: "t", refresh_token: "r", scope: "openid" }));
+    }) as unknown as typeof fetch;
+
+    await refreshAccessToken(AUTH_BASE, "my_refresh", CLIENT_ID);
+    expect(capturedBody).not.toContain("tenant_id");
+  });
+
   test("throws DeviceFlowError on refresh failure", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response("unauthorized", { status: 401 })),

@@ -191,6 +191,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
           failedToken,
           authUrl: capturedProfile.oauth_auth_url ?? defaultAuthUrl(),
           clientId: capturedProfile.oauth_client_id ?? "reoclo-cli",
+          tenantId: capturedProfile.tenant_id,
           refreshFn: refreshAccessToken,
           withLock: (fn) => withFileLock(lockPath, fn),
           onExpiry: async (expiresAt) => {

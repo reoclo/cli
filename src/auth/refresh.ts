@@ -22,7 +22,15 @@ export interface RefreshDeps {
   failedToken: string;
   authUrl: string;
   clientId: string;
-  refreshFn: (authUrl: string, refreshToken: string, clientId: string) => Promise<TokenResponse>;
+  /** Org this profile targets. Sent with the refresh so the new access token is
+   *  bound to it rather than to the first tenant in the OAuth grant. */
+  tenantId?: string;
+  refreshFn: (
+    authUrl: string,
+    refreshToken: string,
+    clientId: string,
+    tenantId?: string,
+  ) => Promise<TokenResponse>;
   /** Run the refresh body while holding a cross-process lock. */
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Optional hook to persist the new access-token expiry onto the profile. */
@@ -60,7 +68,7 @@ async function refreshWithRetry(
   const sleep = deps.sleep ?? DEFAULT_SLEEP;
   for (let attempt = 1; ; attempt++) {
     try {
-      return await deps.refreshFn(deps.authUrl, refreshToken, deps.clientId);
+      return await deps.refreshFn(deps.authUrl, refreshToken, deps.clientId, deps.tenantId);
     } catch (e) {
       if (e instanceof DeviceFlowError && (e.status === 400 || e.status === 401)) {
         throw new ReauthRequiredError(deps.profileName, "rejected");
