@@ -38,7 +38,7 @@ import { registerInit } from "./commands/init";
 import { registerSecrets } from "./commands/secrets";
 import { registerRun } from "./commands/run";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
-import { commandSupportedBy } from "./client/routing";
+import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import { maybeNotifyUpdate, performUpdateCheck, shouldRunUpdateCheck } from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
@@ -193,7 +193,7 @@ if (import.meta.main) {
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;
       const err = new Error(
-        `'${cmd}' requires an organization key; automation keys can only run a limited set of commands (apps deploy, apps restart, exec, shell, checkout, registry login, registry logout, deploy sync).`,
+        `'${cmd}' requires an organization key. An automation key can only run: ${automationAllowedCommands().join(", ")}.`,
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

@@ -44,3 +44,12 @@ export function commandSupportedBy(commandPath: string, t: KeyType): boolean {
   if (t === "tenant") return true;
   return AUTOMATION_ALLOWED.has(commandPath);
 }
+
+/** The command paths an automation key may invoke, in declaration order.
+ *  Exported so the rejection message names the real set. Restating the list
+ *  by hand let it drift: it lost `run`, the one command that reads secrets
+ *  with an automation key, and told operators the opposite of the truth.
+ */
+export function automationAllowedCommands(): string[] {
+  return [...AUTOMATION_ALLOWED];
+}
