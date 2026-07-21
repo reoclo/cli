@@ -161,10 +161,24 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   }
 
   // An automation key is tenant-bound and carries no profile of its own. Under
-  // one, a leftover local profile must not redirect CI traffic to whatever host
-  // that profile points at. `.reoclo` is suppressed above for the same reason.
-  // Explicit flags and env vars still win, so an intentional override works.
-  const profileEndpoints = envAuto ? null : profile;
+  // one, an *ambient* profile (the saved `active_profile`) must not redirect CI
+  // traffic to whatever host it happens to point at. `.reoclo` is suppressed
+  // above for the same reason.
+  //
+  // A profile the caller *named* is a different thing, and must still apply.
+  // `reoclo --profile staging run -- ./verify.sh` with a staging key has to
+  // reach staging: nulling it here would send that key to production, which
+  // both fails with an opaque 401 and sends the key to a host the caller never
+  // asked for. That matters most for a self-hosted install, where the default
+  // is Reoclo's own SaaS endpoint.
+  //
+  // `REOCLO_API_URL` / `REOCLO_STREAMS_URL` remain the only other override. No
+  // CLI flag can do it, because `--api` is command-local to `login` and
+  // `connect-omega-mcp`, and an automation key can run neither.
+  const profileWasNamed = Boolean(
+    opts.profile ?? globalProfileOverride ?? process.env.REOCLO_PROFILE,
+  );
+  const profileEndpoints = envAuto && !profileWasNamed ? null : profile;
 
   const api = opts.api ?? process.env.REOCLO_API_URL ?? profileEndpoints?.api_url ?? PROD_API_URL;
   const streamsUrl =

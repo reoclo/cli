@@ -63,10 +63,21 @@ describe("automationAllowedCommands", () => {
   // The rejection message in index.ts used to restate this list by hand, and it
   // drifted: it omitted `run`, so an operator was told the one command that
   // reads secrets with an automation key was unavailable to automation keys.
-  test("every listed command is actually accepted", () => {
-    for (const cmd of automationAllowedCommands()) {
-      expect(commandSupportedBy(cmd, "automation")).toBe(true);
-    }
+  // Pinned against an independent literal on purpose. Looping the returned
+  // array back through commandSupportedBy would be `set.has(member)` for every
+  // member, which is true by construction and passes even on an empty set.
+  test("advertises exactly the accepted command set", () => {
+    expect(automationAllowedCommands().slice().sort()).toEqual([
+      "apps deploy",
+      "apps restart",
+      "checkout",
+      "deploy sync",
+      "exec",
+      "registry login",
+      "registry logout",
+      "run",
+      "shell",
+    ]);
   });
 
   test("includes run, the only command that reads secrets", () => {
