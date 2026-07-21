@@ -159,6 +159,44 @@ test("a .reoclo `profile` is ignored under an automation key", async () => {
   }
 });
 
+// An automation key is tenant-bound and carries no profile. A leftover profile
+// pointing at staging or localhost must not redirect CI traffic to that host.
+test("a profile's api_url and streams_url are ignored under an automation key", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        api_url: "http://localhost:8000",
+        streams_url: "http://localhost:8001",
+      },
+    },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_ciauto");
+    expect(ctx.api).toBe("https://api.reoclo.com");
+    expect(ctx.streamsUrl).toBe("https://streams.reoclo.com");
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+test("an explicit REOCLO_API_URL still wins under an automation key", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-default", "home"), api_url: "http://localhost:8000" } },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  process.env.REOCLO_API_URL = "https://api.staging.reoclo.com";
+  try {
+    expect((await bootstrap()).api).toBe("https://api.staging.reoclo.com");
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
   expect(defaultStreamsUrl("https://api.reoclo.com")).toBe("https://streams.reoclo.com");
   expect(defaultStreamsUrl("https://api.reoclo.com/")).toBe("https://streams.reoclo.com");

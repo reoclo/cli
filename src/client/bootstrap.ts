@@ -160,11 +160,17 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     throw err;
   }
 
-  const api = opts.api ?? process.env.REOCLO_API_URL ?? profile?.api_url ?? PROD_API_URL;
+  // An automation key is tenant-bound and carries no profile of its own. Under
+  // one, a leftover local profile must not redirect CI traffic to whatever host
+  // that profile points at. `.reoclo` is suppressed above for the same reason.
+  // Explicit flags and env vars still win, so an intentional override works.
+  const profileEndpoints = envAuto ? null : profile;
+
+  const api = opts.api ?? process.env.REOCLO_API_URL ?? profileEndpoints?.api_url ?? PROD_API_URL;
   const streamsUrl =
     opts.streams ??
     process.env.REOCLO_STREAMS_URL ??
-    profile?.streams_url ??
+    profileEndpoints?.streams_url ??
     defaultStreamsUrl(api);
 
   // Build the OAuth refresh callback up front so it's available to BOTH the
