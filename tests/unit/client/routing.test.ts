@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { detectKeyType, apiPrefix, commandSupportedBy } from "../../../src/client/routing";
+import {
+  detectKeyType,
+  apiPrefix,
+  commandSupportedBy,
+  automationAllowedCommands,
+} from "../../../src/client/routing";
 
 test("rk_a_ → automation", () => {
   expect(detectKeyType("rk_a_xyz")).toBe("automation");
@@ -51,5 +56,25 @@ describe("commandSupportedBy", () => {
   test("automation keys reject unrelated commands", () => {
     expect(commandSupportedBy("servers ls", "automation")).toBe(false);
     expect(commandSupportedBy("schedule trigger", "automation")).toBe(false);
+  });
+});
+
+describe("automationAllowedCommands", () => {
+  // The rejection message in index.ts used to restate this list by hand, and it
+  // drifted: it omitted `run`, so an operator was told the one command that
+  // reads secrets with an automation key was unavailable to automation keys.
+  test("every listed command is actually accepted", () => {
+    for (const cmd of automationAllowedCommands()) {
+      expect(commandSupportedBy(cmd, "automation")).toBe(true);
+    }
+  });
+
+  test("includes run, the only command that reads secrets", () => {
+    expect(automationAllowedCommands()).toContain("run");
+  });
+
+  test("returns a copy, so a caller cannot mutate the allowlist", () => {
+    automationAllowedCommands().push("servers rm");
+    expect(commandSupportedBy("servers rm", "automation")).toBe(false);
   });
 });
