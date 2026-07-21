@@ -29,7 +29,11 @@ export function selectProjectIds(
   wanted: string[],
 ): string[] {
   if (accessible.length === 0) {
-    const err = new Error("this token has no accessible secret projects") as Error & {
+    const err = new Error(
+      "this key is granted no secret projects. Enabling the 'Read secrets' " +
+        "operation does not grant a project. Grant each project to this key " +
+        "on the project's Access tab in the dashboard, then try again.",
+    ) as Error & {
       exitCode: number;
     };
     err.exitCode = EXIT.RESOLUTION_FAILED;

@@ -76,6 +76,21 @@ describe("selectProjectIds", () => {
     expect(codeOf(() => selectProjectIds([], []))).toBe(EXIT.RESOLUTION_FAILED);
     expect(codeOf(() => selectProjectIds([], []))).not.toBe(EXIT.GENERIC);
   });
+  // The old message named no remedy, so an operator who had enabled the
+  // "Read secrets" operation had no way to learn that a per-project grant is a
+  // separate step on a different page. That cost a customer several rounds of
+  // debugging and ended in a direct database query.
+  test("a key with no grants explains that the operation alone is not a grant", () => {
+    let message = "";
+    try {
+      selectProjectIds([], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("Access tab");
+    expect(message.toLowerCase()).toContain("grant");
+  });
+
   test("-p naming an ungranted project fails with RESOLUTION_FAILED", () => {
     expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).toBe(EXIT.RESOLUTION_FAILED);
     expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).not.toBe(EXIT.GENERIC);
