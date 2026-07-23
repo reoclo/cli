@@ -8,6 +8,23 @@ import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { parseSetFlags } from "../util/parse-set";
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Recursively merge `patch` over `base`, returning a new object. */
+export function deepMerge(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    const cur = out[k];
+    out[k] = isPlainObject(cur) && isPlainObject(v) ? deepMerge(cur, v) : v;
+  }
+  return out;
+}
+
 
 export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
@@ -312,9 +329,28 @@ export function registerApps(program: Command): void {
             throw e;
           }
 
+          // The config PATCH replaces the whole build/deploy slice server-side
+          // (application.build = data.build), and every build field defaults —
+          // so sending only the changed field would reset the rest (e.g.
+          // build_pack -> dockerfile). Fetch the current config and deep-merge
+          // the changes so a partial `--docker-image` / `--set` preserves
+          // everything else.
+          //
+          // Also: the body is the ApplicationConfigUpdate shape ({build, deploy})
+          // directly. It was previously wrapped in `{ config: cfg }`, which the
+          // server ignored entirely — every `apps config set` reported success
+          // while persisting nothing.
+          const current = await ctx.client.get<{
+            build?: Record<string, unknown>;
+            deploy?: Record<string, unknown>;
+          }>(`/tenants/${tid}/applications/${aid}/config`);
+          const merged = deepMerge(
+            { build: current.build ?? {}, deploy: current.deploy ?? {} },
+            cfg,
+          );
           const r = await ctx.client.patch<Record<string, unknown>>(
             `/tenants/${tid}/applications/${aid}/config`,
-            { config: cfg },
+            merged,
           );
           printMutation(program, r, `✓ config updated: ${aid}`);
         },
