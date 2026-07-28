@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Command } from "commander";
 import {
   POWER_ENDPOINT,
   powerNeedsConfirm,
@@ -6,6 +7,14 @@ import {
   powerErrorHint,
   pollUntilState,
 } from "../../../src/commands/servers-power";
+import { registerServers } from "../../../src/commands/servers";
+
+function powerGroup(): Command {
+  const p = new Command().name("reoclo");
+  registerServers(p);
+  const servers = p.commands.find((c) => c.name() === "servers")!;
+  return servers.commands.find((c) => c.name() === "power")!;
+}
 
 describe("cloud-power helpers", () => {
   test("POWER_ENDPOINT maps every action to its cloud path suffix", () => {
@@ -69,5 +78,47 @@ describe("cloud-power helpers", () => {
     expect(r.reached).toBe(false);
     expect(r.lastState).toBe("running");
     expect(calls).toBe(3);
+  });
+});
+
+describe("reoclo servers power (actions)", () => {
+  test("power group is registered under servers and mentions the cloud provider", () => {
+    const g = powerGroup();
+    expect(g).toBeDefined();
+    expect(g.description().toLowerCase()).toContain("cloud");
+  });
+
+  test("all five action subcommands are registered", () => {
+    const names = powerGroup().commands.map((c) => c.name());
+    for (const n of ["on", "off", "shutdown", "reboot", "reset"]) {
+      expect(names).toContain(n);
+    }
+  });
+
+  test("off carries --yes, --wait and --wait-timeout", () => {
+    const off = powerGroup().commands.find((c) => c.name() === "off")!;
+    const longs = off.options.map((o) => o.long);
+    expect(longs).toContain("--yes");
+    expect(longs).toContain("--wait");
+    expect(longs).toContain("--wait-timeout");
+  });
+
+  test("on has --wait but no --yes (no confirmation on power-on)", () => {
+    const on = powerGroup().commands.find((c) => c.name() === "on")!;
+    const longs = on.options.map((o) => o.long);
+    expect(longs).toContain("--wait");
+    expect(longs).not.toContain("--yes");
+  });
+
+  test("power reboot help distinguishes it from the runner reboot", () => {
+    const reboot = powerGroup().commands.find((c) => c.name() === "reboot")!;
+    expect(reboot.description().toLowerCase()).toContain("cloud");
+  });
+
+  test("the runner-based servers reboot still exists (regression)", () => {
+    const p = new Command().name("reoclo");
+    registerServers(p);
+    const servers = p.commands.find((c) => c.name() === "servers")!;
+    expect(servers.commands.map((c) => c.name())).toContain("reboot");
   });
 });

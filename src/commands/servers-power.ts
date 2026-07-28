@@ -1,4 +1,11 @@
 // src/commands/servers-power.ts
+import type { Command } from "commander";
+import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { resolveServer } from "../client/resolve";
+import { withCompletion } from "../client/command-meta";
+import { printMutation } from "../ui/output";
+import { promptYesNo } from "../ui/prompt";
+import { ApiError } from "../client/errors";
 
 export type PowerAction = "on" | "off" | "shutdown" | "reboot" | "reset";
 
@@ -82,4 +89,128 @@ export interface CapabilitiesResponse {
   provider: string | null;
   capabilities: string[];
   cloud_configured: boolean;
+}
+
+interface PowerActionOpts {
+  yes?: boolean;
+  wait?: boolean;
+  waitTimeout?: string;
+}
+
+const POLL_INTERVAL_MS = 3000;
+const DEFAULT_WAIT_SECONDS = 120;
+
+const ACTION_VERB: Record<PowerAction, string> = {
+  on: "Power on",
+  off: "Power off",
+  shutdown: "Shut down",
+  reboot: "Reboot",
+  reset: "Reset",
+};
+
+const ACTION_DESC: Record<PowerAction, string> = {
+  on: "power on a stopped server through its cloud provider",
+  off: "power off a server through its cloud provider (hard power cut)",
+  shutdown: "gracefully shut down a server through its cloud provider",
+  reboot:
+    "reboot a server through its cloud provider (distinct from the runner-based 'servers reboot')",
+  reset: "hard-reset a server through its cloud provider",
+};
+
+async function runPowerAction(
+  program: Command,
+  action: PowerAction,
+  idOrSlug: string,
+  opts: PowerActionOpts,
+): Promise<void> {
+  const ctx = await bootstrap();
+  const tid = requireTenantId(ctx);
+  const sid = await resolveServer(ctx.client, tid, idOrSlug);
+
+  if (powerNeedsConfirm(action) && !opts.yes) {
+    const ok = await promptYesNo(
+      `${ACTION_VERB[action]} server '${idOrSlug}' through its cloud provider? [y/N] `,
+    );
+    if (!ok) {
+      process.stderr.write("aborted (pass --yes to skip this prompt)\n");
+      const err = new Error("power action aborted") as Error & { exitCode: number };
+      err.exitCode = 1;
+      throw err;
+    }
+  }
+
+  const path = `/tenants/${tid}/servers/${sid}/cloud/${POWER_ENDPOINT[action]}`;
+  let res: ActionResponse;
+  try {
+    res = await ctx.client.post<ActionResponse>(path);
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const hint = powerErrorHint(e.status);
+      if (hint) process.stderr.write(`${hint}\n`);
+    }
+    throw e;
+  }
+
+  printMutation(
+    program,
+    res as unknown as Record<string, unknown>,
+    `✓ ${POWER_ENDPOINT[action]} dispatched: ${idOrSlug}`,
+  );
+  if (res.reason) process.stdout.write(`  ${res.reason}\n`);
+
+  if (opts.wait) {
+    const target = targetStateFor(action);
+    const timeoutSeconds = opts.waitTimeout
+      ? Number.parseInt(opts.waitTimeout, 10)
+      : DEFAULT_WAIT_SECONDS;
+    const attempts = Math.max(1, Math.ceil((timeoutSeconds * 1000) / POLL_INTERVAL_MS));
+    process.stderr.write(
+      `waiting for '${idOrSlug}' to reach '${target}' (up to ${timeoutSeconds}s)...\n`,
+    );
+    const { reached, lastState } = await pollUntilState({
+      statusFn: async () => {
+        const s = await ctx.client.post<StatusCheckResponse>(
+          `/tenants/${tid}/servers/${sid}/cloud/status`,
+        );
+        return s.provider_status ?? null;
+      },
+      target,
+      attempts,
+      sleepMs: POLL_INTERVAL_MS,
+    });
+    if (!reached) {
+      process.stderr.write(
+        `timed out after ${timeoutSeconds}s; last observed state: ${lastState ?? "unknown"}\n`,
+      );
+      const err = new Error(`server did not reach '${target}'`) as Error & { exitCode: number };
+      err.exitCode = 1;
+      throw err;
+    }
+    process.stdout.write(`✓ '${idOrSlug}' is now '${target}'\n`);
+  }
+}
+
+export function registerServersPower(program: Command, serversGroup: Command): void {
+  const power = serversGroup
+    .command("power")
+    .description("cloud provider power operations (only on cloud-managed servers)");
+
+  const actions: PowerAction[] = ["on", "off", "shutdown", "reboot", "reset"];
+  for (const action of actions) {
+    const cmd = power
+      .command(`${action} <idOrSlug>`)
+      .description(ACTION_DESC[action])
+      .option("--wait", "block until the server reaches its target power state")
+      .option(
+        "--wait-timeout <seconds>",
+        `how long --wait polls before giving up (default ${DEFAULT_WAIT_SECONDS})`,
+      );
+    if (powerNeedsConfirm(action)) {
+      cmd.option("--yes", "skip the confirmation prompt");
+    }
+    cmd.action((idOrSlug: string, opts: PowerActionOpts) =>
+      runPowerAction(program, action, idOrSlug, opts),
+    );
+    withCompletion(cmd, { args: [{ slot: 0, resource: "servers" }] });
+  }
 }
