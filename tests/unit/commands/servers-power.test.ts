@@ -53,7 +53,7 @@ describe("cloud-power helpers", () => {
     const states = ["stopping", "stopping", "stopped"];
     let i = 0;
     const r = await pollUntilState({
-      statusFn: async () => states[i++] ?? null,
+      statusFn: () => Promise.resolve(states[i++] ?? null),
       target: "stopped",
       attempts: 5,
       sleepMs: 0,
@@ -66,9 +66,9 @@ describe("cloud-power helpers", () => {
   test("pollUntilState times out after the attempt budget", async () => {
     let calls = 0;
     const r = await pollUntilState({
-      statusFn: async () => {
+      statusFn: () => {
         calls++;
-        return "running";
+        return Promise.resolve("running");
       },
       target: "stopped",
       attempts: 3,
