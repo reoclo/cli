@@ -122,3 +122,22 @@ describe("reoclo servers power (actions)", () => {
     expect(servers.commands.map((c) => c.name())).toContain("reboot");
   });
 });
+
+describe("reoclo servers power (reads)", () => {
+  test("status and capabilities subcommands are registered", () => {
+    const names = powerGroup().commands.map((c) => c.name());
+    expect(names).toContain("status");
+    expect(names).toContain("capabilities");
+  });
+
+  test("status takes an idOrSlug and does not confirm", () => {
+    const status = powerGroup().commands.find((c) => c.name() === "status")!;
+    expect(status.usage()).toContain("idOrSlug");
+    expect(status.options.map((o) => o.long)).not.toContain("--yes");
+  });
+
+  test("capabilities describes what the provider supports", () => {
+    const caps = powerGroup().commands.find((c) => c.name() === "capabilities")!;
+    expect(caps.description().toLowerCase()).toContain("support");
+  });
+});

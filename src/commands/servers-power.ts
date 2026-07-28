@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
 import { withCompletion } from "../client/command-meta";
-import { printMutation } from "../ui/output";
+import { globalOutput, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
 import { ApiError } from "../client/errors";
 
@@ -213,4 +213,34 @@ export function registerServersPower(program: Command, serversGroup: Command): v
     );
     withCompletion(cmd, { args: [{ slot: 0, resource: "servers" }] });
   }
+
+  const statusCmd = power
+    .command("status <idOrSlug>")
+    .description("show a server's live cloud provider power state")
+    .action(async (idOrSlug: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, idOrSlug);
+      const res = await ctx.client.post<StatusCheckResponse>(
+        `/tenants/${tid}/servers/${sid}/cloud/status`,
+      );
+      printObject(res as unknown as Record<string, unknown>, fmt);
+    });
+  withCompletion(statusCmd, { args: [{ slot: 0, resource: "servers" }] });
+
+  const capsCmd = power
+    .command("capabilities <idOrSlug>")
+    .description("list the cloud power operations this server's provider supports")
+    .action(async (idOrSlug: string) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, idOrSlug);
+      const res = await ctx.client.get<CapabilitiesResponse>(
+        `/tenants/${tid}/servers/${sid}/cloud/capabilities`,
+      );
+      printObject(res as unknown as Record<string, unknown>, fmt);
+    });
+  withCompletion(capsCmd, { args: [{ slot: 0, resource: "servers" }] });
 }
