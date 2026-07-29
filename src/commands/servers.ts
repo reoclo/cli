@@ -7,6 +7,7 @@ import type { Server } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { promptYesNo } from "../ui/prompt";
+import { registerServersPower } from "./servers-power";
 
 const SERVER_CONTAINER_STATES = ["created", "restarting", "running", "paused", "exited", "dead"];
 
@@ -231,4 +232,6 @@ export function registerServers(program: Command): void {
       }),
     { args: [{ slot: 0, resource: "servers" }] },
   );
+
+  registerServersPower(program, g);
 }
