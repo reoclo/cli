@@ -269,6 +269,37 @@ test("REOCLO_AUTOMATION_KEY exempts the org requirement even with a cached OAuth
   }
 });
 
+// Regression for the credential-bleed finding: a machine can have BOTH a cached
+// `reoclo login` OAuth profile (with a PAST access_token_expires_at) AND
+// REOCLO_AUTOMATION_KEY set. The automation key outranks the profile token in
+// the precedence chain, so it is the credential actually in use, and the
+// profile's OAuth refresh must never fire on its behalf: proactively (it would
+// swap the automation key for the cached OAuth profile's token, a different
+// and possibly cross-tenant credential) or reactively (ctx.refresh must be
+// undefined so a 401 surfaces instead of silently swapping).
+test("an automation key suppresses the OAuth profile's refresh (proactive + ctx.refresh), even past-expiry", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: "2020-01-01T00:00:00Z", // well past
+      },
+    },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_robot";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_robot");
+    expect(ctx.tokenType).toBe("automation");
+    expect(ctx.refresh).toBeUndefined();
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
   expect(defaultStreamsUrl("https://api.reoclo.com")).toBe("https://streams.reoclo.com");
   expect(defaultStreamsUrl("https://api.reoclo.com/")).toBe("https://streams.reoclo.com");

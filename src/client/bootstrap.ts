@@ -205,8 +205,15 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // org-override probe below and the final client. It refreshes + persists the
   // PROFILE's token; the final client only attaches it when we haven't minted a
   // separate org-override token (see suppressRefresh).
+  //
+  // profileRefreshCallback refreshes the PROFILE's OAuth token, so it must be
+  // suppressed when a --token / automation key is the credential actually in
+  // use (they outrank the profile token in the precedence chain above).
+  // Otherwise the proactive or reactive refresh would swap in an ambient
+  // profile's token behind the caller's back: wrong credential, possibly a
+  // different tenant.
   let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
-  if (profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
+  if (!flagToken && !envAuto && profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
     const capturedProfileName = profileName;
     const capturedProfile = profile;
     const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
