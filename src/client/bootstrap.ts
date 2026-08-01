@@ -13,6 +13,7 @@ import { resolveOrgOverride, orgSelectionError } from "../config/org-resolve";
 import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
+import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import type { Me } from "./types";
 
 /**
@@ -57,6 +58,14 @@ export interface ResolvedContext {
    * `/auth/me` themselves or use {@link requireTenantId}.
    */
   tenantId?: string;
+  /** Profile access-token expiry (ISO), when known — used by the MCP server to
+   *  schedule proactive refreshes. */
+  accessTokenExpiresAt?: string;
+  /** Refresh the PROFILE token (single-flight + locked + persisted), returning
+   *  the fresh token or null on a transient failure. Absent for non-OAuth
+   *  credentials and when an org-override token was minted (that token is fresh
+   *  and must not be refreshed back to the profile's org). */
+  refresh?: (currentToken: string) => Promise<string | null>;
 }
 
 // Canonical deployment URLs, derived from REOCLO_ROOT_DOMAIN only — NOT the
@@ -243,6 +252,17 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   let tenantId = profile?.tenant_id;
   let effectiveToken = token;
   let suppressRefresh = false;
+
+  // Proactive refresh: refresh the profile token BEFORE issuing any request (the
+  // org-override probe or the final client) when it's within the skew of
+  // expiry, so a long-idle session doesn't eat a 401 round-trip. Reuses the
+  // profile's single-flight + locked refresh (never double-spends the rotating
+  // token).
+  token = await applyProactiveRefresh(
+    token, profile?.access_token_expires_at, profileRefreshCallback, Date.now(), PROACTIVE_SKEW_MS,
+  );
+  effectiveToken = token;
+
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
@@ -323,5 +343,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token: effectiveToken,
     tokenType: detectKeyType(effectiveToken),
     tenantId,
+    accessTokenExpiresAt: profile?.access_token_expires_at,
+    refresh: suppressRefresh ? undefined : profileRefreshCallback,
   };
 }

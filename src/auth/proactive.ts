@@ -33,3 +33,21 @@ export function nextRefreshDelayMs(
   if (Number.isNaN(exp)) return skewMs;
   return Math.max(0, exp - skewMs - now);
 }
+
+/** Apply a best-effort proactive refresh: when a refresh callback exists and the
+ *  token is within the skew of expiry, refresh and return the fresh token; a null
+ *  (transient) result or no-refresh-needed returns the original token unchanged.
+ *  A thrown ReauthRequiredError propagates (same as the reactive 401 path). */
+export async function applyProactiveRefresh(
+  token: string,
+  expiresAt: string | undefined,
+  refresh: ((currentToken: string) => Promise<string | null>) | undefined,
+  now: number,
+  skewMs: number,
+): Promise<string> {
+  if (refresh && needsProactiveRefresh(expiresAt, now, skewMs)) {
+    const fresh = await refresh(token);
+    if (fresh) return fresh;
+  }
+  return token;
+}

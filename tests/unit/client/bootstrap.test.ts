@@ -305,3 +305,27 @@ test("--streams flag wins over env and defaults", async () => {
   const ctx = await bootstrap({ token: "oauth-fake", streams: "http://localhost:9001" });
   expect(ctx.streamsUrl).toBe("http://localhost:9001");
 });
+
+// Light exposure test — no refresh mocking needed. The profile's own slug is
+// passed as --org, so the Plan A org requirement is satisfied without a
+// tenant-switch probe. access_token_expires_at is comfortably in the future,
+// so the proactive refresh added in Task 3 never fires; this only asserts
+// that a refreshable oauth profile's refresh callback and expiry are exposed
+// on the resolved context for the MCP timer (Task 4) to consume.
+test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshable oauth profile", async () => {
+  const futureExpiry = new Date(Date.now() + 3_600_000).toISOString();
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: futureExpiry,
+      },
+    },
+  });
+  const ctx = await bootstrap({ org: "home" });
+  expect(typeof ctx.refresh).toBe("function");
+  expect(ctx.accessTokenExpiresAt).toBe(futureExpiry);
+});
