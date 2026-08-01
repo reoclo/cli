@@ -9,7 +9,7 @@ export function registerWhoami(program: Command): void {
     .command("whoami")
     .description("show the authenticated identity")
     .action(async () => {
-      const ctx = await bootstrap();
+      const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
       // Map the internal KeyType enum ("tenant" | "automation") to a
       // user-facing label. "tenant" is internal-only language; here it

@@ -66,7 +66,9 @@ export function registerInit(program: Command): void {
     .action(async (opts: InitOpts) => {
       // bootstrap() requires auth (throws exit 3 if not) and honors the global
       // `--org` flag, so /auth/me below reflects the org the user asked for.
-      const ctx = await bootstrap();
+      // orgRequired: false — init IS how a directory gets bound to an org, so
+      // it must run before any org selection exists.
+      const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
 

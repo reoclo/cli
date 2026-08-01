@@ -233,7 +233,7 @@ function parseCompleteArgs(args: string[]): { words: string[]; current: string }
 /** Fetch the completion index and write every slice. Returns false (with a
  *  soft notice) if the API has no /completion-index endpoint yet. */
 export async function warmCache(profile?: string): Promise<boolean> {
-  const ctx = await bootstrap({ profile });
+  const ctx = await bootstrap({ profile, orgRequired: false });
   const tid = requireTenantId(ctx);
   try {
     const slices = await fetchCompletionIndex(ctx.client, tid);

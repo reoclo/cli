@@ -66,7 +66,7 @@ if (import.meta.main) {
     )
     .option(
       "--org <slug>",
-      "run against this organization for one invocation (overrides $REOCLO_ORG and the active org)",
+      "run against this organization for one invocation (over $REOCLO_ORG and .reoclo)",
     )
     .option("--no-update-check", "do not check for a newer CLI release on this run");
 
@@ -188,7 +188,7 @@ if (import.meta.main) {
       parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
 
     // Resolve the auth context (token + key type) without making a network call.
-    const ctx = await bootstrap();
+    const ctx = await bootstrap({ orgRequired: false });
 
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;
