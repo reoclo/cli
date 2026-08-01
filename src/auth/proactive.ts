@@ -51,3 +51,57 @@ export async function applyProactiveRefresh(
   }
   return token;
 }
+
+export interface TokenRefreshLoopDeps {
+  refresh: (currentToken: string) => Promise<string | null>;
+  currentToken: () => string;
+  onToken: (token: string) => void;
+  getExpiresAt: () => Promise<string | undefined>;
+  initialExpiresAt: string | undefined;
+  skewMs: number;
+  now: () => number;
+  setTimer: (fn: () => void, ms: number) => unknown;
+  clearTimer: (handle: unknown) => void;
+}
+
+/**
+ * Keep a long-lived client's OAuth token fresh: arm a timer for `expiry - skew`,
+ * refresh (single-flight, shared with the reactive path), push the new token to
+ * the client, re-read the persisted expiry, and re-arm. Best-effort: a null or
+ * thrown refresh is swallowed and the loop re-arms from a coarse interval so a
+ * transient failure never kills the session. Returns a `stop()`.
+ */
+export function startTokenRefreshLoop(deps: TokenRefreshLoopDeps): () => void {
+  let handle: unknown;
+  let stopped = false;
+  let expiresAt = deps.initialExpiresAt;
+
+  const arm = (): void => {
+    if (stopped) return;
+    const delay = nextRefreshDelayMs(expiresAt, deps.now(), deps.skewMs);
+    // A real setTimeout-backed setTimer discards a callback's return value, so
+    // this is fire-and-forget in production exactly like `void tick()` would
+    // be. Returning tick()'s promise here (instead of voiding it) only matters
+    // to a test harness that stores and awaits the callback directly, letting
+    // it observe the full refresh-then-rearm chain deterministically.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    handle = deps.setTimer(() => tick(), delay);
+  };
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      const fresh = await deps.refresh(deps.currentToken());
+      if (fresh) deps.onToken(fresh);
+      expiresAt = await deps.getExpiresAt();
+    } catch {
+      // Best-effort: a ReauthRequiredError or transient failure must not crash
+      // the server. Leave the reactive 401 path to surface a genuine re-login.
+      expiresAt = undefined; // coarse re-check
+    }
+    arm();
+  };
+
+  arm();
+  return () => { stopped = true; deps.clearTimer(handle); };
+}
