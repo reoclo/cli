@@ -27,12 +27,14 @@ function pick(value: string | undefined): string | undefined {
   return trimmed === "" ? undefined : trimmed;
 }
 
-export type OrgSource = "flag" | "env" | "reoclo" | "active";
+// "profile" = the token's own login binding (no switchable active org exists
+// anymore); "none" = nothing selects an org for this directory.
+export type OrgSource = "flag" | "env" | "reoclo" | "profile" | "none";
 
 /**
  * Resolve the org a command will actually target AND report where that choice
  * came from, for display by `reoclo org current`. Same precedence as
- * {@link resolveOrgOverride}, with the profile's own org as the "active"
+ * {@link resolveOrgOverride}, with the profile's own org as the "profile"
  * fallback. Blank / whitespace-only overrides are treated as unset.
  */
 export function effectiveOrg(opts: {
@@ -47,5 +49,27 @@ export function effectiveOrg(opts: {
   if (env) return { org: env, source: "env" };
   const project = pick(opts.projectOrg);
   if (project) return { org: project, source: "reoclo" };
-  return { org: opts.profileOrg, source: "active" };
+  return { org: opts.profileOrg, source: "profile" };
+}
+
+/**
+ * Explicit-org policy. An OAuth profile has no implicit "active org": when a
+ * scoped command resolves no override (--org / $REOCLO_ORG / .reoclo), it must
+ * fail rather than silently target the token's login org. Automation keys and
+ * api-key profiles are single-tenant and carry their own org, so they are exempt.
+ * Returns the error to throw, or null when selection is satisfied/not required.
+ */
+export function orgSelectionError(opts: {
+  orgRequired: boolean;
+  orgOverride: string | undefined;
+  authKind: string | undefined;
+}): (Error & { exitCode: number }) | null {
+  if (opts.orgRequired && !opts.orgOverride && opts.authKind === "oauth") {
+    const err = new Error(
+      "No organization selected — pass --org <slug> or run 'reoclo init' to bind this directory.",
+    ) as Error & { exitCode: number };
+    err.exitCode = 4;
+    return err;
+  }
+  return null;
 }

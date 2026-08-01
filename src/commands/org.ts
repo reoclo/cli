@@ -92,7 +92,8 @@ export function registerOrg(program: Command): void {
         flag: "(from --org)",
         env: "(from $REOCLO_ORG)",
         reoclo: "(from .reoclo)",
-        active: null,
+        profile: null,
+        none: null,
       };
       if (process.stdout.isTTY && hint[source]) {
         process.stderr.write(`${hint[source]}\n`);

@@ -9,7 +9,7 @@ import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
-import { resolveOrgOverride } from "../config/org-resolve";
+import { resolveOrgOverride, orgSelectionError } from "../config/org-resolve";
 import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
@@ -97,6 +97,11 @@ export interface BootstrapOptions {
   token?: string; // --token
   profile?: string; // --profile
   org?: string; // --org (per-invocation organization override)
+  /** When true (default) and the credential is an OAuth profile, a command with
+   *  no resolved org override (--org / $REOCLO_ORG / .reoclo) fails with exit 4.
+   *  Identity-only callers (whoami, org ls/current, init, completion warm, the
+   *  preAction probe) pass false. */
+  orgRequired?: boolean;
   api?: string; // --api
   streams?: string; // --streams
   /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
@@ -243,6 +248,12 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     envOrg: process.env.REOCLO_ORG,
     projectOrg: projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
+  const orgErr = orgSelectionError({
+    orgRequired: opts.orgRequired ?? true,
+    orgOverride,
+    authKind: profile?.auth_kind,
+  });
+  if (orgErr) throw orgErr;
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
