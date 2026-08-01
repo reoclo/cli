@@ -47,6 +47,16 @@ export class HttpClient {
     return new HttpClient({ ...this.opts, token, refreshToken: undefined });
   }
 
+  /**
+   * Swap the bearer token used for subsequent requests, in place. Used by the
+   * proactive refresh (bootstrap start) and the MCP background refresh loop to
+   * keep a live client's token fresh without rebuilding it. Mirrors the in-place
+   * swap the 401 retry path already performs on `currentToken`.
+   */
+  updateToken(token: string): void {
+    this.currentToken = token;
+  }
+
   private url(path: string): string {
     const p = path.startsWith("/") ? path : `/${path}`;
     return this.opts.baseUrl.replace(/\/$/, "") + this.prefix + p;
