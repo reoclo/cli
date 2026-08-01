@@ -53,37 +53,51 @@ describe("resolveOrgOverride", () => {
 
 describe("effectiveOrg", () => {
   test("reports the flag as the source when set", () => {
-    expect(effectiveOrg({ flagOrg: "flagco", profileOrg: "home" })).toEqual({
+    expect(effectiveOrg({ flagOrg: "flagco" })).toEqual({
       org: "flagco",
       source: "flag",
     });
   });
 
   test("reports the env as the source when no flag", () => {
-    expect(effectiveOrg({ envOrg: "envco", profileOrg: "home" })).toEqual({
+    expect(effectiveOrg({ envOrg: "envco" })).toEqual({
       org: "envco",
       source: "env",
     });
   });
 
   test("reports .reoclo as the source when only projectOrg is set", () => {
-    expect(effectiveOrg({ projectOrg: "proj", profileOrg: "home" })).toEqual({
+    expect(effectiveOrg({ projectOrg: "proj" })).toEqual({
       org: "proj",
       source: "reoclo",
     });
   });
 
-  test("falls back to the profile org with source 'profile'", () => {
-    expect(effectiveOrg({ profileOrg: "home" })).toEqual({
-      org: "home",
-      source: "profile",
+  test("flag beats env and projectOrg", () => {
+    expect(effectiveOrg({ flagOrg: "flagco", envOrg: "envco", projectOrg: "proj" })).toEqual({
+      org: "flagco",
+      source: "flag",
     });
   });
 
-  test("blank overrides fall through to the profile org", () => {
-    expect(effectiveOrg({ flagOrg: "  ", envOrg: "", profileOrg: "home" })).toEqual({
-      org: "home",
-      source: "profile",
+  test("env beats projectOrg", () => {
+    expect(effectiveOrg({ envOrg: "envco", projectOrg: "proj" })).toEqual({
+      org: "envco",
+      source: "env",
+    });
+  });
+
+  test("reports 'none' with an empty org when nothing selects one", () => {
+    expect(effectiveOrg({})).toEqual({
+      org: "",
+      source: "none",
+    });
+  });
+
+  test("blank overrides are treated as unset, reporting 'none'", () => {
+    expect(effectiveOrg({ flagOrg: "  ", envOrg: "", projectOrg: "   " })).toEqual({
+      org: "",
+      source: "none",
     });
   });
 });

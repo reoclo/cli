@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { orgCurrentHint } from "../../../src/commands/org";
+import { orgCurrentHint, orgCurrentOutput } from "../../../src/commands/org";
 
 test("orgCurrentHint: none source explains how to select", () => {
   const hint = orgCurrentHint("none");
@@ -13,6 +13,20 @@ test("orgCurrentHint: flag/env/reoclo report their source", () => {
   expect(orgCurrentHint("reoclo")).toContain(".reoclo");
 });
 
-test("orgCurrentHint: profile binding has no hint", () => {
-  expect(orgCurrentHint("profile")).toBeNull();
+test("orgCurrentOutput: none source writes only the hint to stderr, empty stdout", () => {
+  const out = orgCurrentOutput("none", "", true);
+  expect(out.stdout).toBe("");
+  expect(out.stderr).toContain("no organization selected");
+});
+
+test("orgCurrentOutput: flag source with a TTY prints the org and the hint", () => {
+  const out = orgCurrentOutput("flag", "acme", true);
+  expect(out.stdout).toBe("acme\n");
+  expect(out.stderr).toContain("--org");
+});
+
+test("orgCurrentOutput: flag source without a TTY prints the org but no hint", () => {
+  const out = orgCurrentOutput("flag", "acme", false);
+  expect(out.stdout).toBe("acme\n");
+  expect(out.stderr).toBe("");
 });
