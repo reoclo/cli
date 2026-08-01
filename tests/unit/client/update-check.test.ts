@@ -8,6 +8,7 @@ import {
   runUpdateCheckCycle,
   shouldNotify,
   shouldRunUpdateCheck,
+  updateCheckEnabledFor,
   type UpdateCache,
 } from "../../../src/client/update-check";
 
@@ -246,5 +247,34 @@ describe("runAuthUpdateCheck", () => {
       readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
     });
     expect(emitted).toEqual([]);
+  });
+});
+
+describe("updateCheckEnabledFor", () => {
+  const opts = { updateCheck: undefined, output: "text", quiet: false };
+  const env: NodeJS.ProcessEnv = {};
+
+  test("enabled in the plain TTY + text-output case", () => {
+    expect(updateCheckEnabledFor(opts, env, true)).toBe(true);
+  });
+
+  test("disabled when updateCheck === false (--no-update-check)", () => {
+    expect(updateCheckEnabledFor({ ...opts, updateCheck: false }, env, true)).toBe(false);
+  });
+
+  test("disabled when REOCLO_NO_UPDATE_CHECK is set", () => {
+    expect(updateCheckEnabledFor(opts, { REOCLO_NO_UPDATE_CHECK: "1" }, true)).toBe(false);
+  });
+
+  test("disabled when quiet: true", () => {
+    expect(updateCheckEnabledFor({ ...opts, quiet: true }, env, true)).toBe(false);
+  });
+
+  test("disabled when stderrIsTty is false", () => {
+    expect(updateCheckEnabledFor(opts, env, false)).toBe(false);
+  });
+
+  test('disabled when output is "json"', () => {
+    expect(updateCheckEnabledFor({ ...opts, output: "json" }, env, true)).toBe(false);
   });
 });

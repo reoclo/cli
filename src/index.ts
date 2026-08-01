@@ -40,7 +40,7 @@ import { registerRun } from "./commands/run";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
-import { maybeNotifyUpdate, performUpdateCheck, shouldRunUpdateCheck } from "./client/update-check";
+import { maybeNotifyUpdate, performUpdateCheck, updateCheckEnabledFor } from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { loadConfig } from "./config/store";
@@ -213,15 +213,11 @@ if (import.meta.main) {
     // the right upgrade command, and schedules a throttled background re-check.
     // Suppressed in non-interactive / machine-output / CI contexts so it never
     // disrupts scripts or nags automation.
-    const opts = program.opts();
-    const enabled = shouldRunUpdateCheck({
-      disabledByEnv: Boolean(process.env.REOCLO_NO_UPDATE_CHECK),
-      disabledByFlag: opts.updateCheck === false,
-      isTTY: Boolean(process.stderr.isTTY),
-      outputFormat: String(opts.output ?? "text"),
-      automationKey: Boolean(process.env.REOCLO_AUTOMATION_KEY),
-      quiet: Boolean(opts.quiet),
-    });
+    const enabled = updateCheckEnabledFor(
+      program.opts(),
+      process.env,
+      Boolean(process.stderr.isTTY),
+    );
     if (enabled) maybeNotifyUpdate(VERSION);
   });
 

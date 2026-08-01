@@ -20,7 +20,7 @@ import {
   runAuthUpdateCheck,
   readUpdateCache,
   writeUpdateCache,
-  shouldRunUpdateCheck,
+  updateCheckEnabledFor,
 } from "../client/update-check";
 import { detectInstallMethod, resolveLatestVersion } from "./upgrade";
 import { VERSION } from "../index";
@@ -253,18 +253,15 @@ export function registerLogin(
 
         // Best-effort: `login` is a passthrough command, so the normal on-run
         // notice (index.ts) never fires for it. Surface it here instead, right
-        // after the login summary, using the same suppression predicate.
-        const globalOpts = program.opts();
+        // after the login summary, using the same suppression predicate (the
+        // ROOT `program`'s opts, not this leaf command's).
         await runAuthUpdateCheck({
           current: VERSION,
-          enabled: shouldRunUpdateCheck({
-            disabledByEnv: Boolean(process.env.REOCLO_NO_UPDATE_CHECK),
-            disabledByFlag: globalOpts.updateCheck === false,
-            isTTY: Boolean(process.stderr.isTTY),
-            outputFormat: String(globalOpts.output ?? "text"),
-            automationKey: Boolean(process.env.REOCLO_AUTOMATION_KEY),
-            quiet: Boolean(globalOpts.quiet),
-          }),
+          enabled: updateCheckEnabledFor(
+            program.opts(),
+            process.env,
+            Boolean(process.stderr.isTTY),
+          ),
           now: Date.now(),
           fetchLatest: () => resolveLatestVersion("stable"),
           readCache: readUpdateCache,

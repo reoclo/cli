@@ -214,6 +214,26 @@ export function shouldRunUpdateCheck(args: {
 }
 
 /**
+ * Decide whether the on-run / auth-time update notice may fire, from the root
+ * program opts + environment + stderr TTY. Single source of truth so the
+ * postAction hook and `login` can't drift apart.
+ */
+export function updateCheckEnabledFor(
+  opts: { updateCheck?: boolean; output?: unknown; quiet?: boolean },
+  env: NodeJS.ProcessEnv,
+  stderrIsTty: boolean,
+): boolean {
+  return shouldRunUpdateCheck({
+    disabledByEnv: Boolean(env.REOCLO_NO_UPDATE_CHECK),
+    disabledByFlag: opts.updateCheck === false,
+    isTTY: stderrIsTty,
+    outputFormat: String(opts.output ?? "text"),
+    automationKey: Boolean(env.REOCLO_AUTOMATION_KEY),
+    quiet: Boolean(opts.quiet),
+  });
+}
+
+/**
  * Foreground, bounded, best-effort version check for `reoclo login`. Unlike the
  * on-run notice this runs during an already-interactive+online flow, so it
  * refreshes the cache (checked_at/latest/notified_at) to keep the daily throttle
@@ -234,7 +254,7 @@ export async function runAuthUpdateCheck(deps: {
   try {
     latest = (await deps.fetchLatest()).replace(/^v/, "");
   } catch {
-    return; // best-effort — login must not fail on a version probe
+    return; // best-effort: login must not fail on a version probe
   }
   const nowIso = new Date(deps.now).toISOString();
   const cache = deps.readCache();
