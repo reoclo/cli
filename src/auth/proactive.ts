@@ -108,8 +108,15 @@ export function startTokenRefreshLoop(deps: TokenRefreshLoopDeps): () => void {
       if (fresh) {
         currentToken = fresh;
         deps.onToken(fresh);
+        expiresAt = await deps.getExpiresAt();
+      } else {
+        // Transient failure (network/5xx/429/timeout): onExpiry never ran, so
+        // getExpiresAt() would still return the same near-expiry that made
+        // this timer fire. Re-reading it would compute ~0 again and busy-spin
+        // the token endpoint for the whole outage. Back off to the coarse
+        // re-check instead, same as the thrown-error path below.
+        expiresAt = undefined;
       }
-      expiresAt = await deps.getExpiresAt();
     } catch {
       // Best-effort: a ReauthRequiredError or transient failure must not crash
       // the server. Leave the reactive 401 path to surface a genuine re-login.

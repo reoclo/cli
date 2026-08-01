@@ -95,6 +95,39 @@ test("startTokenRefreshLoop swallows a refresh that returns null and re-arms", a
   stop();
 });
 
+test("startTokenRefreshLoop backs off to skewMs on a transient (null) refresh instead of busy-spinning", async () => {
+  // Guards against re-reading an UNCHANGED near-expiry on a null (transient)
+  // refresh: onExpiry never ran, so getExpiresAt() still returns the same
+  // near expiry that made the timer fire in the first place. If the loop
+  // re-read it anyway, nextRefreshDelayMs would come back ~0 again and the
+  // loop would re-fire immediately, busy-spinning the token endpoint for the
+  // whole duration of the transient failure. It must instead back off to the
+  // coarse skewMs re-check, exactly like the thrown-error path already does.
+  const nowMs = 0;
+  const nearExpiry = new Date(nowMs + 60_000).toISOString(); // 60s out
+  const skewMs = 120_000; // within skew → due immediately (delay 0)
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const stop = startTokenRefreshLoop({
+    refresh: () => Promise.resolve(null), // transient failure: network/5xx/429/timeout
+    onToken: () => { throw new Error("should not be called on null"); },
+    getExpiresAt: () => Promise.resolve(nearExpiry), // unchanged: onExpiry never ran
+    initialToken: "t",
+    initialExpiresAt: nearExpiry,
+    skewMs,
+    now: () => nowMs,
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length - 1; },
+    clearTimer: () => {},
+  });
+
+  expect(timers.length).toBe(1);
+  expect(timers[0]!.ms).toBe(0); // due immediately, per the near expiry
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  await timers[0]!.fn();
+  expect(timers.length).toBe(2);
+  expect(timers[1]!.ms).toBe(skewMs); // backed off, NOT re-armed at ~0 again
+  stop();
+});
+
 test("startTokenRefreshLoop swallows a thrown refresh (e.g. ReauthRequiredError) and re-arms", async () => {
   const nowMs = 0;
   const timers: Array<() => void> = [];
