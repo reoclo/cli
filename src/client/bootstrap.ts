@@ -58,7 +58,7 @@ export interface ResolvedContext {
    * `/auth/me` themselves or use {@link requireTenantId}.
    */
   tenantId?: string;
-  /** Profile access-token expiry (ISO), when known — used by the MCP server to
+  /** Profile access-token expiry (ISO), when known: used by the MCP server to
    *  schedule proactive refreshes. */
   accessTokenExpiresAt?: string;
   /** Refresh the PROFILE token (single-flight + locked + persisted), returning

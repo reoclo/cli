@@ -306,7 +306,7 @@ test("--streams flag wins over env and defaults", async () => {
   expect(ctx.streamsUrl).toBe("http://localhost:9001");
 });
 
-// Light exposure test — no refresh mocking needed. The profile's own slug is
+// Light exposure test: no refresh mocking needed. The profile's own slug is
 // passed as --org, so the Plan A org requirement is satisfied without a
 // tenant-switch probe. access_token_expires_at is comfortably in the future,
 // so the proactive refresh added in Task 3 never fires; this only asserts
