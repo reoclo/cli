@@ -213,6 +213,39 @@ export function shouldRunUpdateCheck(args: {
   return true;
 }
 
+/**
+ * Foreground, bounded, best-effort version check for `reoclo login`. Unlike the
+ * on-run notice this runs during an already-interactive+online flow, so it
+ * refreshes the cache (checked_at/latest/notified_at) to keep the daily throttle
+ * coherent. Never throws: a network failure leaves login unaffected.
+ */
+export async function runAuthUpdateCheck(deps: {
+  current: string;
+  enabled: boolean;
+  now: number;
+  fetchLatest: () => Promise<string>;
+  readCache: () => UpdateCache;
+  writeCache: (c: UpdateCache) => void;
+  detectMethod: () => InstallMethod;
+  emit: (line: string) => void;
+}): Promise<void> {
+  if (!deps.enabled) return;
+  let latest: string;
+  try {
+    latest = (await deps.fetchLatest()).replace(/^v/, "");
+  } catch {
+    return; // best-effort — login must not fail on a version probe
+  }
+  const nowIso = new Date(deps.now).toISOString();
+  const cache = deps.readCache();
+  const next: UpdateCache = { ...cache, latest, checked_at: nowIso };
+  if (isNewer(deps.current, latest)) {
+    deps.emit(formatUpdateNotice(deps.current, latest, deps.detectMethod()));
+    next.notified_at = nowIso;
+  }
+  deps.writeCache(next);
+}
+
 /** The single-line notice shown on stderr when a newer version is available. */
 export function formatUpdateNotice(
   current: string,

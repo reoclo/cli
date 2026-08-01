@@ -16,6 +16,14 @@ import type { Me } from "../client/types";
 import { fetchCapabilities } from "../client/capabilities";
 import { initiateDeviceFlow, pollForToken } from "../auth/oauth-device";
 import { openBrowser } from "../ui/open-browser";
+import {
+  runAuthUpdateCheck,
+  readUpdateCache,
+  writeUpdateCache,
+  shouldRunUpdateCheck,
+} from "../client/update-check";
+import { detectInstallMethod, resolveLatestVersion } from "./upgrade";
+import { VERSION } from "../index";
 
 type ClientLike = { get: <T>(path: string) => Promise<T> };
 
@@ -241,6 +249,28 @@ export function registerLogin(
           streams: opts.streams,
           keyring: opts.keyring,
           browser: opts.browser,
+        });
+
+        // Best-effort: `login` is a passthrough command, so the normal on-run
+        // notice (index.ts) never fires for it. Surface it here instead, right
+        // after the login summary, using the same suppression predicate.
+        const globalOpts = program.opts();
+        await runAuthUpdateCheck({
+          current: VERSION,
+          enabled: shouldRunUpdateCheck({
+            disabledByEnv: Boolean(process.env.REOCLO_NO_UPDATE_CHECK),
+            disabledByFlag: globalOpts.updateCheck === false,
+            isTTY: Boolean(process.stderr.isTTY),
+            outputFormat: String(globalOpts.output ?? "text"),
+            automationKey: Boolean(process.env.REOCLO_AUTOMATION_KEY),
+            quiet: Boolean(globalOpts.quiet),
+          }),
+          now: Date.now(),
+          fetchLatest: () => resolveLatestVersion("stable"),
+          readCache: readUpdateCache,
+          writeCache: writeUpdateCache,
+          detectMethod: () => detectInstallMethod(process.execPath),
+          emit: (line) => process.stderr.write(`${line}\n`),
         });
       },
     );
