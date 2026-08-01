@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
 import { loadConfig } from "../config/store";
+import { PROJECT_CONFIG_VERSION } from "../config/project-config";
 import { installSkills } from "../init/skills";
 import { mergeMcpServer } from "../init/mcp";
 import { promptChoice, promptYesNo } from "../ui/prompt";
@@ -31,15 +32,25 @@ interface InitOpts {
  * binding silently re-resolves the slug against the active profile later (and
  * slugs like "platform" can collide across staging/prod). On the active profile
  * we write only `org`, so the project still floats with the active profile.
+ * Every binding also records the `.reoclo` schema `version`, and — when skills
+ * were installed — the `skills` block (ref/sha/installed_at) so a later `init`
+ * or `doctor` can tell whether the installed skills are stale.
  */
 export function buildProjectBinding(opts: {
   org: string;
   profileName: string;
   activeProfile: string;
-}): { profile?: string; org: string } {
-  return opts.profileName === opts.activeProfile
-    ? { org: opts.org }
-    : { profile: opts.profileName, org: opts.org };
+  skills?: { ref: string; sha?: string; installed_at?: string };
+}): {
+  profile?: string;
+  org: string;
+  version: number;
+  skills?: { ref: string; sha?: string; installed_at?: string };
+} {
+  const base = opts.profileName === opts.activeProfile
+    ? { org: opts.org, version: PROJECT_CONFIG_VERSION }
+    : { profile: opts.profileName, org: opts.org, version: PROJECT_CONFIG_VERSION };
+  return opts.skills ? { ...base, skills: opts.skills } : base;
 }
 
 /** Resolve the `--skills` / `--no-skills` option into a concrete intent. */
@@ -86,11 +97,43 @@ export function registerInit(program: Command): void {
         org = memberships[idx]?.tenant_slug ?? me.tenant_slug;
       }
 
-      // 1. Write the `.reoclo` binding. Pin the profile when the org was
+      // 1. Download skills into .claude/skills/ first, so the installed head
+      // SHA is known by the time the `.reoclo` binding is written below.
+      const { skip, requested } = parseSkillsOption(opts.skills);
+      let skillsMeta: { ref: string; sha?: string; installed_at?: string } | undefined;
+      if (skip) {
+        process.stdout.write("• skipped skills (--no-skills)\n");
+      } else {
+        const dest = join(process.cwd(), ".claude", "skills");
+        try {
+          const { installed, missing, sha } = await installSkills({ destDir: dest, requested });
+          if (installed.length > 0) {
+            process.stdout.write(`✓ installed ${installed.length} skill(s) into .claude/skills/: ${installed.join(", ")}\n`);
+          } else {
+            process.stdout.write("• no matching skills to install\n");
+          }
+          if (missing.length > 0) {
+            process.stderr.write(`  note: requested skill(s) not found: ${missing.join(", ")}\n`);
+          }
+          // sha may be null (best-effort GitHub lookup failed) — the skills
+          // block is still written, just without a sha, so a later `doctor`
+          // sees "installed" rather than a false "up to date".
+          skillsMeta = { ref: "main", sha: sha ?? undefined, installed_at: new Date().toISOString() };
+        } catch (e) {
+          process.stderr.write(`  warning: could not install skills — ${(e as Error).message}\n`);
+        }
+      }
+
+      // 2. Write the `.reoclo` binding. Pin the profile when the org was
       // resolved under a non-active profile, so the slug doesn't silently
       // re-resolve against the active profile (and a different backend) later.
       const { active_profile: activeProfile } = await loadConfig();
-      const binding = buildProjectBinding({ org, profileName: ctx.profileName, activeProfile });
+      const binding = buildProjectBinding({
+        org,
+        profileName: ctx.profileName,
+        activeProfile,
+        skills: skillsMeta,
+      });
       const onProfile = binding.profile ? ` on profile '${binding.profile}'` : "";
       const reocloPath = join(process.cwd(), ".reoclo");
       let wroteReoclo = true;
@@ -106,27 +149,6 @@ export function registerInit(program: Command): void {
       if (wroteReoclo) {
         writeFileSync(reocloPath, `${JSON.stringify(binding, null, 2)}\n`);
         process.stdout.write(`✓ linked this project to '${org}'${onProfile} (.reoclo)\n`);
-      }
-
-      // 2. Download skills into .claude/skills/.
-      const { skip, requested } = parseSkillsOption(opts.skills);
-      if (skip) {
-        process.stdout.write("• skipped skills (--no-skills)\n");
-      } else {
-        const dest = join(process.cwd(), ".claude", "skills");
-        try {
-          const { installed, missing } = await installSkills({ destDir: dest, requested });
-          if (installed.length > 0) {
-            process.stdout.write(`✓ installed ${installed.length} skill(s) into .claude/skills/: ${installed.join(", ")}\n`);
-          } else {
-            process.stdout.write("• no matching skills to install\n");
-          }
-          if (missing.length > 0) {
-            process.stderr.write(`  note: requested skill(s) not found: ${missing.join(", ")}\n`);
-          }
-        } catch (e) {
-          process.stderr.write(`  warning: could not install skills — ${(e as Error).message}\n`);
-        }
       }
 
       // 3. Optionally register the reoclo MCP server.

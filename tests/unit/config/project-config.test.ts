@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   findProjectConfigPath,
+  projectConfigOutdated,
   projectOrgFor,
+  PROJECT_CONFIG_VERSION,
   readProjectConfig,
   readProjectOrg,
 } from "../../../src/config/project-config";
@@ -198,4 +200,25 @@ describe("projectOrgFor", () => {
     expect(result).toBeUndefined();
     expect(read).toBe(false);
   });
+});
+
+test("project config parses version + skills and detects plain (unversioned) as outdated", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () => JSON.stringify({ org: "acme", skills: { ref: "main", sha: "abc" } }),
+  };
+  const cfg = readProjectConfig("/proj", fs);
+  expect(cfg?.org).toBe("acme");
+  expect(cfg?.skills?.sha).toBe("abc");
+  expect(cfg?.version).toBeUndefined();          // plain config
+  expect(projectConfigOutdated(cfg)).toBe(true); // 0 < PROJECT_CONFIG_VERSION
+});
+
+test("current project config is not outdated; null is never outdated", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () => JSON.stringify({ org: "acme", version: PROJECT_CONFIG_VERSION }),
+  };
+  expect(projectConfigOutdated(readProjectConfig("/proj", fs))).toBe(false);
+  expect(projectConfigOutdated(null)).toBe(false);
 });

@@ -24,9 +24,9 @@ describe("parseSkillsOption", () => {
 });
 
 describe("buildProjectBinding", () => {
-  test("writes only the org when resolved under the active profile", () => {
+  test("writes only the org (+ version) when resolved under the active profile", () => {
     expect(buildProjectBinding({ org: "acme", profileName: "default", activeProfile: "default" })).toEqual(
-      { org: "acme" },
+      { org: "acme", version: 1 },
     );
   });
 
@@ -36,12 +36,27 @@ describe("buildProjectBinding", () => {
     // re-resolve against the active profile later.
     expect(
       buildProjectBinding({ org: "platform", profileName: "staging", activeProfile: "default" }),
-    ).toEqual({ profile: "staging", org: "platform" });
+    ).toEqual({ profile: "staging", org: "platform", version: 1 });
   });
 
   test("orders profile before org for readability", () => {
     expect(
       Object.keys(buildProjectBinding({ org: "platform", profileName: "staging", activeProfile: "default" })),
-    ).toEqual(["profile", "org"]);
+    ).toEqual(["profile", "org", "version"]);
+  });
+
+  test("includes the skills block when skills were installed", () => {
+    expect(
+      buildProjectBinding({
+        org: "acme",
+        profileName: "default",
+        activeProfile: "default",
+        skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
+      }),
+    ).toEqual({
+      org: "acme",
+      version: 1,
+      skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
+    });
   });
 });

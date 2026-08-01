@@ -59,9 +59,15 @@ const defaultFs: ProjectConfigFs = {
   warn: (line) => process.stderr.write(line),
 };
 
+/** The `.reoclo` schema version this CLI writes. Bump when the shape of the
+ *  file changes in a way older CLI versions can't read correctly. */
+export const PROJECT_CONFIG_VERSION = 1;
+
 export interface ProjectConfig {
   org?: string;
   profile?: string;
+  version?: number;
+  skills?: { ref: string; sha?: string; installed_at?: string };
 }
 
 /** Read + validate a present `<key>` as a non-empty string. Absent → undefined;
@@ -117,7 +123,32 @@ export function readProjectConfig(
   const profile = stringField(obj, "profile", path);
   if (org !== undefined) config.org = org;
   if (profile !== undefined) config.profile = profile;
+
+  // `version` and `skills` are tolerant, forward-compat reads: an
+  // unrecognized or malformed shape is ignored rather than thrown, unlike
+  // `org`/`profile` above (those gate which backend commands run against, so
+  // they fail loud instead).
+  const version = obj.version;
+  if (typeof version === "number" && Number.isFinite(version)) config.version = version;
+  const skills = obj.skills;
+  if (skills && typeof skills === "object" && !Array.isArray(skills)) {
+    const s = skills as Record<string, unknown>;
+    if (typeof s.ref === "string" && s.ref.trim() !== "") {
+      config.skills = {
+        ref: s.ref.trim(),
+        sha: typeof s.sha === "string" ? s.sha : undefined,
+        installed_at: typeof s.installed_at === "string" ? s.installed_at : undefined,
+      };
+    }
+  }
   return config;
+}
+
+/** A present project config is "outdated" (or plain/legacy) when its version is
+ *  behind the CLI's PROJECT_CONFIG_VERSION. A missing version counts as 0. */
+export function projectConfigOutdated(cfg: ProjectConfig | null): boolean {
+  if (!cfg) return false;
+  return (cfg.version ?? 0) < PROJECT_CONFIG_VERSION;
 }
 
 /**
