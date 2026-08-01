@@ -17,6 +17,10 @@ export interface UpdateCache {
   latest?: string;
   checked_at?: string;
   notified_at?: string;
+  skills_sha?: string; // last-seen skills repo head
+  skills_checked_at?: string;
+  config_notified_at?: string;
+  skills_notified_at?: string;
 }
 
 /** Check GitHub for a newer release at most once per this window. */
@@ -120,12 +124,26 @@ export function maybeSpawnBackgroundUpdateCheck(): void {
 
 /**
  * What the hidden `__update-check` background process runs: ask GitHub for the
- * latest stable tag and cache it (preserving notified_at). Silent on failure.
+ * latest stable tag and cache it (preserving notified_at), and best-effort
+ * refresh the skills repo head so the skills advisory has a fresh target to
+ * compare against. Each probe is independently wrapped — either can fail
+ * without affecting the other — and the whole thing is silent on failure since
+ * a background worker must never surface errors.
  */
 export async function performUpdateCheck(): Promise<void> {
   try {
     const latest = (await resolveLatestVersion("stable")).replace(/^v/, "");
     writeUpdateCache({ ...readUpdateCache(), latest, checked_at: new Date().toISOString() });
+  } catch {
+    // silent — background check must never surface errors
+  }
+
+  try {
+    const { resolveSkillsHead } = await import("../init/skills");
+    const sha = await resolveSkillsHead("main");
+    if (sha) {
+      writeUpdateCache({ ...readUpdateCache(), skills_sha: sha, skills_checked_at: new Date().toISOString() });
+    }
   } catch {
     // silent — background check must never surface errors
   }
