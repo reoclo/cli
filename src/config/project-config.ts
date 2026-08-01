@@ -11,24 +11,28 @@
 // back to the profile's org — running against the wrong org is the hazard this
 // feature exists to remove.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const FILE_NAME = ".reoclo";
 
 /**
  * Walk up from `startDir` to the filesystem root, returning the path of the
- * nearest `.reoclo` file, or null when none exists. `exists` is injectable for
- * tests; it defaults to the real fs in {@link readProjectOrg}.
+ * nearest `.reoclo` REGULAR FILE, or null when none exists. A candidate that
+ * exists but isn't a regular file (e.g. the `~/.reoclo` global config
+ * directory) is silently skipped — it isn't a project binding. `exists` and
+ * `isFile` are injectable for tests; they default to the real fs in
+ * {@link readProjectOrg}.
  */
 export function findProjectConfigPath(
   startDir: string,
   exists: (path: string) => boolean,
+  isFile: (path: string) => boolean,
 ): string | null {
   let current = startDir;
   for (;;) {
     const candidate = join(current, FILE_NAME);
-    if (exists(candidate)) return candidate;
+    if (exists(candidate) && isFile(candidate)) return candidate;
     const parent = dirname(current);
     if (parent === current) return null; // reached the filesystem root
     current = parent;
@@ -37,12 +41,22 @@ export function findProjectConfigPath(
 
 export interface ProjectConfigFs {
   exists: (path: string) => boolean;
+  isFile: (path: string) => boolean;
   read: (path: string) => string;
+  warn?: (line: string) => void;
 }
 
 const defaultFs: ProjectConfigFs = {
   exists: existsSync,
+  isFile: (path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  },
   read: (path) => readFileSync(path, "utf8"),
+  warn: (line) => process.stderr.write(line),
 };
 
 export interface ProjectConfig {
@@ -72,12 +86,24 @@ export function readProjectConfig(
   startDir: string = process.cwd(),
   fs: ProjectConfigFs = defaultFs,
 ): ProjectConfig | null {
-  const path = findProjectConfigPath(startDir, fs.exists);
+  const path = findProjectConfigPath(startDir, fs.exists, fs.isFile);
   if (!path) return null;
+
+  let raw: string;
+  try {
+    raw = fs.read(path);
+  } catch (e) {
+    // Filesystem-level failure (permission / is-a-dir / IO): this is not an
+    // intentional-but-broken binding, so skip it gracefully instead of crashing.
+    (fs.warn ?? ((l) => process.stderr.write(l)))(
+      `warning: ignoring unreadable .reoclo at ${path}: ${(e as Error).message}\n`,
+    );
+    return null;
+  }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.read(path));
+    parsed = JSON.parse(raw);
   } catch (e) {
     throw new Error(`malformed ${FILE_NAME} at ${path}: ${(e as Error).message}`);
   }
