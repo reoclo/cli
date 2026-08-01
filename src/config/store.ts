@@ -31,16 +31,32 @@ export interface ProfileRecord {
 export interface ConfigFile {
   active_profile: string;
   profiles: Record<string, ProfileRecord>;
+  version?: number;
 }
 
+export const GLOBAL_CONFIG_VERSION = 1;
+
 const EMPTY: ConfigFile = { active_profile: "default", profiles: {} };
+
+/**
+ * Forward-migrate a loaded global config to the current schema. v1 rule: a
+ * missing version becomes GLOBAL_CONFIG_VERSION (a structural no-op → changed).
+ * The seam lets a future breaking schema set needsReauth for a version the CLI
+ * cannot silently migrate; v1 never sets it.
+ */
+export function migrateGlobalConfig(raw: ConfigFile): { cfg: ConfigFile; changed: boolean; needsReauth: boolean } {
+  const current = raw.version ?? 0;
+  if (current >= GLOBAL_CONFIG_VERSION) return { cfg: raw, changed: false, needsReauth: false };
+  return { cfg: { ...raw, version: GLOBAL_CONFIG_VERSION }, changed: true, needsReauth: false };
+}
 
 export function loadConfig(): Promise<ConfigFile> {
   const path = configFile();
   if (!existsSync(path)) return Promise.resolve(structuredClone(EMPTY));
   const raw = readFileSync(path, "utf8");
   try {
-    return Promise.resolve({ ...EMPTY, ...(JSON.parse(raw) as ConfigFile) });
+    const merged = { ...EMPTY, ...(JSON.parse(raw) as ConfigFile) };
+    return Promise.resolve(migrateGlobalConfig(merged).cfg);
   } catch {
     return Promise.reject(new Error(`corrupt config at ${path} — delete the file and re-run 'reoclo login'`));
   }
@@ -54,7 +70,8 @@ export function loadConfigSync(): ConfigFile {
     const path = configFile();
     if (!existsSync(path)) return structuredClone(EMPTY);
     const raw = readFileSync(path, "utf8");
-    return { ...EMPTY, ...(JSON.parse(raw) as ConfigFile) };
+    const merged = { ...EMPTY, ...(JSON.parse(raw) as ConfigFile) };
+    return migrateGlobalConfig(merged).cfg;
   } catch {
     return structuredClone(EMPTY);
   }
@@ -63,7 +80,8 @@ export function loadConfigSync(): ConfigFile {
 function writeConfig(cfg: ConfigFile): Promise<void> {
   const path = configFile();
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  const stamped: ConfigFile = { ...cfg, version: GLOBAL_CONFIG_VERSION };
+  writeFileSync(path, JSON.stringify(stamped, null, 2), { mode: 0o600 });
   if (process.platform !== "win32") chmodSync(path, 0o600);
   return Promise.resolve();
 }
