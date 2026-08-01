@@ -25,19 +25,20 @@ export function registerMcp(program: Command): void {
       // `ctx.refresh` is only set for genuine OAuth profiles (undefined for
       // --token / automation-key credentials), so this correctly no-ops for
       // those. Read the expiry fresh from config rather than trusting
-      // `ctx.accessTokenExpiresAt`: this same bootstrap() call may already have
-      // performed a proactive refresh, and the in-memory profile snapshot
-      // bootstrap captured isn't re-read — using the stale value would make the
-      // loop redundantly refresh once more right at startup.
+      // `ctx.accessTokenExpiresAt`, because this same bootstrap() call may
+      // already have performed a proactive refresh, and the in-memory profile
+      // snapshot bootstrap captured isn't re-read. Using the stale value would
+      // make the loop redundantly refresh once more right at startup.
       let stopRefresh: (() => void) | undefined;
       if (ctx.refresh) {
         const initialExpiresAt = (await loadConfig()).profiles[ctx.profileName]?.access_token_expires_at;
         stopRefresh = startTokenRefreshLoop({
           refresh: ctx.refresh,
-          // ctx.token is a bootstrap-time snapshot, not the client's live token —
-          // refreshSession's own double-check against the persisted store is
-          // authoritative, so passing this snapshot to refresh() is sufficient.
-          currentToken: () => ctx.token,
+          // ctx.token is only the bootstrap-time snapshot used to seed the
+          // loop. The loop tracks the live token itself from here on, updating
+          // it from each successful refresh, so it never drifts from what
+          // onToken pushes into the client.
+          initialToken: ctx.token,
           onToken: (t) => ctx.client.updateToken(t),
           getExpiresAt: async () => (await loadConfig()).profiles[ctx.profileName]?.access_token_expires_at,
           initialExpiresAt,
