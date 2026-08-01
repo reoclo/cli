@@ -251,7 +251,12 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const orgErr = orgSelectionError({
     orgRequired: opts.orgRequired ?? true,
     orgOverride,
-    authKind: profile?.auth_kind,
+    // `profile.auth_kind` reflects whatever profile happens to be on disk, not
+    // necessarily the credential actually in use — --token / REOCLO_AUTOMATION_KEY
+    // both outrank the profile token (see the precedence chain above). Those
+    // credentials are single-tenant on their own, so when either is set, the
+    // profile's auth_kind must not trigger the OAuth-only org requirement.
+    authKind: flagToken || envAuto ? undefined : profile?.auth_kind,
   });
   if (orgErr) throw orgErr;
   if (orgOverride && orgOverride !== profile?.tenant_slug) {

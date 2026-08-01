@@ -245,6 +245,30 @@ test("an explicit REOCLO_API_URL still wins under an automation key", async () =
   }
 });
 
+// Regression for the merge-blocker finding: a machine can have BOTH a cached
+// `reoclo login` OAuth profile AND REOCLO_AUTOMATION_KEY set. The automation
+// key outranks the profile token in the precedence chain above, so it (not
+// the profile) is the credential actually in use — and automation keys are
+// single-tenant, exempt from the "no organization selected" requirement.
+// Before the fix, orgSelectionError read profile.auth_kind directly and
+// wrongly rejected this with exit 4.
+test("REOCLO_AUTOMATION_KEY exempts the org requirement even with a cached OAuth profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" },
+    },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.tokenType).toBe("automation");
+    expect(ctx.token).toBe("rca_ciauto");
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
   expect(defaultStreamsUrl("https://api.reoclo.com")).toBe("https://streams.reoclo.com");
   expect(defaultStreamsUrl("https://api.reoclo.com/")).toBe("https://streams.reoclo.com");
