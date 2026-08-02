@@ -52,14 +52,38 @@ export function registerMonitorTools(
       name: z.string().min(1).describe("Monitor display name"),
       url: z.url().describe("URL to monitor"),
       interval: z.number().int().positive().optional().describe("Check interval in seconds (default 60)"),
+      check_path: z.string().optional().describe("Request path appended to the URL, e.g. /health (default /)"),
+      method: z
+        .enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+        .optional()
+        .describe("HTTP method (default GET)"),
+      timeout_seconds: z.number().int().positive().optional().describe("Request timeout in seconds, 1-120 (default 30)"),
+      expected_status_min: z.number().int().optional().describe("Lowest acceptable HTTP status (default 200)"),
+      expected_status_max: z.number().int().optional().describe("Highest acceptable HTTP status (default 399)"),
+      response_must_contain: z.string().optional().describe("Require this substring in the response body"),
     },
-    async ({ name, url, interval }) => {
+    async ({
+      name,
+      url,
+      interval,
+      check_path,
+      method,
+      timeout_seconds,
+      expected_status_min,
+      expected_status_max,
+      response_must_contain,
+    }) => {
       try {
-        const monitor = await ctx.client.post(`/tenants/${tenantId}/monitors`, {
-          name,
-          url,
-          ...(interval ? { interval } : {}),
-        });
+        const body: Record<string, unknown> = { name, url };
+        // API field is check_interval_seconds; sending `interval` was a no-op.
+        if (interval !== undefined) body.check_interval_seconds = interval;
+        if (check_path !== undefined) body.check_path = check_path;
+        if (method !== undefined) body.method = method;
+        if (timeout_seconds !== undefined) body.timeout_seconds = timeout_seconds;
+        if (expected_status_min !== undefined) body.expected_status_min = expected_status_min;
+        if (expected_status_max !== undefined) body.expected_status_max = expected_status_max;
+        if (response_must_contain !== undefined) body.response_must_contain = response_must_contain;
+        const monitor = await ctx.client.post(`/tenants/${tenantId}/monitors`, body);
         return asToolResult(monitor);
       } catch (error: unknown) {
         return asToolError(error);
@@ -75,13 +99,40 @@ export function registerMonitorTools(
       name: z.string().optional().describe("New display name"),
       url: z.url().optional().describe("New URL to monitor"),
       interval: z.number().int().positive().optional().describe("New check interval in seconds"),
+      check_path: z.string().optional().describe("Request path appended to the URL, e.g. /health"),
+      method: z
+        .enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+        .optional()
+        .describe("HTTP method"),
+      timeout_seconds: z.number().int().positive().optional().describe("Request timeout in seconds (1-120)"),
+      expected_status_min: z.number().int().optional().describe("Lowest acceptable HTTP status"),
+      expected_status_max: z.number().int().optional().describe("Highest acceptable HTTP status"),
+      response_must_contain: z.string().optional().describe("Require this substring in the response body"),
     },
-    async ({ monitor_id, name, url, interval }) => {
+    async ({
+      monitor_id,
+      name,
+      url,
+      interval,
+      check_path,
+      method,
+      timeout_seconds,
+      expected_status_min,
+      expected_status_max,
+      response_must_contain,
+    }) => {
       try {
         const body: Record<string, unknown> = {};
-        if (name) body["name"] = name;
-        if (url) body["url"] = url;
-        if (interval) body["interval"] = interval;
+        if (name !== undefined) body.name = name;
+        if (url !== undefined) body.url = url;
+        // API field is check_interval_seconds; sending `interval` was a no-op.
+        if (interval !== undefined) body.check_interval_seconds = interval;
+        if (check_path !== undefined) body.check_path = check_path;
+        if (method !== undefined) body.method = method;
+        if (timeout_seconds !== undefined) body.timeout_seconds = timeout_seconds;
+        if (expected_status_min !== undefined) body.expected_status_min = expected_status_min;
+        if (expected_status_max !== undefined) body.expected_status_max = expected_status_max;
+        if (response_must_contain !== undefined) body.response_must_contain = response_must_contain;
         const updated = await ctx.client.patch(
           `/tenants/${tenantId}/monitors/${monitor_id}`,
           body,

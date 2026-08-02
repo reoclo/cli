@@ -55,10 +55,14 @@ export function buildSource(flags: ImportFlags, deps: BitwardenDeps): SecretSour
 
 export async function readSecretValue(
   opts: { value?: string; fromFile?: string },
-  stdin: string | null,
+  readStdin: () => Promise<string | null>,
 ): Promise<string> {
   if (opts.value !== undefined) return opts.value;
   if (opts.fromFile) return (await readFile(opts.fromFile, "utf8")).replace(/\n$/, "");
+  // Read stdin lazily, and only as the last resort. Draining it before the
+  // --from-file branch exhausts the pipe, so `--from-file /dev/stdin` would
+  // then read empty and the API rejects it as string_too_short (REO-97 §4a).
+  const stdin = await readStdin();
   if (stdin !== null) return stdin.replace(/\n$/, "");
   const msg = "no secret value: pass --value, --from-file, or pipe via stdin";
   throw new Error(msg);
@@ -115,7 +119,7 @@ export function registerSecrets(program: Command): void {
   requireCapability(
     g
       .command("get <key>")
-      .description("reveal a secret value")
+      .description("reveal a secret value (prints the raw value, not JSON; ignores -o)")
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();
@@ -144,8 +148,12 @@ export function registerSecrets(program: Command): void {
           const ctx = await bootstrap();
           const tid = requireTenantId(ctx);
           const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
-          const stdin = process.stdin.isTTY ? null : await Bun.stdin.text();
-          const value = await readSecretValue(opts, stdin);
+          // Pass stdin as a lazy reader so it is consumed only when neither
+          // --value nor --from-file was given; otherwise `--from-file /dev/stdin`
+          // reads an already-exhausted pipe (REO-97 §4a).
+          const value = await readSecretValue(opts, () =>
+            process.stdin.isTTY ? Promise.resolve(null) : Bun.stdin.text(),
+          );
           const existing = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
           if (existing) {
             await patchSecret(ctx.client, tid, existing.id, value);

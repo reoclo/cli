@@ -22,21 +22,44 @@ describe("resolveProjectId", () => {
 });
 
 describe("readSecretValue", () => {
+  // A stdin reader that records whether it was consumed. `--from-file` and
+  // `--value` must never drain stdin — draining a pipe eagerly is the REO-97
+  // §4a bug (`--from-file /dev/stdin` then reads empty).
+  const countingReader = (value: string | null) => {
+    let calls = 0;
+    return {
+      read: () => {
+        calls += 1;
+        return Promise.resolve(value);
+      },
+      calls: () => calls,
+    };
+  };
+
   test("prefers --value", async () => {
-    expect(await readSecretValue({ value: "v" }, "ignored")).toBe("v");
+    const stdin = countingReader("ignored");
+    expect(await readSecretValue({ value: "v" }, stdin.read)).toBe("v");
+    expect(stdin.calls()).toBe(0);
   });
+
   test("falls back to stdin", async () => {
-    expect(await readSecretValue({}, "from-stdin\n")).toBe("from-stdin");
+    expect(await readSecretValue({}, () => Promise.resolve("from-stdin\n"))).toBe("from-stdin");
   });
-  test("reads --from-file and strips a trailing newline (over stdin)", async () => {
+
+  test("reads --from-file and strips a trailing newline", async () => {
     const path = `/tmp/reoclo-secret-fromfile-${process.pid}.txt`;
     await Bun.write(path, "s3cret\n");
-    expect(await readSecretValue({ fromFile: path }, "ignored-stdin")).toBe("s3cret");
+    const stdin = countingReader("ignored-stdin");
+    expect(await readSecretValue({ fromFile: path }, stdin.read)).toBe("s3cret");
+    // Regression: stdin must not be touched when --from-file is set, or a
+    // `--from-file /dev/stdin` pipe is drained before the file read.
+    expect(stdin.calls()).toBe(0);
   });
+
   test("throws when no source", async () => {
     let err: unknown;
     try {
-      await readSecretValue({}, null);
+      await readSecretValue({}, () => Promise.resolve(null));
     } catch (e) {
       err = e;
     }

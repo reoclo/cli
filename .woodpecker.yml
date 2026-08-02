@@ -19,6 +19,44 @@
 # idempotent: an unchanged formula is detected by content compare and skipped.
 
 steps:
+  # Enforce a version bump on every PR into main (REO-85). A merge that forgets
+  # to bump package.json leaves a released tag and main holding different code —
+  # the released binary silently lacks the fix while the ticket reads as shipped.
+  # Defensive by design: only a *confirmed* same-version fails the build; any
+  # infrastructure hiccup (can't fetch the target branch, can't read its
+  # package.json) degrades to a skip, and the release-time tag guard in
+  # scripts/release.sh is the backstop. Bypass with [no-release] in a commit
+  # message for docs-only / non-releasing PRs.
+  - name: version-bump
+    image: oven/bun:1.3.11-slim
+    when:
+      - event: pull_request
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends git jq ca-certificates
+      - |
+        set -e
+        target="${CI_COMMIT_TARGET_BRANCH:-main}"
+        if ! git fetch --no-tags --depth=50 origin "$target" 2>/dev/null; then
+          echo "version-bump: could not fetch origin/$target — skipping (release tag guard still enforces)"; exit 0
+        fi
+        new="$(jq -r '.version' package.json)"
+        base="$(git show FETCH_HEAD:package.json 2>/dev/null | jq -r '.version' 2>/dev/null || true)"
+        if [ -z "$base" ] || [ "$base" = "null" ]; then
+          echo "version-bump: could not read $target package.json — skipping"; exit 0
+        fi
+        echo "package.json version — PR head: $new   $target: $base"
+        if git log --format='%B' FETCH_HEAD..HEAD 2>/dev/null | grep -qiE '\[(no-release|skip-version)\]'; then
+          echo "version-bump: skipped via [no-release] marker"; exit 0
+        fi
+        if [ "$new" = "$base" ]; then
+          echo "ERROR: package.json version is unchanged from $target ($base)." >&2
+          echo "Bump it in this PR (fix -> patch, feat -> minor) so a release tag can never hold different code than $target." >&2
+          echo "For a docs-only / non-releasing change, add [no-release] to a commit message." >&2
+          exit 1
+        fi
+        echo "version-bump: OK ($base -> $new)"
+
   # CI on pull requests + main pushes: the same gate the release runs (per-file
   # unit loop + typecheck + build), minus the publish scripts. Catches breakage
   # (e.g. a bash-ism in packaging/install.sh) before it reaches a release tag.

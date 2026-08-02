@@ -389,25 +389,22 @@ export function registerAlerts(program: Command): void {
 
   routing
     .command("set")
-    .description("replace alert routing configuration from a YAML/JSON file")
-    .requiredOption("--from-file <path>", "path to routing YAML or JSON file")
+    .description("replace alert routing configuration from a JSON or YAML file")
+    .requiredOption("--from-file <path>", "path to a routing JSON or YAML file")
     .action(async (opts: { fromFile: string }) => {
       const fs = await import("node:fs/promises");
       const raw = await fs.readFile(opts.fromFile, "utf8");
+      // js-yaml's `load` parses both YAML and JSON (YAML 1.2 is a JSON
+      // superset), matching `channels create --from-file`. The file extension
+      // is not significant; the contents are parsed as YAML/JSON.
+      const { load } = await import("js-yaml");
       let body: Record<string, unknown>;
-      if (opts.fromFile.endsWith(".json")) {
-        body = JSON.parse(raw) as Record<string, unknown>;
-      } else {
-        // Basic YAML → JSON via the built-in parser isn't available; use JSON
-        // if the content parses as JSON, otherwise let the server validate.
-        try {
-          body = JSON.parse(raw) as Record<string, unknown>;
-        } catch {
-          process.stderr.write(
-            "Error: only JSON files are supported for --from-file (YAML support requires a YAML library)\n",
-          );
-          process.exit(1);
-        }
+      try {
+        body = load(raw) as Record<string, unknown>;
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        process.stderr.write(`Error: --from-file could not parse ${opts.fromFile}: ${detail}\n`);
+        process.exit(1);
       }
       const ctx = await bootstrap();
       const tid = requireTenantId(ctx);
