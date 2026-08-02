@@ -119,7 +119,7 @@ export function registerSecrets(program: Command): void {
   requireCapability(
     g
       .command("get <key>")
-      .description("reveal a secret value")
+      .description("reveal a secret value (prints the raw value, not JSON; ignores -o)")
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();

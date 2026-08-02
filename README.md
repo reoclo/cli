@@ -144,11 +144,17 @@ Tunnels survive transient runner reconnects: if the runner disconnects briefly, 
 
 ## Output formats
 
-Every command honours `-o text|json|yaml`. Pipe `json` into `jq` for scripting, or `yaml` for human-readable nested output:
+Most commands honour `-o text|json|yaml`. Pipe `json` into `jq` for scripting, or `yaml` for human-readable nested output.
+
+Two things to know when scripting:
+
+- **List commands emit one JSON object per line (NDJSON), not a JSON array.** Filter each line directly — `jq -r '.field'` — not `jq '.[]'`, which yields nothing.
+- **`secrets get` always prints the bare secret value** with no formatting (so it composes with `$(...)` and pipes); it does not honour `-o`.
 
 ```bash
-reoclo servers ls -o json | jq '.[] | select(.status=="active") | .name'
+reoclo servers ls -o json | jq -r 'select(.status == "active") | .name'
 reoclo apps ls -o yaml
+VALUE=$(reoclo secrets get DB_PASSWORD --project prod)   # the raw value, not JSON
 ```
 
 ## Profiles
