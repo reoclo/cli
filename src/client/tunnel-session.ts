@@ -655,10 +655,13 @@ export class TunnelSession {
     }
     if (msg.type === "token_renew_error") {
       // The gateway rejected the renewed token. Do not crash and do not
-      // drop the WS ourselves — the current token may still be good for a
-      // while; if it truly expires the gateway will close with 4401 and the
-      // fatal-close path takes over.
-      this.status("reconnecting", "token renewal rejected");
+      // drop the WS ourselves here. Per gateway-ws, a token_renew_error is
+      // immediately followed by the gateway closing the socket with 4401
+      // (a FATAL close, see FATAL_CLOSE_CODES above), so onWsClose sets the
+      // real "failed" status right after this. Calling status("reconnecting")
+      // here would be misleading, since nothing actually reconnects. Surface
+      // the cause as a plain warning instead of claiming a status.
+      process.stderr.write("tunnel: token renewal rejected by the server\n");
       return;
     }
 

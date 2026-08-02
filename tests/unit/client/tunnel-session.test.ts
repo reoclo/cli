@@ -1022,7 +1022,7 @@ describe("TunnelSession — proactive token renewal", () => {
     await session.stop();
   });
 
-  it("token_renew_error surfaces via onStatus without crashing the session", async () => {
+  it("token_renew_error does not claim 'reconnecting' and does not crash the session", async () => {
     gw = await startMockGateway();
     const statuses: { s: string; reason?: string }[] = [];
     const session = new TunnelSession({
@@ -1031,13 +1031,29 @@ describe("TunnelSession — proactive token renewal", () => {
       onStatus: (s, reason) => statuses.push({ s, reason }),
     });
     await session.start();
+    const statusesBeforeError = [...statuses];
 
-    gw.sendToCli({ type: "token_renew_error", message: "x" });
-    await new Promise((r) => setTimeout(r, 50));
+    const stderrChunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (chunk: string) => {
+      stderrChunks.push(chunk);
+      return true;
+    };
+    try {
+      gw.sendToCli({ type: "token_renew_error", message: "x" });
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.stderr.write = origWrite;
+    }
 
-    expect(
-      statuses.some((x) => x.s === "reconnecting" && x.reason === "token renewal rejected"),
-    ).toBe(true);
+    // No status transition — in particular, must NOT claim "reconnecting"
+    // (per gateway-ws, a token_renew_error is immediately followed by a
+    // fatal 4401 close, so nothing actually reconnects).
+    expect(statuses).toEqual(statusesBeforeError);
+    expect(statuses.some((x) => x.s === "reconnecting")).toBe(false);
+
+    // The cause is surfaced as a plain stderr warning instead.
+    expect(stderrChunks.some((c) => c.includes("token renewal rejected"))).toBe(true);
 
     // The session must still be usable — no crash, WS stays open.
     expect(gw.received.some((m: object) => (m as { type?: string }).type === "close")).toBe(false);
