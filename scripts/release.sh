@@ -26,6 +26,18 @@ TAG="${CI_COMMIT_TAG:?CI_COMMIT_TAG must be set (this script must run on a tag e
 NAME="$TAG"
 BODY="Release $TAG"
 
+# Version guard (REO-85): the tag must equal `v$(package.json version)` on the
+# tagged commit, so a published binary can never disagree with the version it
+# reports. A tag that ran ahead of (or behind) the bump fails here, loudly,
+# before anything is published.
+PKG_VERSION="$(jq -r '.version' package.json)"
+if [ "$TAG" != "v$PKG_VERSION" ]; then
+  echo "ERROR: tag $TAG does not match package.json version (v$PKG_VERSION)." >&2
+  echo "Re-tag as v$PKG_VERSION, or bump package.json to match the tag, then re-run." >&2
+  exit 1
+fi
+echo "==> Version guard OK: $TAG matches package.json (v$PKG_VERSION)"
+
 ASSETS=(
   "dist/SHA256SUMS"
   "dist/reoclo-darwin-arm64"
