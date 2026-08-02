@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { EXIT } from "../client/exit-codes";
 import { resolveServer } from "../client/resolve";
 import { withCompletion } from "../client/command-meta";
+import { RENEW_SUBPROTOCOL } from "../auth/renew";
 
 export const SUBPROTOCOL_VERSION = "v1";
 
@@ -29,6 +30,11 @@ export function shellCloseToExit(
       return { exitCode: null, message: null };
     case 4001:
       return { exitCode: EXIT.AUTH, message: `[authentication failed: ${reason}]` };
+    case 4402:
+      return {
+        exitCode: EXIT.AUTH,
+        message: "[session credential expired: run 'reoclo login']",
+      };
     case 4403:
       // DENIED, not AUTH: authenticated, but not permitted. Mirrors HTTP 403.
       return { exitCode: EXIT.DENIED, message: `[forbidden: ${reason}]` };
@@ -45,6 +51,36 @@ export function shellCloseToExit(
         exitCode: current === 0 ? EXIT.GENERIC : null,
         message: `[connection closed: ${code} ${reason}]`,
       };
+  }
+}
+
+export type ShellFrameAction =
+  | { action: "exit"; code: number }
+  | { action: "error"; message: string }
+  | { action: "none" };
+
+/**
+ * Pure control-frame decision for the shell WS. Mutates state.token on a
+ * token_renew (adopted for any future reconnect).
+ *
+ * Extracted from the ws `message` handler so it can be tested: the decision
+ * (what a frame means) is pure; the effects it drives (closing the socket,
+ * writing to stderr) stay imperative in the caller.
+ */
+export function handleShellControlFrame(
+  msg: { type?: string; exit_code?: number; message?: string; token?: string; expires_at?: string },
+  state: { token: string },
+): ShellFrameAction {
+  switch (msg.type) {
+    case "exited":
+      return { action: "exit", code: msg.exit_code ?? 0 };
+    case "error":
+      return { action: "error", message: msg.message ?? "unknown" };
+    case "token_renew":
+      if (typeof msg.token === "string") state.token = msg.token;
+      return { action: "none" };
+    default:
+      return { action: "none" }; // ready + unknown are informational
   }
 }
 
@@ -121,8 +157,16 @@ export function registerShell(program: Command): void {
         const wsUrl = buildShellWsUrl(ctx.streamsUrl, serverId);
         const subprotocol = buildShellSubprotocol(ctx.token);
 
+        // Mutable connection state the message handler can update in place.
+        // Adopting a renewed token here doesn't affect this session (the
+        // shell doesn't reconnect mid-session today), but keeps the token
+        // current for whatever comes next.
+        const connState = { token: ctx.token };
+
         // Bun and modern Node both expose the browser WebSocket global.
-        const ws = new WebSocket(wsUrl, [subprotocol]);
+        // Advertise reoclo.renew.v1 alongside the auth subprotocol so the
+        // gateway knows this client can adopt a token_renew control frame.
+        const ws = new WebSocket(wsUrl, [subprotocol, RENEW_SUBPROTOCOL]);
         ws.binaryType = "arraybuffer";
 
         let cleanedUp = false;
@@ -177,20 +221,28 @@ export function registerShell(program: Command): void {
         ws.addEventListener("message", (event: MessageEvent) => {
           const data = event.data as string | ArrayBuffer | Uint8Array | Blob;
           if (typeof data === "string") {
-            // JSON control frame: {"type":"ready"} or {"type":"exited","exit_code":N}
+            // JSON control frame: {"type":"ready"}, {"type":"exited","exit_code":N},
+            // {"type":"error","message":...}, or {"type":"token_renew","token":...}
             try {
               const msg = JSON.parse(data) as {
                 type?: string;
                 exit_code?: number;
                 message?: string;
+                token?: string;
+                expires_at?: string;
               };
-              if (msg.type === "exited") {
-                closeAndExit(msg.exit_code ?? 0);
-              } else if (msg.type === "error") {
-                process.stderr.write(`\n[server error: ${msg.message ?? "unknown"}]\n`);
-                closeAndExit(1);
+              const decision = handleShellControlFrame(msg, connState);
+              switch (decision.action) {
+                case "exit":
+                  closeAndExit(decision.code);
+                  break;
+                case "error":
+                  process.stderr.write(`\n[server error: ${decision.message}]\n`);
+                  closeAndExit(1);
+                  break;
+                case "none":
+                  break;
               }
-              // 'ready' is informational; nothing to do.
             } catch {
               // ignore unparseable control frames
             }
