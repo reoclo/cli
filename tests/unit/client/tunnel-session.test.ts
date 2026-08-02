@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, spyOn } from "bun:test";
 import net from "node:net";
 import dgram from "node:dgram";
 import { WebSocketServer } from "ws";
@@ -20,6 +20,10 @@ interface MockGateway {
   sendToCli: (msg: object) => void;
   /** Called for every frame received from the CLI (optional override) */
   onClientFrame?: (msg: Record<string, unknown>) => void;
+  /** Upgrade-request headers captured for every WS connection, in order (index 0 = first
+   *  connect, index 1 = first reconnect, etc.) — lets reconnect tests assert on the token
+   *  the CLI presented on THAT specific connection. */
+  upgradeHeaders: Record<string, string | string[] | undefined>[];
 }
 
 interface MockGatewayOpts {
@@ -31,10 +35,12 @@ interface MockGatewayOpts {
 async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway> {
   const wss = new WebSocketServer({ port: 0 });
   const received: object[] = [];
+  const upgradeHeaders: Record<string, string | string[] | undefined>[] = [];
   let activeWs: WebSocket | null = null;
   let onClientFrame: ((msg: Record<string, unknown>) => void) | undefined;
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    upgradeHeaders.push(req.headers);
     activeWs = ws;
     ws.on("error", () => { /* swallow errors on forced close */ });
     ws.on("message", (raw) => {
@@ -67,6 +73,7 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
   const gw: MockGateway = {
     url: `ws://127.0.0.1:${port}`,
     received,
+    upgradeHeaders,
     sendToCli: (msg) => activeWs?.send(JSON.stringify(msg)),
     dropConnections: () => {
       for (const client of wss.clients) {
@@ -84,23 +91,40 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
       }
     },
     stop: () =>
-      new Promise((r) => {
+      new Promise<void>((r) => {
         for (const client of wss.clients) {
           (client as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
         }
-        // Bun v1.3.11: wss.close() does not fire its callback when clients=0.
-        // Work around by resolving immediately when there are no active clients.
-        if (wss.clients.size === 0) {
-          wss.close();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
           r();
-        } else {
-          wss.close(() => r());
-        }
+        };
+        // Bun v1.3.11: wss.close()'s callback is unreliable — it can fail to
+        // fire when clients=0, and also in a race where a just-destroyed
+        // client (e.g. from a completed reconnect test) hasn't yet been
+        // pruned from wss.clients. Race it against a short timeout so a
+        // flaky callback never wedges a test's afterEach.
+        const timer = setTimeout(finish, 300);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        wss.close(() => {
+          clearTimeout(timer);
+          finish();
+        });
       }),
     get onClientFrame() { return onClientFrame; },
     set onClientFrame(fn) { onClientFrame = fn; },
   };
   return gw;
+}
+
+/** Build a syntactically-valid (unsigned) JWT carrying only an `exp` claim,
+ *  so jwtExp() can decode it for the renewal-timer tests. */
+function makeJwt(expSeconds: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ exp: expSeconds })).toString("base64url");
+  return `${header}.${payload}.sig`;
 }
 
 describe("TunnelSession — forward TCP", () => {
@@ -755,5 +779,285 @@ describe("TunnelSession — fatal close codes", () => {
 
     await session.stop();
     await gw.stop();
+  });
+});
+
+describe("TunnelSession — updateToken", () => {
+  it("changes the token used on the NEXT (reconnect) connection", async () => {
+    const gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      forwards: [
+        { localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" },
+      ],
+      reconnectDeadlineMs: 10_000,
+    });
+    await session.start();
+    expect(gw.upgradeHeaders[0]?.authorization).toBe("Bearer t1");
+
+    session.updateToken("t2");
+
+    // 4408 is NOT in FATAL_CLOSE_CODES → retryable, so the CLI reconnects.
+    gw.closeActiveConnection(4408, "idle timeout");
+
+    // Wait for the reconnect's upgrade request to land (BACKOFF_BASE_MS = 500ms).
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && gw.upgradeHeaders.length < 2) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    expect(gw.upgradeHeaders.length).toBeGreaterThanOrEqual(2);
+    expect(gw.upgradeHeaders[1]?.authorization).toBe("Bearer t2");
+
+    await session.stop();
+    await gw.stop();
+  });
+});
+
+describe("TunnelSession — proactive token renewal", () => {
+  let gw: MockGateway;
+  afterEach(async () => { await gw?.stop(); });
+
+  it("renewNow() refreshes, adopts the token, and sends token_renew upstream", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      refresh: (_currentToken: string) => Promise.resolve("t2"),
+    });
+    await session.start();
+
+    await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+
+    // ws.send() writes to the socket asynchronously; wait for the frame to
+    // actually land at the mock gateway rather than asserting immediately.
+    const deadline = Date.now() + 1000;
+    while (
+      Date.now() < deadline &&
+      !gw.received.some((m: object) => (m as { type?: string }).type === "token_renew")
+    ) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    expect(gw.received).toContainEqual({ type: "token_renew", token: "t2" });
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t2");
+
+    await session.stop();
+  });
+
+  it("renewNow() with a null refresh result does not send a frame or change the token", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      refresh: (_currentToken: string) => Promise.resolve(null),
+    });
+    await session.start();
+
+    await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+
+    expect(
+      gw.received.some((m: object) => (m as { type?: string }).type === "token_renew"),
+    ).toBe(false);
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t1");
+
+    await session.stop();
+  });
+
+  it("renewNow() calls refresh with the session's CURRENT token on every cycle (multi-cycle rotation)", async () => {
+    // Regression test for the Plan C Critical: wiring that pins a snapshot of
+    // the token taken once at construction (e.g. `() => ctx.refresh!(ctx.token)`
+    // in src/commands/tunnel.ts) means cycle 2+ calls refresh with the SAME
+    // stale token forever, even though the session's live token has already
+    // rotated. refreshSession()'s double-check (src/auth/refresh.ts) mints a
+    // new token only while the stored token still equals the argument it was
+    // called with, so a pinned argument makes every renewal after the first
+    // short-circuit: no new mint, no exp advance, and (via the re-arm floor
+    // added in this same fix) would otherwise busy-spin.
+    //
+    // TunnelSession itself must thread `this.opts.token` — the session's own
+    // live, continuously-updated token — into `refresh()` on every call. This
+    // fails against the pre-fix renewNow(), which called `this.opts.refresh()`
+    // with no argument at all.
+    gw = await startMockGateway();
+    const calledWith: string[] = [];
+    const nextTokens = ["t1", "t2", "t3"];
+    let call = 0;
+    const refresh = (currentToken: string): Promise<string | null> => {
+      calledWith.push(currentToken);
+      return Promise.resolve(nextTokens[call++] ?? null);
+    };
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t0",
+      refresh,
+    });
+    await session.start();
+
+    const renewNow = (session as unknown as { renewNow: () => Promise<void> }).renewNow.bind(
+      session,
+    );
+
+    await renewNow(); // cycle 1: session token is "t0" → refresh("t0") → adopts "t1"
+    await renewNow(); // cycle 2: session token is now "t1" → refresh("t1") → adopts "t2"
+
+    // Cycle 2 MUST be called with "t1" (the live, rotated token) — NOT "t0"
+    // again. A pinned-token wiring would record ["t0", "t0"] here.
+    expect(calledWith).toEqual(["t0", "t1"]);
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t2");
+
+    await session.stop();
+  });
+
+  it("re-arm floor: a null refresh result re-arms at the coarse skew backoff, not ~0ms", async () => {
+    // Safety net for the same bug class as the multi-cycle test above: if a
+    // renewal ever fails to advance the token's exp while the token is still
+    // inside the skew window, re-arming from the normal computed delay would
+    // read the same (still near-expiry) exp and yield ~0ms — a busy-spin.
+    // Seed a token that's ALREADY inside the skew window (well under
+    // RENEW_SKEW_SECONDS=120s out) so the un-floored computation would fire
+    // ~immediately; the floor must override that with the coarse backoff.
+    gw = await startMockGateway();
+    const nearExpirySeconds = Math.floor(Date.now() / 1000) + 5;
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: makeJwt(nearExpirySeconds),
+      refresh: (_currentToken: string) => Promise.resolve(null),
+    });
+    await session.start();
+
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    try {
+      await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+    } finally {
+      // The re-arm inside renewNow()'s finally block is the LAST setTimeout
+      // call made during this synchronous-after-await window.
+      const lastCall = setTimeoutSpy.mock.calls.at(-1);
+      setTimeoutSpy.mockRestore();
+      expect(lastCall).toBeDefined();
+      const delayMs = lastCall![1] as number;
+      // Must be the coarse RENEW_SKEW_SECONDS floor (120_000ms), not the ~0ms
+      // a naive re-computation off the still-near-expiry token would produce.
+      expect(delayMs).toBeGreaterThan(60_000);
+    }
+
+    await session.stop();
+  });
+
+  it("re-arm floor: a refreshed token whose exp did NOT advance re-arms at the coarse skew backoff", async () => {
+    gw = await startMockGateway();
+    const nearExpirySeconds = Math.floor(Date.now() / 1000) + 5;
+    const staleToken = makeJwt(nearExpirySeconds);
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: staleToken,
+      // Simulates refreshSession()'s double-check short-circuit: returns a
+      // token whose exp is identical to (did not advance past) the previous one.
+      refresh: (_currentToken: string) => Promise.resolve(staleToken),
+    });
+    await session.start();
+
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    try {
+      await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+    } finally {
+      const lastCall = setTimeoutSpy.mock.calls.at(-1);
+      setTimeoutSpy.mockRestore();
+      expect(lastCall).toBeDefined();
+      const delayMs = lastCall![1] as number;
+      expect(delayMs).toBeGreaterThan(60_000);
+    }
+
+    await session.stop();
+  });
+
+  it("arms a renewal timer on connect when refresh is set, and stop() clears it", async () => {
+    gw = await startMockGateway();
+    const farExpirySeconds = Math.floor(Date.now() / 1000) + 3600; // 1 hour out
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: makeJwt(farExpirySeconds),
+      refresh: () => Promise.resolve("t2"),
+    });
+    await session.start();
+
+    const internal = session as unknown as { renewTimer?: ReturnType<typeof setTimeout> };
+    expect(internal.renewTimer).toBeDefined();
+
+    await session.stop();
+    expect(internal.renewTimer).toBeUndefined();
+  });
+
+  it("does not arm a renewal timer when refresh is not supplied", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+    });
+    await session.start();
+
+    const internal = session as unknown as { renewTimer?: ReturnType<typeof setTimeout> };
+    expect(internal.renewTimer).toBeUndefined();
+
+    await session.stop();
+  });
+
+  it("token_renew_ack is a no-op — no status change, no throw", async () => {
+    gw = await startMockGateway();
+    const statuses: string[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s) => statuses.push(s),
+    });
+    await session.start();
+    const statusesBeforeAck = [...statuses];
+
+    gw.sendToCli({ type: "token_renew_ack" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(statuses).toEqual(statusesBeforeAck);
+
+    await session.stop();
+  });
+
+  it("token_renew_error does not claim 'reconnecting' and does not crash the session", async () => {
+    gw = await startMockGateway();
+    const statuses: { s: string; reason?: string }[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s, reason) => statuses.push({ s, reason }),
+    });
+    await session.start();
+    const statusesBeforeError = [...statuses];
+
+    const stderrChunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = (chunk: string) => {
+      stderrChunks.push(chunk);
+      return true;
+    };
+    try {
+      gw.sendToCli({ type: "token_renew_error", message: "x" });
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.stderr.write = origWrite;
+    }
+
+    // No status transition — in particular, must NOT claim "reconnecting"
+    // (per gateway-ws, a token_renew_error is immediately followed by a
+    // fatal 4401 close, so nothing actually reconnects).
+    expect(statuses).toEqual(statusesBeforeError);
+    expect(statuses.some((x) => x.s === "reconnecting")).toBe(false);
+
+    // The cause is surfaced as a plain stderr warning instead.
+    expect(stderrChunks.some((c) => c.includes("token renewal rejected"))).toBe(true);
+
+    // The session must still be usable — no crash, WS stays open.
+    expect(gw.received.some((m: object) => (m as { type?: string }).type === "close")).toBe(false);
+
+    await session.stop();
   });
 });

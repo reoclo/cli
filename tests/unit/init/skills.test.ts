@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installSkills, selectSkills, skillsTarballUrl } from "../../../src/init/skills";
+import { installSkills, resolveSkillsHead, selectSkills, skillsTarballUrl } from "../../../src/init/skills";
 
 /** Build a codeload-style tarball (single top-level dir) and return its bytes. */
 function buildSkillsTarball(): Buffer {
@@ -90,4 +90,16 @@ describe("installSkills", () => {
     const dest = join(mkdtempSync(join(tmpdir(), "dest-")), ".claude", "skills");
     await expect(installSkills({ destDir: dest, fetchImpl: failing })).rejects.toThrow(/404/);
   });
+});
+
+test("resolveSkillsHead returns the branch head sha", async () => {
+  const fetchImpl = (async () => new Response(JSON.stringify({ sha: "deadbeef" }), {
+    status: 200, headers: { "content-type": "application/json" },
+  })) as unknown as typeof fetch;
+  expect(await resolveSkillsHead("main", fetchImpl)).toBe("deadbeef");
+});
+
+test("resolveSkillsHead returns null on non-ok / rate-limit (no throw)", async () => {
+  const fetchImpl = (async () => new Response("rate limited", { status: 403 })) as unknown as typeof fetch;
+  expect(await resolveSkillsHead("main", fetchImpl)).toBeNull();
 });

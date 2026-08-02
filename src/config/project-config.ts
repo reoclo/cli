@@ -11,24 +11,28 @@
 // back to the profile's org — running against the wrong org is the hazard this
 // feature exists to remove.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const FILE_NAME = ".reoclo";
 
 /**
  * Walk up from `startDir` to the filesystem root, returning the path of the
- * nearest `.reoclo` file, or null when none exists. `exists` is injectable for
- * tests; it defaults to the real fs in {@link readProjectOrg}.
+ * nearest `.reoclo` REGULAR FILE, or null when none exists. A candidate that
+ * exists but isn't a regular file (e.g. the `~/.reoclo` global config
+ * directory) is silently skipped — it isn't a project binding. `exists` and
+ * `isFile` are injectable for tests; they default to the real fs in
+ * {@link readProjectOrg}.
  */
 export function findProjectConfigPath(
   startDir: string,
   exists: (path: string) => boolean,
+  isFile: (path: string) => boolean,
 ): string | null {
   let current = startDir;
   for (;;) {
     const candidate = join(current, FILE_NAME);
-    if (exists(candidate)) return candidate;
+    if (exists(candidate) && isFile(candidate)) return candidate;
     const parent = dirname(current);
     if (parent === current) return null; // reached the filesystem root
     current = parent;
@@ -37,17 +41,33 @@ export function findProjectConfigPath(
 
 export interface ProjectConfigFs {
   exists: (path: string) => boolean;
+  isFile: (path: string) => boolean;
   read: (path: string) => string;
+  warn?: (line: string) => void;
 }
 
 const defaultFs: ProjectConfigFs = {
   exists: existsSync,
+  isFile: (path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  },
   read: (path) => readFileSync(path, "utf8"),
+  warn: (line) => process.stderr.write(line),
 };
+
+/** The `.reoclo` schema version this CLI writes. Bump when the shape of the
+ *  file changes in a way older CLI versions can't read correctly. */
+export const PROJECT_CONFIG_VERSION = 1;
 
 export interface ProjectConfig {
   org?: string;
   profile?: string;
+  version?: number;
+  skills?: { ref: string; sha?: string; installed_at?: string };
 }
 
 /** Read + validate a present `<key>` as a non-empty string. Absent → undefined;
@@ -72,12 +92,24 @@ export function readProjectConfig(
   startDir: string = process.cwd(),
   fs: ProjectConfigFs = defaultFs,
 ): ProjectConfig | null {
-  const path = findProjectConfigPath(startDir, fs.exists);
+  const path = findProjectConfigPath(startDir, fs.exists, fs.isFile);
   if (!path) return null;
+
+  let raw: string;
+  try {
+    raw = fs.read(path);
+  } catch (e) {
+    // Filesystem-level failure (permission / is-a-dir / IO): this is not an
+    // intentional-but-broken binding, so skip it gracefully instead of crashing.
+    (fs.warn ?? ((l) => process.stderr.write(l)))(
+      `warning: ignoring unreadable .reoclo at ${path}: ${(e as Error).message}\n`,
+    );
+    return null;
+  }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.read(path));
+    parsed = JSON.parse(raw);
   } catch (e) {
     throw new Error(`malformed ${FILE_NAME} at ${path}: ${(e as Error).message}`);
   }
@@ -91,7 +123,32 @@ export function readProjectConfig(
   const profile = stringField(obj, "profile", path);
   if (org !== undefined) config.org = org;
   if (profile !== undefined) config.profile = profile;
+
+  // `version` and `skills` are tolerant, forward-compat reads: an
+  // unrecognized or malformed shape is ignored rather than thrown, unlike
+  // `org`/`profile` above (those gate which backend commands run against, so
+  // they fail loud instead).
+  const version = obj.version;
+  if (typeof version === "number" && Number.isFinite(version)) config.version = version;
+  const skills = obj.skills;
+  if (skills && typeof skills === "object" && !Array.isArray(skills)) {
+    const s = skills as Record<string, unknown>;
+    if (typeof s.ref === "string" && s.ref.trim() !== "") {
+      config.skills = {
+        ref: s.ref.trim(),
+        sha: typeof s.sha === "string" ? s.sha : undefined,
+        installed_at: typeof s.installed_at === "string" ? s.installed_at : undefined,
+      };
+    }
+  }
   return config;
+}
+
+/** A present project config is "outdated" (or plain/legacy) when its version is
+ *  behind the CLI's PROJECT_CONFIG_VERSION. A missing version counts as 0. */
+export function projectConfigOutdated(cfg: ProjectConfig | null): boolean {
+  if (!cfg) return false;
+  return (cfg.version ?? 0) < PROJECT_CONFIG_VERSION;
 }
 
 /**

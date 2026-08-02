@@ -9,10 +9,11 @@ import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
 import { resolveProfileName } from "../config/profile-resolve";
-import { resolveOrgOverride } from "../config/org-resolve";
+import { resolveOrgOverride, orgSelectionError } from "../config/org-resolve";
 import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
+import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import type { Me } from "./types";
 
 /**
@@ -57,6 +58,14 @@ export interface ResolvedContext {
    * `/auth/me` themselves or use {@link requireTenantId}.
    */
   tenantId?: string;
+  /** Profile access-token expiry (ISO), when known: used by the MCP server to
+   *  schedule proactive refreshes. */
+  accessTokenExpiresAt?: string;
+  /** Refresh the PROFILE token (single-flight + locked + persisted), returning
+   *  the fresh token or null on a transient failure. Absent for non-OAuth
+   *  credentials and when an org-override token was minted (that token is fresh
+   *  and must not be refreshed back to the profile's org). */
+  refresh?: (currentToken: string) => Promise<string | null>;
 }
 
 // Canonical deployment URLs, derived from REOCLO_ROOT_DOMAIN only — NOT the
@@ -97,6 +106,11 @@ export interface BootstrapOptions {
   token?: string; // --token
   profile?: string; // --profile
   org?: string; // --org (per-invocation organization override)
+  /** When true (default) and the credential is an OAuth profile, a command with
+   *  no resolved org override (--org / $REOCLO_ORG / .reoclo) fails with exit 4.
+   *  Identity-only callers (whoami, org ls/current, init, completion warm, the
+   *  preAction probe) pass false. */
+  orgRequired?: boolean;
   api?: string; // --api
   streams?: string; // --streams
   /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
@@ -191,8 +205,15 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // org-override probe below and the final client. It refreshes + persists the
   // PROFILE's token; the final client only attaches it when we haven't minted a
   // separate org-override token (see suppressRefresh).
+  //
+  // profileRefreshCallback refreshes the PROFILE's OAuth token, so it must be
+  // suppressed when a --token / automation key is the credential actually in
+  // use (they outrank the profile token in the precedence chain above).
+  // Otherwise the proactive or reactive refresh would swap in an ambient
+  // profile's token behind the caller's back: wrong credential, possibly a
+  // different tenant.
   let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
-  if (profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
+  if (!flagToken && !envAuto && profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
     const capturedProfileName = profileName;
     const capturedProfile = profile;
     const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
@@ -238,11 +259,33 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   let tenantId = profile?.tenant_id;
   let effectiveToken = token;
   let suppressRefresh = false;
+
+  // Proactive refresh: refresh the profile token BEFORE issuing any request (the
+  // org-override probe or the final client) when it's within the skew of
+  // expiry, so a long-idle session doesn't eat a 401 round-trip. Reuses the
+  // profile's single-flight + locked refresh (never double-spends the rotating
+  // token).
+  token = await applyProactiveRefresh(
+    token, profile?.access_token_expires_at, profileRefreshCallback, Date.now(), PROACTIVE_SKEW_MS,
+  );
+  effectiveToken = token;
+
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
     projectOrg: projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
+  const orgErr = orgSelectionError({
+    orgRequired: opts.orgRequired ?? true,
+    orgOverride,
+    // `profile.auth_kind` reflects whatever profile happens to be on disk, not
+    // necessarily the credential actually in use — --token / REOCLO_AUTOMATION_KEY
+    // both outrank the profile token (see the precedence chain above). Those
+    // credentials are single-tenant on their own, so when either is set, the
+    // profile's auth_kind must not trigger the OAuth-only org requirement.
+    authKind: flagToken || envAuto ? undefined : profile?.auth_kind,
+  });
+  if (orgErr) throw orgErr;
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
@@ -307,5 +350,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token: effectiveToken,
     tokenType: detectKeyType(effectiveToken),
     tenantId,
+    accessTokenExpiresAt: profile?.access_token_expires_at,
+    refresh: suppressRefresh ? undefined : profileRefreshCallback,
   };
 }

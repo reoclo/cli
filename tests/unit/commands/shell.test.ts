@@ -6,6 +6,7 @@ import {
   base64url,
   buildShellSubprotocol,
   buildShellWsUrl,
+  handleShellControlFrame,
   shellCloseToExit,
   SUBPROTOCOL_VERSION,
   registerShell,
@@ -61,6 +62,57 @@ describe("shellCloseToExit", () => {
     const alreadyFailed = shellCloseToExit(1006, "abnormal", 42);
     expect(alreadyFailed.exitCode).toBeNull();
     expect(alreadyFailed.message).toContain("connection closed");
+  });
+
+  test("4402 session credential expired is AUTH(3)", () => {
+    const r = shellCloseToExit(4402, "expired", 0);
+    expect(r.exitCode).toBe(EXIT.AUTH);
+    expect(r.message).toContain("session credential expired");
+    expect(r.message).toContain("reoclo login");
+  });
+});
+
+describe("handleShellControlFrame", () => {
+  test("exited maps to an exit action carrying the exit code", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame({ type: "exited", exit_code: 3 }, state);
+    expect(action).toEqual({ action: "exit", code: 3 });
+  });
+
+  test("exited without exit_code defaults to 0", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame({ type: "exited" }, state);
+    expect(action).toEqual({ action: "exit", code: 0 });
+  });
+
+  test("error maps to an error action carrying the message", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame({ type: "error", message: "x" }, state);
+    expect(action).toEqual({ action: "error", message: "x" });
+  });
+
+  test("token_renew adopts the new token into state and is otherwise silent", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame(
+      { type: "token_renew", token: "t2", expires_at: "2026-08-02T00:00:00Z" },
+      state,
+    );
+    expect(action).toEqual({ action: "none" });
+    expect(state.token).toBe("t2");
+  });
+
+  test("ready is informational and does not mutate state", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame({ type: "ready" }, state);
+    expect(action).toEqual({ action: "none" });
+    expect(state.token).toBe("t1");
+  });
+
+  test("an unknown type is informational and does not mutate state", () => {
+    const state = { token: "t1" };
+    const action = handleShellControlFrame({ type: "something-new" }, state);
+    expect(action).toEqual({ action: "none" });
+    expect(state.token).toBe("t1");
   });
 });
 

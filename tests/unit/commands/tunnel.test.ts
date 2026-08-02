@@ -3,10 +3,11 @@ import {
   parseTunnelArgs,
   buildTunnelWsUrl,
   buildTunnelListPath,
+  buildTunnelSessionOptions,
   formatTunnelTable,
   formatTunnelDescribe,
 } from "../../../src/commands/tunnel";
-import type { TunnelSessionRead } from "../../../src/commands/tunnel";
+import type { ParsedTunnelArgs, TunnelSessionCtx, TunnelSessionRead } from "../../../src/commands/tunnel";
 
 describe("parseTunnelArgs", () => {
   it("parses -L with 2 parts as local_port:remote_port (remote_host defaults to 127.0.0.1)", () => {
@@ -487,5 +488,55 @@ describe("buildTunnelListPath", () => {
     for (const qs of ["", "active=true", "server_id=x"]) {
       expect(buildTunnelListPath("tenant-abc", qs)).not.toMatch(/\/tunnels(\?|$)/);
     }
+  });
+});
+
+describe("buildTunnelSessionOptions", () => {
+  // Regression guard: `refresh` MUST be passed through by reference. A
+  // wrapping thunk (e.g. `() => ctx.refresh!(ctx.token)`) would type-check
+  // fine but would close over ctx.token as it stood at wiring time, silently
+  // pinning renewal to the ORIGINAL token forever instead of the session's
+  // live (rotated) token — the exact bug this wiring was fixed to avoid.
+  const parsed: ParsedTunnelArgs = {
+    server: "srv-1",
+    forwards: [],
+    reverses: [],
+    reconnectDeadlineMs: 300_000,
+  };
+  const noopStatus = () => {};
+
+  it("passes ctx.refresh through by identity, not a wrapping thunk", () => {
+    const refreshFn = async (_currentToken: string) => "new-token";
+    const ctx: TunnelSessionCtx = {
+      token: "tok-1",
+      refresh: refreshFn,
+      accessTokenExpiresAt: "2099-01-01T00:00:00Z",
+    };
+
+    const opts = buildTunnelSessionOptions(ctx, "wss://direct.example.com/v1/tunnel", parsed, noopStatus);
+
+    expect(opts.refresh).toBe(refreshFn);
+  });
+
+  it("leaves refresh undefined when ctx has none (e.g. --token / automation-key)", () => {
+    const ctx: TunnelSessionCtx = { token: "tok-1" };
+    const opts = buildTunnelSessionOptions(ctx, "wss://direct.example.com/v1/tunnel", parsed, noopStatus);
+    expect(opts.refresh).toBeUndefined();
+  });
+
+  it("carries token, gatewayUrl, forwards/reverses, and reconnectDeadlineMs through unchanged", () => {
+    const ctx: TunnelSessionCtx = { token: "tok-live" };
+    const opts = buildTunnelSessionOptions(
+      ctx,
+      "wss://direct.example.com/v1/tunnel?server_id=srv-1",
+      parsed,
+      noopStatus,
+    );
+    expect(opts.token).toBe("tok-live");
+    expect(opts.gatewayUrl).toBe("wss://direct.example.com/v1/tunnel?server_id=srv-1");
+    expect(opts.forwards).toBe(parsed.forwards);
+    expect(opts.reverses).toBe(parsed.reverses);
+    expect(opts.reconnectDeadlineMs).toBe(300_000);
+    expect(opts.onStatus).toBe(noopStatus);
   });
 });

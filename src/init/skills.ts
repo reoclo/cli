@@ -28,6 +28,30 @@ export function skillsTarballUrl(ref = "main"): string {
 export interface InstallSkillsResult {
   installed: string[];
   missing: string[];
+  sha?: string;
+}
+
+/** Best-effort: resolve the skills repo branch head commit SHA via the public
+ *  GitHub API. Returns null on any non-ok/parse/network outcome (rate-limit
+ *  tolerant — unauthenticated 60/hr) so callers never fail on it. */
+export async function resolveSkillsHead(ref = "main", fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const res = await fetchImpl(`https://api.github.com/repos/${REPO}/commits/${ref}`, {
+      headers: { Accept: "application/vnd.github.sha" },
+    });
+    if (!res.ok) return null;
+    const body = (await res.text()).trim();
+    // Accept either a raw sha (vnd.github.sha) or a JSON commit object.
+    if (/^[0-9a-f]{7,40}$/i.test(body)) return body;
+    try {
+      const j = JSON.parse(body) as { sha?: string };
+      return j.sha ?? null;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -81,7 +105,8 @@ export async function installSkills(opts: {
     for (const name of selected) {
       cpSync(join(root, name), join(opts.destDir, name), { recursive: true });
     }
-    return { installed: selected, missing };
+    const sha = (await resolveSkillsHead(opts.ref ?? "main", fetchImpl)) ?? undefined;
+    return { installed: selected, missing, sha };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

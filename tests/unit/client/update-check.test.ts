@@ -4,9 +4,11 @@ import {
   isCheckStale,
   isNewer,
   reinvokeForUpdateCheck,
+  runAuthUpdateCheck,
   runUpdateCheckCycle,
   shouldNotify,
   shouldRunUpdateCheck,
+  updateCheckEnabledFor,
   type UpdateCache,
 } from "../../../src/client/update-check";
 
@@ -197,5 +199,82 @@ describe("runUpdateCheckCycle", () => {
     });
     runUpdateCheckCycle(h.deps);
     expect(h.emitted).toEqual([]);
+  });
+});
+
+describe("runAuthUpdateCheck", () => {
+  const noop = () => {};
+  const method = () => "raw" as const;
+
+  test("runAuthUpdateCheck emits + caches when a newer version exists", async () => {
+    const emitted: string[] = [];
+    const written: unknown[] = [];
+    await runAuthUpdateCheck({
+      current: "0.59.0", enabled: true, now: 1_000,
+      fetchLatest: async () => "0.60.0",
+      readCache: () => ({}), writeCache: (c) => written.push(c),
+      detectMethod: method, emit: (l) => emitted.push(l),
+    });
+    expect(emitted.join("")).toContain("0.60.0");
+    expect(written.length).toBe(1);
+  });
+
+  test("runAuthUpdateCheck is silent when disabled", async () => {
+    const emitted: string[] = [];
+    await runAuthUpdateCheck({
+      current: "0.59.0", enabled: false, now: 1_000,
+      fetchLatest: async () => "9.9.9",
+      readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
+    });
+    expect(emitted).toEqual([]);
+  });
+
+  test("runAuthUpdateCheck swallows network failure", async () => {
+    const emitted: string[] = [];
+    await runAuthUpdateCheck({
+      current: "0.59.0", enabled: true, now: 1_000,
+      fetchLatest: async () => { throw new Error("offline"); },
+      readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
+    });
+    expect(emitted).toEqual([]); // no throw, no notice
+  });
+
+  test("runAuthUpdateCheck stays quiet when already current", async () => {
+    const emitted: string[] = [];
+    await runAuthUpdateCheck({
+      current: "0.60.0", enabled: true, now: 1_000,
+      fetchLatest: async () => "0.60.0",
+      readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
+    });
+    expect(emitted).toEqual([]);
+  });
+});
+
+describe("updateCheckEnabledFor", () => {
+  const opts = { updateCheck: undefined, output: "text", quiet: false };
+  const env: NodeJS.ProcessEnv = {};
+
+  test("enabled in the plain TTY + text-output case", () => {
+    expect(updateCheckEnabledFor(opts, env, true)).toBe(true);
+  });
+
+  test("disabled when updateCheck === false (--no-update-check)", () => {
+    expect(updateCheckEnabledFor({ ...opts, updateCheck: false }, env, true)).toBe(false);
+  });
+
+  test("disabled when REOCLO_NO_UPDATE_CHECK is set", () => {
+    expect(updateCheckEnabledFor(opts, { REOCLO_NO_UPDATE_CHECK: "1" }, true)).toBe(false);
+  });
+
+  test("disabled when quiet: true", () => {
+    expect(updateCheckEnabledFor({ ...opts, quiet: true }, env, true)).toBe(false);
+  });
+
+  test("disabled when stderrIsTty is false", () => {
+    expect(updateCheckEnabledFor(opts, env, false)).toBe(false);
+  });
+
+  test('disabled when output is "json"', () => {
+    expect(updateCheckEnabledFor({ ...opts, output: "json" }, env, true)).toBe(false);
   });
 });

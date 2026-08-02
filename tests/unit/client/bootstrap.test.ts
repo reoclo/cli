@@ -245,6 +245,61 @@ test("an explicit REOCLO_API_URL still wins under an automation key", async () =
   }
 });
 
+// Regression for the merge-blocker finding: a machine can have BOTH a cached
+// `reoclo login` OAuth profile AND REOCLO_AUTOMATION_KEY set. The automation
+// key outranks the profile token in the precedence chain above, so it (not
+// the profile) is the credential actually in use — and automation keys are
+// single-tenant, exempt from the "no organization selected" requirement.
+// Before the fix, orgSelectionError read profile.auth_kind directly and
+// wrongly rejected this with exit 4.
+test("REOCLO_AUTOMATION_KEY exempts the org requirement even with a cached OAuth profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" },
+    },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.tokenType).toBe("automation");
+    expect(ctx.token).toBe("rca_ciauto");
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+// Regression for the credential-bleed finding: a machine can have BOTH a cached
+// `reoclo login` OAuth profile (with a PAST access_token_expires_at) AND
+// REOCLO_AUTOMATION_KEY set. The automation key outranks the profile token in
+// the precedence chain, so it is the credential actually in use, and the
+// profile's OAuth refresh must never fire on its behalf: proactively (it would
+// swap the automation key for the cached OAuth profile's token, a different
+// and possibly cross-tenant credential) or reactively (ctx.refresh must be
+// undefined so a 401 surfaces instead of silently swapping).
+test("an automation key suppresses the OAuth profile's refresh (proactive + ctx.refresh), even past-expiry", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: "2020-01-01T00:00:00Z", // well past
+      },
+    },
+  });
+  process.env.REOCLO_AUTOMATION_KEY = "rca_robot";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rca_robot");
+    expect(ctx.tokenType).toBe("automation");
+    expect(ctx.refresh).toBeUndefined();
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
 test("defaultStreamsUrl maps prod api → streams.reoclo.com", () => {
   expect(defaultStreamsUrl("https://api.reoclo.com")).toBe("https://streams.reoclo.com");
   expect(defaultStreamsUrl("https://api.reoclo.com/")).toBe("https://streams.reoclo.com");
@@ -280,4 +335,28 @@ test("--streams flag wins over env and defaults", async () => {
   process.env.REOCLO_STREAMS_URL = "http://localhost:9000";
   const ctx = await bootstrap({ token: "oauth-fake", streams: "http://localhost:9001" });
   expect(ctx.streamsUrl).toBe("http://localhost:9001");
+});
+
+// Light exposure test: no refresh mocking needed. The profile's own slug is
+// passed as --org, so the Plan A org requirement is satisfied without a
+// tenant-switch probe. access_token_expires_at is comfortably in the future,
+// so the proactive refresh added in Task 3 never fires; this only asserts
+// that a refreshable oauth profile's refresh callback and expiry are exposed
+// on the resolved context for the MCP timer (Task 4) to consume.
+test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshable oauth profile", async () => {
+  const futureExpiry = new Date(Date.now() + 3_600_000).toISOString();
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: futureExpiry,
+      },
+    },
+  });
+  const ctx = await bootstrap({ org: "home" });
+  expect(typeof ctx.refresh).toBe("function");
+  expect(ctx.accessTokenExpiresAt).toBe(futureExpiry);
 });

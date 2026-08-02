@@ -2,7 +2,13 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveServer } from "../client/resolve";
-import { TunnelSession, type ForwardSpec, type ReverseSpec } from "../client/tunnel-session";
+import {
+  TunnelSession,
+  type ForwardSpec,
+  type ReverseSpec,
+  type SessionStatus,
+  type TunnelSessionOptions,
+} from "../client/tunnel-session";
 import { globalOutput, printList, printObject, resolveFormat, type OutputFormat } from "../ui/output";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
@@ -276,6 +282,41 @@ export function buildTunnelListPath(tenantId: string, qs: string): string {
   return `/tenants/${tenantId}/tunnels/${qs ? `?${qs}` : ""}`;
 }
 
+/** The bootstrap() context fields this command's TunnelSessionOptions read from. */
+export interface TunnelSessionCtx {
+  token: string;
+  refresh?: (currentToken: string) => Promise<string | null>;
+  accessTokenExpiresAt?: string;
+}
+
+/**
+ * Build the TunnelSessionOptions for `tunnel open` from the bootstrap ctx and
+ * parsed args. Pulled out as a small pure function so the `refresh` wiring
+ * can be unit-tested in isolation: `refresh` MUST be `ctx.refresh` itself
+ * (passed by reference), not a wrapping thunk like `() => ctx.refresh!(ctx.token)`.
+ * A wrapping thunk would close over `ctx.token` as it was AT WIRING TIME and
+ * keep passing that same stale token on every renewal cycle forever, instead
+ * of the session's live (rotated) token — silently breaking token rotation
+ * (the bug this file's TunnelSession fixed; see tunnel-session.ts renewNow()).
+ */
+export function buildTunnelSessionOptions(
+  ctx: TunnelSessionCtx,
+  gatewayUrl: string,
+  parsed: ParsedTunnelArgs,
+  onStatus: (s: SessionStatus, reason?: string) => void,
+): TunnelSessionOptions {
+  return {
+    gatewayUrl,
+    token: ctx.token,
+    forwards: parsed.forwards,
+    reverses: parsed.reverses,
+    reconnectDeadlineMs: parsed.reconnectDeadlineMs,
+    refresh: ctx.refresh,
+    accessTokenExpiresAt: ctx.accessTokenExpiresAt,
+    onStatus,
+  };
+}
+
 export function registerTunnel(program: Command): void {
   const tunnelCmd = withCompletion(
     program
@@ -347,13 +388,12 @@ Examples:
           const directUrl = process.env["REOCLO_DIRECT_URL"] ?? deriveDirectUrl(ctx.streamsUrl);
 
           const gatewayUrl = buildTunnelWsUrl(directUrl, serverId);
-          const session = new TunnelSession({
-            gatewayUrl,
-            token: ctx.token,
-            forwards: parsed.forwards,
-            reverses: parsed.reverses,
-            reconnectDeadlineMs: parsed.reconnectDeadlineMs,
-            onStatus: (s, reason) => {
+          const session = new TunnelSession(
+            // ctx.refresh is passed through buildTunnelSessionOptions() by
+            // reference (see that function's doc comment + its unit test in
+            // tests/unit/commands/tunnel.test.ts) — never wrap it in a thunk
+            // that would pin the original token and break rotation.
+            buildTunnelSessionOptions(ctx, gatewayUrl, parsed, (s, reason) => {
               if (s === "active") process.stderr.write("tunnel: connected\n");
               else if (s === "reconnecting")
                 process.stderr.write(`tunnel: reconnecting${reason ? ` (${reason})` : "..."}\n`);
@@ -362,8 +402,8 @@ Examples:
                 process.stderr.write(`tunnel: ${reason ?? "connection failed"}\n`);
                 process.exit(1);
               }
-            },
-          });
+            }),
+          );
 
           // Register SIGINT BEFORE start() to catch Ctrl-C during initial connect
           let stopping = false;

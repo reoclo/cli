@@ -40,12 +40,20 @@ import { registerRun } from "./commands/run";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
-import { maybeNotifyUpdate, performUpdateCheck, shouldRunUpdateCheck } from "./client/update-check";
+import {
+  maybeNotifyUpdate,
+  performUpdateCheck,
+  readUpdateCache,
+  writeUpdateCache,
+  updateCheckEnabledFor,
+  NOTIFY_THROTTLE_MS,
+} from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
 import { loadConfig } from "./config/store";
 import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
 import { readProjectConfig } from "./config/project-config";
+import { configAdvisories } from "./config/config-advisory";
 import { detectProgramName } from "./lib/program-name";
 
 export const VERSION = pkg.version;
@@ -66,7 +74,7 @@ if (import.meta.main) {
     )
     .option(
       "--org <slug>",
-      "run against this organization for one invocation (overrides $REOCLO_ORG and the active org)",
+      "run against this organization for one invocation (over $REOCLO_ORG and .reoclo)",
     )
     .option("--no-update-check", "do not check for a newer CLI release on this run");
 
@@ -188,7 +196,7 @@ if (import.meta.main) {
       parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
 
     // Resolve the auth context (token + key type) without making a network call.
-    const ctx = await bootstrap();
+    const ctx = await bootstrap({ orgRequired: false });
 
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;
@@ -213,16 +221,47 @@ if (import.meta.main) {
     // the right upgrade command, and schedules a throttled background re-check.
     // Suppressed in non-interactive / machine-output / CI contexts so it never
     // disrupts scripts or nags automation.
-    const opts = program.opts();
-    const enabled = shouldRunUpdateCheck({
-      disabledByEnv: Boolean(process.env.REOCLO_NO_UPDATE_CHECK),
-      disabledByFlag: opts.updateCheck === false,
-      isTTY: Boolean(process.stderr.isTTY),
-      outputFormat: String(opts.output ?? "text"),
-      automationKey: Boolean(process.env.REOCLO_AUTOMATION_KEY),
-      quiet: Boolean(opts.quiet),
-    });
+    const enabled = updateCheckEnabledFor(
+      program.opts(),
+      process.env,
+      Boolean(process.stderr.isTTY),
+    );
     if (enabled) maybeNotifyUpdate(VERSION);
+
+    // Project-config + skills advisories: at most one throttled stderr line
+    // each, both pointing at 'reoclo init' (it reinstalls skills by default,
+    // so there's no separate skills-only flag to suggest). Gated by the
+    // same `enabled` predicate as the update notice above (never read .reoclo
+    // under an automation key, matching bootstrap's CI rule; a still-broken
+    // .reoclo — shouldn't happen after discovery was made graceful — must not
+    // crash the postAction hook, so the read is wrapped defensively).
+    if (enabled) {
+      let pc: ReturnType<typeof readProjectConfig> = null;
+      if (!process.env.REOCLO_AUTOMATION_KEY) {
+        try {
+          pc = readProjectConfig();
+        } catch {
+          pc = null;
+        }
+      }
+      const cache = readUpdateCache();
+      const adv = configAdvisories({
+        projectConfig: pc,
+        latestSkillsSha: cache.skills_sha,
+        now: Date.now(),
+        throttleMs: NOTIFY_THROTTLE_MS,
+        configNotifiedAt: cache.config_notified_at,
+        skillsNotifiedAt: cache.skills_notified_at,
+      });
+      for (const line of adv.lines) process.stderr.write(`${line}\n`);
+      if (adv.lines.length > 0) {
+        writeUpdateCache({
+          ...readUpdateCache(),
+          config_notified_at: adv.configNotifiedAt,
+          skills_notified_at: adv.skillsNotifiedAt,
+        });
+      }
+    }
   });
 
   try {

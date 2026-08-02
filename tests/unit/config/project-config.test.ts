@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   findProjectConfigPath,
+  projectConfigOutdated,
   projectOrgFor,
+  PROJECT_CONFIG_VERSION,
   readProjectConfig,
   readProjectOrg,
 } from "../../../src/config/project-config";
@@ -10,6 +12,7 @@ import {
 function fakeFs(files: Record<string, string>) {
   return {
     exists: (p: string) => Object.prototype.hasOwnProperty.call(files, p),
+    isFile: (p: string) => Object.prototype.hasOwnProperty.call(files, p),
     read: (p: string) => {
       if (!Object.prototype.hasOwnProperty.call(files, p)) {
         throw new Error(`ENOENT: ${p}`);
@@ -22,22 +25,32 @@ function fakeFs(files: Record<string, string>) {
 describe("findProjectConfigPath", () => {
   test("finds a .reoclo in an ancestor directory", () => {
     const fs = fakeFs({ "/a/.reoclo": "{}" });
-    expect(findProjectConfigPath("/a/b/c", fs.exists)).toBe("/a/.reoclo");
+    expect(findProjectConfigPath("/a/b/c", fs.exists, () => true)).toBe("/a/.reoclo");
   });
 
   test("returns the nearest ancestor when several have .reoclo", () => {
     const fs = fakeFs({ "/a/.reoclo": "{}", "/a/b/.reoclo": "{}" });
-    expect(findProjectConfigPath("/a/b/c", fs.exists)).toBe("/a/b/.reoclo");
+    expect(findProjectConfigPath("/a/b/c", fs.exists, () => true)).toBe("/a/b/.reoclo");
   });
 
   test("finds a .reoclo in the start directory itself", () => {
     const fs = fakeFs({ "/a/b/c/.reoclo": "{}" });
-    expect(findProjectConfigPath("/a/b/c", fs.exists)).toBe("/a/b/c/.reoclo");
+    expect(findProjectConfigPath("/a/b/c", fs.exists, () => true)).toBe("/a/b/c/.reoclo");
   });
 
   test("returns null when no .reoclo exists up to the root", () => {
     const fs = fakeFs({});
-    expect(findProjectConfigPath("/a/b/c", fs.exists)).toBeNull();
+    expect(findProjectConfigPath("/a/b/c", fs.exists, () => true)).toBeNull();
+  });
+
+  test("discovery skips a .reoclo that is a directory (the ~/.reoclo config-dir collision)", () => {
+    // exists() true for the candidate, but isFile() false → not a project file.
+    const found = findProjectConfigPath(
+      "/home/ubuntu",
+      (p) => p === "/home/ubuntu/.reoclo",
+      () => false,
+    );
+    expect(found).toBeNull();
   });
 });
 
@@ -131,6 +144,32 @@ describe("readProjectConfig", () => {
   test("throws on malformed JSON", () => {
     expect(() => readProjectConfig("/a/b", fakeFs({ "/a/.reoclo": "{ bad" }))).toThrow(/\.reoclo/);
   });
+
+  test("an unreadable .reoclo file warns and is skipped (no throw)", () => {
+    const warnings: string[] = [];
+    const fs = {
+      exists: (p: string) => p === "/proj/.reoclo",
+      isFile: () => true,
+      read: () => {
+        const e = new Error("EACCES") as Error & { code: string };
+        e.code = "EACCES";
+        throw e;
+      },
+      warn: (l: string) => warnings.push(l),
+    };
+    expect(readProjectConfig("/proj", fs)).toBeNull();
+    expect(warnings.join("")).toContain("ignoring unreadable .reoclo");
+  });
+
+  test("malformed JSON in a readable file still throws loud", () => {
+    const fs = {
+      exists: (p: string) => p === "/proj/.reoclo",
+      isFile: () => true,
+      read: () => "{ not json",
+      warn: () => {},
+    };
+    expect(() => readProjectConfig("/proj", fs)).toThrow(/malformed \.reoclo/);
+  });
 });
 
 describe("projectOrgFor", () => {
@@ -161,4 +200,25 @@ describe("projectOrgFor", () => {
     expect(result).toBeUndefined();
     expect(read).toBe(false);
   });
+});
+
+test("project config parses version + skills and detects plain (unversioned) as outdated", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () => JSON.stringify({ org: "acme", skills: { ref: "main", sha: "abc" } }),
+  };
+  const cfg = readProjectConfig("/proj", fs);
+  expect(cfg?.org).toBe("acme");
+  expect(cfg?.skills?.sha).toBe("abc");
+  expect(cfg?.version).toBeUndefined();          // plain config
+  expect(projectConfigOutdated(cfg)).toBe(true); // 0 < PROJECT_CONFIG_VERSION
+});
+
+test("current project config is not outdated; null is never outdated", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () => JSON.stringify({ org: "acme", version: PROJECT_CONFIG_VERSION }),
+  };
+  expect(projectConfigOutdated(readProjectConfig("/proj", fs))).toBe(false);
+  expect(projectConfigOutdated(null)).toBe(false);
 });

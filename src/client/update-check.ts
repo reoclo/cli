@@ -17,6 +17,10 @@ export interface UpdateCache {
   latest?: string;
   checked_at?: string;
   notified_at?: string;
+  skills_sha?: string; // last-seen skills repo head
+  skills_checked_at?: string;
+  config_notified_at?: string;
+  skills_notified_at?: string;
 }
 
 /** Check GitHub for a newer release at most once per this window. */
@@ -120,12 +124,26 @@ export function maybeSpawnBackgroundUpdateCheck(): void {
 
 /**
  * What the hidden `__update-check` background process runs: ask GitHub for the
- * latest stable tag and cache it (preserving notified_at). Silent on failure.
+ * latest stable tag and cache it (preserving notified_at), and best-effort
+ * refresh the skills repo head so the skills advisory has a fresh target to
+ * compare against. Each probe is independently wrapped — either can fail
+ * without affecting the other — and the whole thing is silent on failure since
+ * a background worker must never surface errors.
  */
 export async function performUpdateCheck(): Promise<void> {
   try {
     const latest = (await resolveLatestVersion("stable")).replace(/^v/, "");
     writeUpdateCache({ ...readUpdateCache(), latest, checked_at: new Date().toISOString() });
+  } catch {
+    // silent — background check must never surface errors
+  }
+
+  try {
+    const { resolveSkillsHead } = await import("../init/skills");
+    const sha = await resolveSkillsHead("main");
+    if (sha) {
+      writeUpdateCache({ ...readUpdateCache(), skills_sha: sha, skills_checked_at: new Date().toISOString() });
+    }
   } catch {
     // silent — background check must never surface errors
   }
@@ -211,6 +229,59 @@ export function shouldRunUpdateCheck(args: {
   if (args.automationKey) return false;
   if (args.quiet) return false;
   return true;
+}
+
+/**
+ * Decide whether the on-run / auth-time update notice may fire, from the root
+ * program opts + environment + stderr TTY. Single source of truth so the
+ * postAction hook and `login` can't drift apart.
+ */
+export function updateCheckEnabledFor(
+  opts: { updateCheck?: boolean; output?: unknown; quiet?: boolean },
+  env: NodeJS.ProcessEnv,
+  stderrIsTty: boolean,
+): boolean {
+  return shouldRunUpdateCheck({
+    disabledByEnv: Boolean(env.REOCLO_NO_UPDATE_CHECK),
+    disabledByFlag: opts.updateCheck === false,
+    isTTY: stderrIsTty,
+    outputFormat: String(opts.output ?? "text"),
+    automationKey: Boolean(env.REOCLO_AUTOMATION_KEY),
+    quiet: Boolean(opts.quiet),
+  });
+}
+
+/**
+ * Foreground, bounded, best-effort version check for `reoclo login`. Unlike the
+ * on-run notice this runs during an already-interactive+online flow, so it
+ * refreshes the cache (checked_at/latest/notified_at) to keep the daily throttle
+ * coherent. Never throws: a network failure leaves login unaffected.
+ */
+export async function runAuthUpdateCheck(deps: {
+  current: string;
+  enabled: boolean;
+  now: number;
+  fetchLatest: () => Promise<string>;
+  readCache: () => UpdateCache;
+  writeCache: (c: UpdateCache) => void;
+  detectMethod: () => InstallMethod;
+  emit: (line: string) => void;
+}): Promise<void> {
+  if (!deps.enabled) return;
+  let latest: string;
+  try {
+    latest = (await deps.fetchLatest()).replace(/^v/, "");
+  } catch {
+    return; // best-effort: login must not fail on a version probe
+  }
+  const nowIso = new Date(deps.now).toISOString();
+  const cache = deps.readCache();
+  const next: UpdateCache = { ...cache, latest, checked_at: nowIso };
+  if (isNewer(deps.current, latest)) {
+    deps.emit(formatUpdateNotice(deps.current, latest, deps.detectMethod()));
+    next.notified_at = nowIso;
+  }
+  deps.writeCache(next);
 }
 
 /** The single-line notice shown on stderr when a newer version is available. */

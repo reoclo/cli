@@ -2,34 +2,40 @@
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
-import { formatRole } from "../ui/format-role";
+
+/** Pure formatter for `reoclo whoami`. Shows the current account plus the count
+ *  of OIDC-granted organizations. The full list lives in `reoclo org ls`. */
+export function formatWhoamiLines(input: {
+  org: string; user: string; api: string; type: string; prefix: string; orgCount: number;
+}): string[] {
+  return [
+    `organization:  ${input.org}`,
+    `user:          ${input.user}`,
+    `api:           ${input.api}`,
+    `type:          ${input.type}`,
+    `prefix:        ${input.prefix}…***`,
+    ``,
+    `organizations: ${input.orgCount}`,
+  ];
+}
 
 export function registerWhoami(program: Command): void {
   program
     .command("whoami")
     .description("show the authenticated identity")
     .action(async () => {
-      const ctx = await bootstrap();
+      const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
-      // Map the internal KeyType enum ("tenant" | "automation") to a
-      // user-facing label. "tenant" is internal-only language; here it
-      // means an interactive user session, so display "user".
       const displayType = ctx.tokenType === "tenant" ? "user" : ctx.tokenType;
-      console.log(`organization:  ${me.tenant_slug}`);
-      console.log(`user:          ${me.email}`);
-      console.log(`api:           ${ctx.api}`);
-      console.log(`type:          ${displayType}`);
-      console.log(`prefix:        ${ctx.token.slice(0, 8)}…***`);
-
-      const memberships = me.memberships ?? [];
-      if (memberships.length > 0) {
-        console.log(``);
-        console.log(`organizations (${memberships.length}):`);
-        const slugWidth = Math.max(...memberships.map((m) => m.tenant_slug.length));
-        for (const m of memberships) {
-          const slug = m.tenant_slug.padEnd(slugWidth);
-          console.log(`  ${slug}  ${m.tenant_name}  (${formatRole(m.role)})`);
-        }
+      for (const line of formatWhoamiLines({
+        org: me.tenant_slug,
+        user: me.email,
+        api: ctx.api,
+        type: displayType,
+        prefix: ctx.token.slice(0, 8),
+        orgCount: (me.memberships ?? []).length,
+      })) {
+        console.log(line);
       }
     });
 }
