@@ -353,6 +353,8 @@ Examples:
             forwards: parsed.forwards,
             reverses: parsed.reverses,
             reconnectDeadlineMs: parsed.reconnectDeadlineMs,
+            refresh: ctx.refresh ? () => ctx.refresh!(ctx.token) : undefined,
+            accessTokenExpiresAt: ctx.accessTokenExpiresAt,
             onStatus: (s, reason) => {
               if (s === "active") process.stderr.write("tunnel: connected\n");
               else if (s === "reconnecting")
