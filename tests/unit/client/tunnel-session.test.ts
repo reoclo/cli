@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, spyOn } from "bun:test";
 import net from "node:net";
 import dgram from "node:dgram";
 import { WebSocketServer } from "ws";
@@ -824,7 +824,7 @@ describe("TunnelSession — proactive token renewal", () => {
     const session = new TunnelSession({
       gatewayUrl: gw.url,
       token: "t1",
-      refresh: () => Promise.resolve("t2"),
+      refresh: (_currentToken: string) => Promise.resolve("t2"),
     });
     await session.start();
 
@@ -851,7 +851,7 @@ describe("TunnelSession — proactive token renewal", () => {
     const session = new TunnelSession({
       gatewayUrl: gw.url,
       token: "t1",
-      refresh: () => Promise.resolve(null),
+      refresh: (_currentToken: string) => Promise.resolve(null),
     });
     await session.start();
 
@@ -861,6 +861,113 @@ describe("TunnelSession — proactive token renewal", () => {
       gw.received.some((m: object) => (m as { type?: string }).type === "token_renew"),
     ).toBe(false);
     expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t1");
+
+    await session.stop();
+  });
+
+  it("renewNow() calls refresh with the session's CURRENT token on every cycle (multi-cycle rotation)", async () => {
+    // Regression test for the Plan C Critical: wiring that pins a snapshot of
+    // the token taken once at construction (e.g. `() => ctx.refresh!(ctx.token)`
+    // in src/commands/tunnel.ts) means cycle 2+ calls refresh with the SAME
+    // stale token forever, even though the session's live token has already
+    // rotated. refreshSession()'s double-check (src/auth/refresh.ts) mints a
+    // new token only while the stored token still equals the argument it was
+    // called with, so a pinned argument makes every renewal after the first
+    // short-circuit: no new mint, no exp advance, and (via the re-arm floor
+    // added in this same fix) would otherwise busy-spin.
+    //
+    // TunnelSession itself must thread `this.opts.token` — the session's own
+    // live, continuously-updated token — into `refresh()` on every call. This
+    // fails against the pre-fix renewNow(), which called `this.opts.refresh()`
+    // with no argument at all.
+    gw = await startMockGateway();
+    const calledWith: string[] = [];
+    const nextTokens = ["t1", "t2", "t3"];
+    let call = 0;
+    const refresh = (currentToken: string): Promise<string | null> => {
+      calledWith.push(currentToken);
+      return Promise.resolve(nextTokens[call++] ?? null);
+    };
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t0",
+      refresh,
+    });
+    await session.start();
+
+    const renewNow = (session as unknown as { renewNow: () => Promise<void> }).renewNow.bind(
+      session,
+    );
+
+    await renewNow(); // cycle 1: session token is "t0" → refresh("t0") → adopts "t1"
+    await renewNow(); // cycle 2: session token is now "t1" → refresh("t1") → adopts "t2"
+
+    // Cycle 2 MUST be called with "t1" (the live, rotated token) — NOT "t0"
+    // again. A pinned-token wiring would record ["t0", "t0"] here.
+    expect(calledWith).toEqual(["t0", "t1"]);
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t2");
+
+    await session.stop();
+  });
+
+  it("re-arm floor: a null refresh result re-arms at the coarse skew backoff, not ~0ms", async () => {
+    // Safety net for the same bug class as the multi-cycle test above: if a
+    // renewal ever fails to advance the token's exp while the token is still
+    // inside the skew window, re-arming from the normal computed delay would
+    // read the same (still near-expiry) exp and yield ~0ms — a busy-spin.
+    // Seed a token that's ALREADY inside the skew window (well under
+    // RENEW_SKEW_SECONDS=120s out) so the un-floored computation would fire
+    // ~immediately; the floor must override that with the coarse backoff.
+    gw = await startMockGateway();
+    const nearExpirySeconds = Math.floor(Date.now() / 1000) + 5;
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: makeJwt(nearExpirySeconds),
+      refresh: (_currentToken: string) => Promise.resolve(null),
+    });
+    await session.start();
+
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    try {
+      await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+    } finally {
+      // The re-arm inside renewNow()'s finally block is the LAST setTimeout
+      // call made during this synchronous-after-await window.
+      const lastCall = setTimeoutSpy.mock.calls.at(-1);
+      setTimeoutSpy.mockRestore();
+      expect(lastCall).toBeDefined();
+      const delayMs = lastCall![1] as number;
+      // Must be the coarse RENEW_SKEW_SECONDS floor (120_000ms), not the ~0ms
+      // a naive re-computation off the still-near-expiry token would produce.
+      expect(delayMs).toBeGreaterThan(60_000);
+    }
+
+    await session.stop();
+  });
+
+  it("re-arm floor: a refreshed token whose exp did NOT advance re-arms at the coarse skew backoff", async () => {
+    gw = await startMockGateway();
+    const nearExpirySeconds = Math.floor(Date.now() / 1000) + 5;
+    const staleToken = makeJwt(nearExpirySeconds);
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: staleToken,
+      // Simulates refreshSession()'s double-check short-circuit: returns a
+      // token whose exp is identical to (did not advance past) the previous one.
+      refresh: (_currentToken: string) => Promise.resolve(staleToken),
+    });
+    await session.start();
+
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    try {
+      await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+    } finally {
+      const lastCall = setTimeoutSpy.mock.calls.at(-1);
+      setTimeoutSpy.mockRestore();
+      expect(lastCall).toBeDefined();
+      const delayMs = lastCall![1] as number;
+      expect(delayMs).toBeGreaterThan(60_000);
+    }
 
     await session.stop();
   });

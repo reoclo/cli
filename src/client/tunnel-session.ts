@@ -51,11 +51,16 @@ export interface TunnelSessionOptions {
   reverses?: ReverseSpec[];
   reconnectDeadlineMs?: number; // default 5 * 60_000
   onStatus?: (s: SessionStatus, reason?: string) => void;
-  /** Refresh the access token before it expires. Returns the new token, or
-   *  null on a transient failure (the loop re-arms coarsely and retries
-   *  later rather than treating a null as fatal). Absent for credentials
-   *  that don't support renewal (e.g. --token / automation-key). */
-  refresh?: () => Promise<string | null>;
+  /** Refresh the access token before it expires. Called with the SESSION's
+   *  current (live) token on every cycle — not a snapshot captured once at
+   *  construction — so the underlying refresh's own failed-token double-check
+   *  (e.g. src/auth/refresh.ts) sees the token that's actually stored right
+   *  now and mints a fresh one on every cycle instead of short-circuiting
+   *  after the first. Returns the new token, or null on a transient failure
+   *  (the loop re-arms coarsely and retries later rather than treating a null
+   *  as fatal). Absent for credentials that don't support renewal (e.g.
+   *  --token / automation-key). */
+  refresh?: (currentToken: string) => Promise<string | null>;
   /** ISO timestamp the caller already knows the current token expires at.
    *  Used only as a fallback when `token` isn't a parseable JWT. */
   accessTokenExpiresAt?: string;
@@ -212,11 +217,20 @@ export class TunnelSession {
    * Arm a timer to proactively renew the token before it expires. Only runs
    * when the caller supplied `opts.refresh`. `.unref()`d so it never keeps
    * the process alive on its own.
+   *
+   * `delayMsOverride`, when supplied, bypasses `renewalDelayMs()` entirely.
+   * `renewNow()` uses this as a re-arm floor: a renewal that didn't actually
+   * advance the token's `exp` must not re-arm from the same near-expiry
+   * computation, which would yield ~0ms and busy-spin. The floor only ever
+   * applies to that RE-arm — the initial arm from `connect()`'s `onOpen`
+   * always uses the computed delay, so a genuinely near-expiry token on
+   * first connect still renews promptly.
    */
-  private armRenewalTimer(): void {
+  private armRenewalTimer(delayMsOverride?: number): void {
     this.clearRenewalTimer();
     if (!this.opts.refresh || this.stopped) return;
-    const timer = setTimeout(() => void this.renewNow(), this.renewalDelayMs());
+    const delay = delayMsOverride ?? this.renewalDelayMs();
+    const timer = setTimeout(() => void this.renewNow(), delay);
     (timer as unknown as { unref?: () => void }).unref?.();
     this.renewTimer = timer;
   }
@@ -228,22 +242,40 @@ export class TunnelSession {
    * swallowed — the reactive fatal-close path (4401) is the fallback.
    * Always re-arms, success or not, so one transient refresh failure
    * doesn't end renewal for the rest of the session.
+   *
+   * Passes `this.opts.token` (the LIVE session token, updated by every prior
+   * successful renewal via `updateToken()`) to `refresh()` on every cycle —
+   * never a value captured once at construction. `refresh` is typically
+   * `refreshSession()` (src/auth/refresh.ts), whose double-check mints a new
+   * token only while the STORED token still equals the `currentToken`
+   * argument; pinning that argument to the original token would make cycle
+   * 2+ short-circuit on an already-rotated token, returning the SAME token
+   * with no new mint and no exp advance forever.
+   *
+   * As a safety net against exactly that class of bug (or any other cause of
+   * a non-advancing renewal), the re-arm defaults to the coarse
+   * `RENEW_SKEW_SECONDS` floor and only uses the fast computed delay once the
+   * new token's `exp` is confirmed to have moved past the previous one.
    */
   private async renewNow(): Promise<void> {
     if (!this.opts.refresh) return;
+    const prevExpSec = jwtExp(this.opts.token);
+    let floor = true;
     try {
-      const t = await this.opts.refresh();
+      const t = await this.opts.refresh(this.opts.token);
       if (t) {
+        const newExpSec = jwtExp(t);
         this.updateToken(t);
         const ws = this.ws;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "token_renew", token: t }));
         }
+        floor = !(newExpSec !== undefined && prevExpSec !== undefined && newExpSec > prevExpSec);
       }
     } catch {
       /* best-effort */
     } finally {
-      this.armRenewalTimer();
+      this.armRenewalTimer(floor ? RENEW_SKEW_SECONDS * 1000 : undefined);
     }
   }
 
