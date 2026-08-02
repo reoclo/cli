@@ -20,6 +20,10 @@ interface MockGateway {
   sendToCli: (msg: object) => void;
   /** Called for every frame received from the CLI (optional override) */
   onClientFrame?: (msg: Record<string, unknown>) => void;
+  /** Upgrade-request headers captured for every WS connection, in order (index 0 = first
+   *  connect, index 1 = first reconnect, etc.) — lets reconnect tests assert on the token
+   *  the CLI presented on THAT specific connection. */
+  upgradeHeaders: Record<string, string | string[] | undefined>[];
 }
 
 interface MockGatewayOpts {
@@ -31,10 +35,12 @@ interface MockGatewayOpts {
 async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway> {
   const wss = new WebSocketServer({ port: 0 });
   const received: object[] = [];
+  const upgradeHeaders: Record<string, string | string[] | undefined>[] = [];
   let activeWs: WebSocket | null = null;
   let onClientFrame: ((msg: Record<string, unknown>) => void) | undefined;
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    upgradeHeaders.push(req.headers);
     activeWs = ws;
     ws.on("error", () => { /* swallow errors on forced close */ });
     ws.on("message", (raw) => {
@@ -67,6 +73,7 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
   const gw: MockGateway = {
     url: `ws://127.0.0.1:${port}`,
     received,
+    upgradeHeaders,
     sendToCli: (msg) => activeWs?.send(JSON.stringify(msg)),
     dropConnections: () => {
       for (const client of wss.clients) {
@@ -84,23 +91,40 @@ async function startMockGateway(opts: MockGatewayOpts = {}): Promise<MockGateway
       }
     },
     stop: () =>
-      new Promise((r) => {
+      new Promise<void>((r) => {
         for (const client of wss.clients) {
           (client as unknown as { _socket?: { destroy(): void } })._socket?.destroy();
         }
-        // Bun v1.3.11: wss.close() does not fire its callback when clients=0.
-        // Work around by resolving immediately when there are no active clients.
-        if (wss.clients.size === 0) {
-          wss.close();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
           r();
-        } else {
-          wss.close(() => r());
-        }
+        };
+        // Bun v1.3.11: wss.close()'s callback is unreliable — it can fail to
+        // fire when clients=0, and also in a race where a just-destroyed
+        // client (e.g. from a completed reconnect test) hasn't yet been
+        // pruned from wss.clients. Race it against a short timeout so a
+        // flaky callback never wedges a test's afterEach.
+        const timer = setTimeout(finish, 300);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        wss.close(() => {
+          clearTimeout(timer);
+          finish();
+        });
       }),
     get onClientFrame() { return onClientFrame; },
     set onClientFrame(fn) { onClientFrame = fn; },
   };
   return gw;
+}
+
+/** Build a syntactically-valid (unsigned) JWT carrying only an `exp` claim,
+ *  so jwtExp() can decode it for the renewal-timer tests. */
+function makeJwt(expSeconds: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ exp: expSeconds })).toString("base64url");
+  return `${header}.${payload}.sig`;
 }
 
 describe("TunnelSession — forward TCP", () => {
@@ -755,5 +779,162 @@ describe("TunnelSession — fatal close codes", () => {
 
     await session.stop();
     await gw.stop();
+  });
+});
+
+describe("TunnelSession — updateToken", () => {
+  it("changes the token used on the NEXT (reconnect) connection", async () => {
+    const gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      forwards: [
+        { localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" },
+      ],
+      reconnectDeadlineMs: 10_000,
+    });
+    await session.start();
+    expect(gw.upgradeHeaders[0]?.authorization).toBe("Bearer t1");
+
+    session.updateToken("t2");
+
+    // 4408 is NOT in FATAL_CLOSE_CODES → retryable, so the CLI reconnects.
+    gw.closeActiveConnection(4408, "idle timeout");
+
+    // Wait for the reconnect's upgrade request to land (BACKOFF_BASE_MS = 500ms).
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && gw.upgradeHeaders.length < 2) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    expect(gw.upgradeHeaders.length).toBeGreaterThanOrEqual(2);
+    expect(gw.upgradeHeaders[1]?.authorization).toBe("Bearer t2");
+
+    await session.stop();
+    await gw.stop();
+  });
+});
+
+describe("TunnelSession — proactive token renewal", () => {
+  let gw: MockGateway;
+  afterEach(async () => { await gw?.stop(); });
+
+  it("renewNow() refreshes, adopts the token, and sends token_renew upstream", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      refresh: () => Promise.resolve("t2"),
+    });
+    await session.start();
+
+    await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+
+    // ws.send() writes to the socket asynchronously; wait for the frame to
+    // actually land at the mock gateway rather than asserting immediately.
+    const deadline = Date.now() + 1000;
+    while (
+      Date.now() < deadline &&
+      !gw.received.some((m: object) => (m as { type?: string }).type === "token_renew")
+    ) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    expect(gw.received).toContainEqual({ type: "token_renew", token: "t2" });
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t2");
+
+    await session.stop();
+  });
+
+  it("renewNow() with a null refresh result does not send a frame or change the token", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "t1",
+      refresh: () => Promise.resolve(null),
+    });
+    await session.start();
+
+    await (session as unknown as { renewNow: () => Promise<void> }).renewNow();
+
+    expect(
+      gw.received.some((m: object) => (m as { type?: string }).type === "token_renew"),
+    ).toBe(false);
+    expect((session as unknown as { opts: { token: string } }).opts.token).toBe("t1");
+
+    await session.stop();
+  });
+
+  it("arms a renewal timer on connect when refresh is set, and stop() clears it", async () => {
+    gw = await startMockGateway();
+    const farExpirySeconds = Math.floor(Date.now() / 1000) + 3600; // 1 hour out
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: makeJwt(farExpirySeconds),
+      refresh: () => Promise.resolve("t2"),
+    });
+    await session.start();
+
+    const internal = session as unknown as { renewTimer?: ReturnType<typeof setTimeout> };
+    expect(internal.renewTimer).toBeDefined();
+
+    await session.stop();
+    expect(internal.renewTimer).toBeUndefined();
+  });
+
+  it("does not arm a renewal timer when refresh is not supplied", async () => {
+    gw = await startMockGateway();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+    });
+    await session.start();
+
+    const internal = session as unknown as { renewTimer?: ReturnType<typeof setTimeout> };
+    expect(internal.renewTimer).toBeUndefined();
+
+    await session.stop();
+  });
+
+  it("token_renew_ack is a no-op — no status change, no throw", async () => {
+    gw = await startMockGateway();
+    const statuses: string[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s) => statuses.push(s),
+    });
+    await session.start();
+    const statusesBeforeAck = [...statuses];
+
+    gw.sendToCli({ type: "token_renew_ack" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(statuses).toEqual(statusesBeforeAck);
+
+    await session.stop();
+  });
+
+  it("token_renew_error surfaces via onStatus without crashing the session", async () => {
+    gw = await startMockGateway();
+    const statuses: { s: string; reason?: string }[] = [];
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      onStatus: (s, reason) => statuses.push({ s, reason }),
+    });
+    await session.start();
+
+    gw.sendToCli({ type: "token_renew_error", message: "x" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(
+      statuses.some((x) => x.s === "reconnecting" && x.reason === "token renewal rejected"),
+    ).toBe(true);
+
+    // The session must still be usable — no crash, WS stays open.
+    expect(gw.received.some((m: object) => (m as { type?: string }).type === "close")).toBe(false);
+
+    await session.stop();
   });
 });

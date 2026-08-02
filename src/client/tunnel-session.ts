@@ -2,6 +2,8 @@ import net from "node:net";
 import dgram from "node:dgram";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
+import { jwtExp } from "../auth/renew";
+import { PROACTIVE_SKEW_MS } from "../auth/proactive";
 
 export type Proto = "tcp" | "udp";
 
@@ -49,6 +51,14 @@ export interface TunnelSessionOptions {
   reverses?: ReverseSpec[];
   reconnectDeadlineMs?: number; // default 5 * 60_000
   onStatus?: (s: SessionStatus, reason?: string) => void;
+  /** Refresh the access token before it expires. Returns the new token, or
+   *  null on a transient failure (the loop re-arms coarsely and retries
+   *  later rather than treating a null as fatal). Absent for credentials
+   *  that don't support renewal (e.g. --token / automation-key). */
+  refresh?: () => Promise<string | null>;
+  /** ISO timestamp the caller already knows the current token expires at.
+   *  Used only as a fallback when `token` isn't a parseable JWT. */
+  accessTokenExpiresAt?: string;
 }
 
 export interface ReadyState {
@@ -77,6 +87,10 @@ interface UdpReverseStream {
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const UDP_IDLE_MS = 60_000;
+/** Renew this long before the token's `exp`. Shares the same skew as the
+ *  bootstrap-side proactive refresh (src/auth/proactive.ts), converted to
+ *  seconds since jwtExp() works in seconds-since-epoch. */
+const RENEW_SKEW_SECONDS = PROACTIVE_SKEW_MS / 1000;
 
 export class TunnelSession {
   private ws?: WebSocket;
@@ -93,6 +107,8 @@ export class TunnelSession {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   /** Timestamp of the first consecutive disconnect; null when connected. */
   private reconnectStartedAt: number | null = null;
+  /** Proactive token-renewal timer; armed on connect, cleared on stop/close. */
+  private renewTimer?: ReturnType<typeof setTimeout>;
   private opts: TunnelSessionOptions & { reconnectDeadlineMs: number };
 
   /** Active reverse listeners: listen_id → ReverseSpec (for inbound tunnel_open routing) */
@@ -122,6 +138,7 @@ export class TunnelSession {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    this.clearRenewalTimer();
     for (const s of this.tcpListeners) s.close();
     for (const s of this.udpListeners) s.close();
     for (const [id, s] of this.streams.entries()) {
@@ -156,6 +173,80 @@ export class TunnelSession {
     this.opts.onStatus?.(s, reason);
   }
 
+  /**
+   * Update the bearer token used for future (re)connects. `connect()` reads
+   * `this.opts.token` fresh on every call, so a reconnect after this picks
+   * up the new token automatically — no other reconnect plumbing needed.
+   */
+  updateToken(newToken: string): void {
+    this.opts.token = newToken;
+  }
+
+  private clearRenewalTimer(): void {
+    if (this.renewTimer !== undefined) {
+      clearTimeout(this.renewTimer);
+      this.renewTimer = undefined;
+    }
+  }
+
+  /** Milliseconds until the current token should be proactively renewed. */
+  private renewalDelayMs(): number {
+    const expSec = jwtExp(this.opts.token);
+    if (expSec !== undefined) {
+      return Math.max(0, (expSec - RENEW_SKEW_SECONDS) * 1000 - Date.now());
+    }
+    // Opaque or malformed token: fall back to the expiry the caller supplied
+    // out of band, if any.
+    if (this.opts.accessTokenExpiresAt) {
+      const expMs = Date.parse(this.opts.accessTokenExpiresAt);
+      if (!Number.isNaN(expMs)) {
+        return Math.max(0, expMs - RENEW_SKEW_SECONDS * 1000 - Date.now());
+      }
+    }
+    // No usable expiry signal at all: re-check on a coarse interval instead
+    // of never renewing.
+    return RENEW_SKEW_SECONDS * 1000;
+  }
+
+  /**
+   * Arm a timer to proactively renew the token before it expires. Only runs
+   * when the caller supplied `opts.refresh`. `.unref()`d so it never keeps
+   * the process alive on its own.
+   */
+  private armRenewalTimer(): void {
+    this.clearRenewalTimer();
+    if (!this.opts.refresh || this.stopped) return;
+    const timer = setTimeout(() => void this.renewNow(), this.renewalDelayMs());
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.renewTimer = timer;
+  }
+
+  /**
+   * Best-effort proactive token renewal: refresh, adopt the new token for
+   * the next (re)connect, and push it to the gateway on the live WS so the
+   * CURRENT connection also keeps working. A failed or null refresh is
+   * swallowed — the reactive fatal-close path (4401) is the fallback.
+   * Always re-arms, success or not, so one transient refresh failure
+   * doesn't end renewal for the rest of the session.
+   */
+  private async renewNow(): Promise<void> {
+    if (!this.opts.refresh) return;
+    try {
+      const t = await this.opts.refresh();
+      if (t) {
+        this.updateToken(t);
+        const ws = this.ws;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "token_renew", token: t }));
+        }
+      }
+    } catch {
+      /* best-effort */
+    } finally {
+      this.armRenewalTimer();
+    }
+  }
+
   private async connect(): Promise<void> {
     if (this.stopped) return;
     this.status(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
@@ -176,6 +267,7 @@ export class TunnelSession {
         this.reconnectAttempt = 0;
         this.reconnectStartedAt = null; // success — clear the disconnect timer
         this.status("active");
+        this.armRenewalTimer();
         ws.on("message", (raw) => this.onWsMessage(raw));
         ws.on("close", (code: number, reasonBuf: Buffer) =>
           this.onWsClose(code, reasonBuf?.toString() || undefined),
@@ -278,6 +370,9 @@ export class TunnelSession {
   }
 
   private onWsClose(code?: number, reason?: string): void {
+    // The WS this timer would have sent token_renew on is gone; a fresh
+    // timer is armed from connect()'s onOpen once (if) we reconnect.
+    this.clearRenewalTimer();
     // A full WS reconnect is a clean slate — any prior runner-interrupt state
     // (signalled over the now-dead WS) no longer applies. Clear it so the
     // accept-guard doesn't stay stuck after the WS comes back.
@@ -517,6 +612,21 @@ export class TunnelSession {
       this.interrupted = false;
       this.rearmReverseListeners();
       this.opts.onStatus?.("active");
+      return;
+    }
+
+    // Gateway's reply to our token_renew frame (sent from renewNow()).
+    if (msg.type === "token_renew_ack") {
+      // No-op: the token was already adopted locally in renewNow(); this
+      // just confirms the gateway applied it too.
+      return;
+    }
+    if (msg.type === "token_renew_error") {
+      // The gateway rejected the renewed token. Do not crash and do not
+      // drop the WS ourselves — the current token may still be good for a
+      // while; if it truly expires the gateway will close with 4401 and the
+      // fatal-close path takes over.
+      this.status("reconnecting", "token renewal rejected");
       return;
     }
 
