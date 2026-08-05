@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability } from "../client/command-meta";
+import { EXIT } from "../client/exit-codes";
 import {
   listProjects,
   listSecrets,
@@ -23,6 +24,9 @@ import {
   importReportText,
 } from "../secrets/import";
 import type { SecretSource } from "../secrets/types";
+import { collectRefs, parseTemplate, renderInject, type ResolvedSecrets } from "../secrets/template";
+import { machineResolver, humanResolver } from "../secrets/resolvers";
+import { collectCiMeta } from "./run";
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
   const byId = projects.find((p) => p.id === nameOrId);
@@ -30,6 +34,18 @@ export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string
   const byName = projects.filter((p) => p.name === nameOrId);
   if (byName.length === 1 && byName[0]) return byName[0].id;
   throw new Error(`secret project not found: ${nameOrId}`);
+}
+
+/** Guard for `secrets inject -o`: refuse to clobber an existing file unless
+ *  --force was passed. */
+export function assertOutputWritable(exists: boolean, force: boolean, path: string): void {
+  if (exists && !force) {
+    const err = new Error(`refusing to overwrite ${path}; pass --force`) as Error & {
+      exitCode: number;
+    };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
 }
 
 export interface ImportFlags {
@@ -223,5 +239,45 @@ export function registerSecrets(program: Command): void {
         }
       }),
     "secret:write",
+  );
+
+  requireCapability(
+    g
+      .command("inject")
+      .description("render an op:// template, resolving each ref from Reoclo (op inject drop-in)")
+      .requiredOption("-i, --input <path>", "template file containing op:// references")
+      .option("-o, --output <path>", "write the result to a file (default: stdout)")
+      .option("-f, --force", "overwrite an existing --output file")
+      .addHelpText(
+        "after",
+        `
+Examples:
+  reoclo secrets inject -i .env.tpl -o .env
+  reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env`,
+      )
+      .action(async (opts: { input: string; output?: string; force?: boolean }) => {
+        const lines = parseTemplate(await Bun.file(opts.input).text());
+        const { refs } = collectRefs(lines);
+
+        const ctx = await bootstrap();
+        let resolved: ResolvedSecrets = new Map();
+        if (refs.length > 0) {
+          const resolver =
+            ctx.tokenType === "automation"
+              ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
+              : humanResolver(ctx.client, requireTenantId(ctx));
+          resolved = await resolver(refs);
+        }
+
+        const rendered = renderInject(lines, resolved);
+        if (opts.output) {
+          assertOutputWritable(await Bun.file(opts.output).exists(), opts.force ?? false, opts.output);
+          await Bun.write(opts.output, rendered);
+          process.stderr.write(`✓ wrote ${opts.output}\n`);
+        } else {
+          process.stdout.write(rendered);
+        }
+      }),
+    "secret:reveal",
   );
 }
