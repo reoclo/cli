@@ -3,7 +3,7 @@ import { bootstrap } from "../client/bootstrap";
 import { EXIT } from "../client/exit-codes";
 import { detectKeyType } from "../client/routing";
 import { accessibleProjects, mergeEnv, openSession, resolve } from "../client/secrets";
-import { buildEnv, collectRefs, parseTemplate } from "../secrets/template";
+import { assertInputExists, buildEnv, collectRefs, parseTemplate } from "../secrets/template";
 import { machineResolver } from "../secrets/resolvers";
 
 /**
@@ -131,6 +131,7 @@ Examples:
 
         let values: Record<string, string>;
         if (opts.envFile) {
+          assertInputExists(await Bun.file(opts.envFile).exists(), opts.envFile);
           const lines = parseTemplate(await Bun.file(opts.envFile).text());
           const { refs } = collectRefs(lines);
           const resolved =

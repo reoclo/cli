@@ -9,6 +9,7 @@ import {
   renderInject,
   ResolutionError,
   buildEnv,
+  assertInputExists,
 } from "../../../src/secrets/template";
 import { EXIT } from "../../../src/client/exit-codes";
 
@@ -96,6 +97,41 @@ describe("lookup", () => {
   });
   test("throws when the project itself is absent", () => {
     expect(() => lookup(resolved, { vault: "missing", item: "dep", field: "A" })).toThrow(ResolutionError);
+  });
+  test("a field literally named 'toString' is treated as missing, not an inherited function", () => {
+    const withPrototypeCollision = new Map([["prod", { A: "secret-a" }]]);
+    let err: unknown;
+    try {
+      lookup(withPrototypeCollision, { vault: "prod", item: "dep", field: "toString" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ResolutionError);
+    expect((err as { exitCode: number }).exitCode).toBe(EXIT.RESOLUTION_FAILED);
+    expect((err as Error).message).toContain("op://prod/dep/toString");
+  });
+  test("a field literally named 'constructor' is treated as missing, not an inherited function", () => {
+    const withPrototypeCollision = new Map([["prod", { A: "secret-a" }]]);
+    expect(() =>
+      lookup(withPrototypeCollision, { vault: "prod", item: "dep", field: "constructor" }),
+    ).toThrow(ResolutionError);
+  });
+});
+
+describe("assertInputExists", () => {
+  test("does not throw when the file exists", () => {
+    expect(() => assertInputExists(true, ".env.tpl")).not.toThrow();
+  });
+  test("throws TemplateError (exit MISUSE) naming the path when the file is missing", () => {
+    let err: unknown;
+    try {
+      assertInputExists(false, ".env.tpl");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TemplateError);
+    expect((err as { exitCode: number }).exitCode).toBe(EXIT.MISUSE);
+    expect((err as Error).message).toContain(".env.tpl");
   });
 });
 

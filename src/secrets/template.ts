@@ -35,6 +35,15 @@ export class ResolutionError extends Error {
   }
 }
 
+/** Guard for reading a template file: refuse a missing path with a clean
+ *  MISUSE(2) instead of letting `Bun.file(path).text()` reject with a raw
+ *  ENOENT (generic exit 1). A mistyped path is authoring MISUSE. */
+export function assertInputExists(exists: boolean, path: string): void {
+  if (!exists) {
+    throw new TemplateError(`template file not found: ${path}`);
+  }
+}
+
 const OP_PREFIX = "op://";
 
 export function parseOpRef(raw: string): OpRef | null {
@@ -94,11 +103,14 @@ export function collectRefs(lines: TemplateLine[]): { projects: string[]; refs: 
 }
 
 export function lookup(resolved: ResolvedSecrets, ref: OpRef): string {
-  const value = resolved.get(ref.vault)?.[ref.field];
-  if (value === undefined) {
+  const record = resolved.get(ref.vault);
+  // Object.hasOwn (not `?.[field] === undefined`) so a field literally named
+  // toString/constructor/valueOf/hasOwnProperty is treated as missing rather
+  // than resolving to an inherited prototype member.
+  if (!record || !Object.hasOwn(record, ref.field)) {
     throw new ResolutionError(`${opRefString(ref)} not found in project '${ref.vault}'`);
   }
-  return value;
+  return record[ref.field] as string;
 }
 
 export function buildEnv(lines: TemplateLine[], resolved: ResolvedSecrets): Record<string, string> {

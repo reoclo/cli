@@ -24,7 +24,13 @@ import {
   importReportText,
 } from "../secrets/import";
 import type { SecretSource } from "../secrets/types";
-import { collectRefs, parseTemplate, renderInject, type ResolvedSecrets } from "../secrets/template";
+import {
+  assertInputExists,
+  collectRefs,
+  parseTemplate,
+  renderInject,
+  type ResolvedSecrets,
+} from "../secrets/template";
 import { machineResolver, humanResolver } from "../secrets/resolvers";
 import { collectCiMeta } from "./run";
 
@@ -256,8 +262,16 @@ Examples:
   reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env`,
       )
       .action(async (opts: { input: string; output?: string; force?: boolean }) => {
+        // All cheap, IO-only validation happens up front, before bootstrap()
+        // or any network resolution: a user who forgot --force (or mistyped
+        // --input) should never spend reveals + an audit entry finding out.
+        assertInputExists(await Bun.file(opts.input).exists(), opts.input);
         const lines = parseTemplate(await Bun.file(opts.input).text());
         const { refs } = collectRefs(lines);
+
+        if (opts.output) {
+          assertOutputWritable(await Bun.file(opts.output).exists(), opts.force ?? false, opts.output);
+        }
 
         const ctx = await bootstrap();
         let resolved: ResolvedSecrets = new Map();
@@ -271,7 +285,6 @@ Examples:
 
         const rendered = renderInject(lines, resolved);
         if (opts.output) {
-          assertOutputWritable(await Bun.file(opts.output).exists(), opts.force ?? false, opts.output);
           await Bun.write(opts.output, rendered);
           process.stderr.write(`✓ wrote ${opts.output}\n`);
         } else {
