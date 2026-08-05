@@ -8,6 +8,7 @@ import {
   lookup,
   renderInject,
   ResolutionError,
+  buildEnv,
 } from "../../../src/secrets/template";
 import { EXIT } from "../../../src/client/exit-codes";
 
@@ -108,5 +109,17 @@ describe("renderInject", () => {
     const lines = parseTemplate("P=op://prod/dep/P");
     const resolved = new Map([["prod", { P: "a$1b" }]]);
     expect(renderInject(lines, resolved)).toBe("P=a$1b");
+  });
+});
+
+describe("buildEnv", () => {
+  test("resolves refs, keeps literals (de-quoted), skips comments/blanks", () => {
+    const lines = parseTemplate('# c\n\nA=op://prod/dep/A\nLIT="plain value"\nRAW=x');
+    const resolved = new Map([["prod", { A: "aaa" }]]);
+    expect(buildEnv(lines, resolved)).toEqual({ A: "aaa", LIT: "plain value", RAW: "x" });
+  });
+  test("propagates ResolutionError for a missing key (so run never spawns)", () => {
+    const lines = parseTemplate("A=op://prod/dep/MISSING");
+    expect(() => buildEnv(lines, new Map([["prod", {}]]))).toThrow();
   });
 });

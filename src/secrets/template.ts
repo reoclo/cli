@@ -101,6 +101,15 @@ export function lookup(resolved: ResolvedSecrets, ref: OpRef): string {
   return value;
 }
 
+export function buildEnv(lines: TemplateLine[], resolved: ResolvedSecrets): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const l of lines) {
+    if (l.kind === "ref") out[l.key] = lookup(resolved, l.ref);
+    else if (l.kind === "literal") out[l.key] = l.value;
+  }
+  return out;
+}
+
 export function renderInject(lines: TemplateLine[], resolved: ResolvedSecrets): string {
   return lines
     .map((l) => {
