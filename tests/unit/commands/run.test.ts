@@ -1,6 +1,11 @@
 // tests/unit/commands/run.test.ts
 import { describe, expect, test } from "bun:test";
-import { collectCiMeta, selectProjectIds, splitRunArgs } from "../../../src/commands/run";
+import {
+  assertEnvFileProjectExclusive,
+  collectCiMeta,
+  selectProjectIds,
+  splitRunArgs,
+} from "../../../src/commands/run";
 import { EXIT } from "../../../src/client/exit-codes";
 import { detectKeyType } from "../../../src/client/routing";
 
@@ -104,6 +109,20 @@ describe("selectProjectIds", () => {
   test("fails closed — never returns an empty id list for the caller to resolve", () => {
     expect(() => selectProjectIds([], [])).toThrow();
     expect(() => selectProjectIds(P, ["nope"])).toThrow();
+  });
+});
+
+describe("assertEnvFileProjectExclusive", () => {
+  test("throws MISUSE when both --env-file and --project are given", () => {
+    let err: unknown;
+    try { assertEnvFileProjectExclusive(".env.tpl", ["prod"]); } catch (e) { err = e; }
+    expect((err as { exitCode: number }).exitCode).toBe(EXIT.MISUSE);
+  });
+  test("allows --env-file alone", () => {
+    expect(() => assertEnvFileProjectExclusive(".env.tpl", [])).not.toThrow();
+  });
+  test("allows --project alone (no env-file)", () => {
+    expect(() => assertEnvFileProjectExclusive(undefined, ["prod"])).not.toThrow();
   });
 });
 

@@ -3,6 +3,27 @@ import { bootstrap } from "../client/bootstrap";
 import { EXIT } from "../client/exit-codes";
 import { detectKeyType } from "../client/routing";
 import { accessibleProjects, mergeEnv, openSession, resolve } from "../client/secrets";
+import { buildEnv, collectRefs, parseTemplate } from "../secrets/template";
+import { machineResolver } from "../secrets/resolvers";
+
+/**
+ * `--env-file` resolves projects implicitly from each `op://` reference's
+ * vault segment, so pairing it with `--project` would leave one of the two
+ * scoping mechanisms silently ignored. Reject the combination outright
+ * rather than guess which one wins.
+ */
+export function assertEnvFileProjectExclusive(
+  envFile: string | undefined,
+  project: string[],
+): void {
+  if (envFile && project.length > 0) {
+    const err = new Error(
+      "--env-file already scopes projects via each op:// vault; drop --project",
+    ) as Error & { exitCode: number };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
+}
 
 export function splitRunArgs(rest: string[]): { cmd: string; args: string[] } {
   if (rest.length === 0) {
@@ -76,6 +97,10 @@ export function registerRun(program: Command): void {
       [] as string[],
     )
     .option("--commit <sha>", "commit sha for the audit trail")
+    .option(
+      "--env-file <path>",
+      "render an op:// template (op inject/run drop-in) instead of dumping all granted secrets",
+    )
     .argument("[command...]", "command to run (after --)")
     .addHelpText(
       "after",
@@ -83,45 +108,60 @@ export function registerRun(program: Command): void {
 Examples:
   REOCLO_AUTOMATION_KEY=rca_... reoclo run -- node deploy.js
   REOCLO_AUTOMATION_KEY=rca_... reoclo run -p prod -- ./migrate.sh
-  REOCLO_AUTOMATION_KEY=rca_... reoclo run --commit abc123 -- ./release.sh`,
+  REOCLO_AUTOMATION_KEY=rca_... reoclo run --commit abc123 -- ./release.sh
+  REOCLO_AUTOMATION_KEY=rca_... reoclo run --env-file .env.tpl -- ./migrate.sh`,
     )
-    .action(async (command: string[], opts: { project: string[]; commit?: string }) => {
-      const { cmd, args } = splitRunArgs(command);
+    .action(
+      async (command: string[], opts: { project: string[]; commit?: string; envFile?: string }) => {
+        const { cmd, args } = splitRunArgs(command);
+        assertEnvFileProjectExclusive(opts.envFile, opts.project);
 
-      const ctx = await bootstrap();
+        const ctx = await bootstrap();
 
-      // Precheck: this command requires an automation key (rca_ or rss_).
-      // If bootstrap resolved a tenant/OAuth token, fail fast before hitting
-      // the automation surface.
-      if (detectKeyType(ctx.token) === "tenant") {
-        const err = new Error(
-          "reoclo run requires an automation key; set REOCLO_AUTOMATION_KEY",
-        ) as Error & { exitCode: number };
-        err.exitCode = EXIT.DENIED;
-        throw err;
-      }
+        // Precheck: this command requires an automation key (rca_ or rss_).
+        // If bootstrap resolved a tenant/OAuth token, fail fast before hitting
+        // the automation surface.
+        if (detectKeyType(ctx.token) === "tenant") {
+          const err = new Error(
+            "reoclo run requires an automation key; set REOCLO_AUTOMATION_KEY",
+          ) as Error & { exitCode: number };
+          err.exitCode = EXIT.DENIED;
+          throw err;
+        }
 
-      const ids = selectProjectIds(await accessibleProjects(ctx.client), opts.project);
+        let values: Record<string, string>;
+        if (opts.envFile) {
+          const lines = parseTemplate(await Bun.file(opts.envFile).text());
+          const { refs } = collectRefs(lines);
+          const resolved =
+            refs.length === 0
+              ? new Map<string, Record<string, string>>()
+              : await machineResolver(ctx.client, collectCiMeta(process.env, opts.commit))(refs);
+          values = buildEnv(lines, resolved);
+        } else {
+          const ids = selectProjectIds(await accessibleProjects(ctx.client), opts.project);
 
-      const session = await openSession(
-        ctx.client,
-        ids,
-        collectCiMeta(process.env, opts.commit),
-      );
+          const session = await openSession(
+            ctx.client,
+            ids,
+            collectCiMeta(process.env, opts.commit),
+          );
 
-      // Re-resolve using the short-lived rss_ session token so the API can
-      // record which secrets were consumed and by which session.
-      const sessionClient = ctx.client.withToken(session.session_token);
-      const { values } = await resolve(sessionClient, ids);
+          // Re-resolve using the short-lived rss_ session token so the API can
+          // record which secrets were consumed and by which session.
+          const sessionClient = ctx.client.withToken(session.session_token);
+          ({ values } = await resolve(sessionClient, ids));
+        }
 
-      const child = Bun.spawn([cmd, ...args], {
-        env: mergeEnv(process.env, values),
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      });
+        const child = Bun.spawn([cmd, ...args], {
+          env: mergeEnv(process.env, values),
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
 
-      const code = await child.exited;
-      process.exit(code);
-    });
+        const code = await child.exited;
+        process.exit(code);
+      },
+    );
 }
