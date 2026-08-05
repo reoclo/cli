@@ -78,3 +78,37 @@ export function parseTemplate(text: string): TemplateLine[] {
     return { kind: "literal", key, value: inner, raw };
   });
 }
+
+export type ResolvedSecrets = Map<string, Record<string, string>>;
+
+export function collectRefs(lines: TemplateLine[]): { projects: string[]; refs: OpRef[] } {
+  const refs: OpRef[] = [];
+  const projects = new Set<string>();
+  for (const l of lines) {
+    if (l.kind === "ref") {
+      refs.push(l.ref);
+      projects.add(l.ref.vault);
+    }
+  }
+  return { projects: [...projects], refs };
+}
+
+export function lookup(resolved: ResolvedSecrets, ref: OpRef): string {
+  const value = resolved.get(ref.vault)?.[ref.field];
+  if (value === undefined) {
+    throw new ResolutionError(`${opRefString(ref)} not found in project '${ref.vault}'`);
+  }
+  return value;
+}
+
+export function renderInject(lines: TemplateLine[], resolved: ResolvedSecrets): string {
+  return lines
+    .map((l) => {
+      if (l.kind !== "ref") return l.raw;
+      const value = lookup(resolved, l.ref);
+      // Function replacer so `$` in the value is inserted verbatim, and only the
+      // op ref token is replaced — quotes and any surrounding text stay intact.
+      return l.raw.replace(opRefString(l.ref), () => value);
+    })
+    .join("\n");
+}

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { parseOpRef, opRefString, parseTemplate, TemplateError } from "../../../src/secrets/template";
+import {
+  parseOpRef,
+  opRefString,
+  parseTemplate,
+  TemplateError,
+  collectRefs,
+  lookup,
+  renderInject,
+  ResolutionError,
+} from "../../../src/secrets/template";
 import { EXIT } from "../../../src/client/exit-codes";
 
 describe("parseOpRef", () => {
@@ -58,5 +67,46 @@ describe("parseTemplate", () => {
     expect(err).toBeInstanceOf(TemplateError);
     expect((err as { exitCode: number }).exitCode).toBe(EXIT.MISUSE);
     expect((err as Error).message).toContain("line 1");
+  });
+});
+
+describe("collectRefs", () => {
+  test("returns distinct projects and every ref", () => {
+    const lines = parseTemplate(
+      "A=op://prod/dep/A\nB=op://prod/dep/B\nC=op://staging/dep/C\n# x\nLIT=plain",
+    );
+    const { projects, refs } = collectRefs(lines);
+    expect(projects.sort()).toEqual(["prod", "staging"]);
+    expect(refs.map((r) => r.field).sort()).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("lookup", () => {
+  const resolved = new Map([["prod", { A: "secret-a" }]]);
+  test("returns the value for a present project+key", () => {
+    expect(lookup(resolved, { vault: "prod", item: "dep", field: "A" })).toBe("secret-a");
+  });
+  test("throws ResolutionError (exit 6) naming the op path when key missing", () => {
+    let err: unknown;
+    try { lookup(resolved, { vault: "prod", item: "dep", field: "NOPE" }); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ResolutionError);
+    expect((err as { exitCode: number }).exitCode).toBe(EXIT.RESOLUTION_FAILED);
+    expect((err as Error).message).toContain("op://prod/dep/NOPE");
+  });
+  test("throws when the project itself is absent", () => {
+    expect(() => lookup(resolved, { vault: "missing", item: "dep", field: "A" })).toThrow(ResolutionError);
+  });
+});
+
+describe("renderInject", () => {
+  test("substitutes the op ref, preserving quotes and surrounding text", () => {
+    const lines = parseTemplate('# header\nA=op://prod/dep/A\nJWT="op://prod/dep/JWT"\nLIT=plain\n');
+    const resolved = new Map([["prod", { A: "aaa", JWT: "line1\nline2" }]]);
+    expect(renderInject(lines, resolved)).toBe('# header\nA=aaa\nJWT="line1\nline2"\nLIT=plain\n');
+  });
+  test("a resolved value containing $ is inserted literally (no regex replacement)", () => {
+    const lines = parseTemplate("P=op://prod/dep/P");
+    const resolved = new Map([["prod", { P: "a$1b" }]]);
+    expect(renderInject(lines, resolved)).toBe("P=a$1b");
   });
 });
