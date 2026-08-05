@@ -49,6 +49,18 @@ describe("commandSupportedBy", () => {
     expect(commandSupportedBy("registry logout", "automation")).toBe(true);
   });
 
+  // `secrets inject` uses the same /secrets/open-session + /secrets/resolve
+  // automation endpoints as `run` — it must stay reachable under an
+  // automation key, and the pair must not silently regress independently.
+  test("automation keys support secrets inject, alongside run", () => {
+    expect(commandSupportedBy("secrets inject", "automation")).toBe(true);
+    expect(commandSupportedBy("run", "automation")).toBe(true);
+  });
+
+  test("automation keys reject secrets ls (not the injection path)", () => {
+    expect(commandSupportedBy("secrets ls", "automation")).toBe(false);
+  });
+
   test("automation keys reject containers restart (leaf-name collision fix)", () => {
     expect(commandSupportedBy("containers restart", "automation")).toBe(false);
   });
@@ -76,6 +88,7 @@ describe("automationAllowedCommands", () => {
       "registry login",
       "registry logout",
       "run",
+      "secrets inject",
       "shell",
     ]);
   });

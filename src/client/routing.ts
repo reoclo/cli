@@ -33,6 +33,7 @@ const AUTOMATION_ALLOWED = new Set([
   "registry logout",
   "deploy sync",
   "run",
+  "secrets inject",
 ]);
 
 /** Return true if a token of the given type can invoke this command path.
@@ -47,8 +48,9 @@ export function commandSupportedBy(commandPath: string, t: KeyType): boolean {
 
 /** The command paths an automation key may invoke, in declaration order.
  *  Exported so the rejection message names the real set. Restating the list
- *  by hand let it drift: it lost `run`, the one command that reads secrets
- *  with an automation key, and told operators the opposite of the truth.
+ *  by hand let it drift: it lost `run`, one of the two commands that read
+ *  secrets with an automation key (the other is `secrets inject`), and told
+ *  operators the opposite of the truth.
  */
 export function automationAllowedCommands(): string[] {
   return [...AUTOMATION_ALLOWED];
