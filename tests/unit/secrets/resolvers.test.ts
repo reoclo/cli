@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { machineResolver } from "../../../src/secrets/resolvers";
+import { humanResolver, machineResolver } from "../../../src/secrets/resolvers";
 import { ResolutionError } from "../../../src/secrets/template";
 import type { HttpClient } from "../../../src/client/http";
 import type { OpRef } from "../../../src/secrets/template";
@@ -78,5 +78,54 @@ describe("machineResolver", () => {
   test("no refs resolves to an empty map without any network call", async () => {
     const client = { get: () => { throw new Error("should not call"); } } as unknown as HttpClient;
     expect((await machineResolver(client, {})([])).size).toBe(0);
+  });
+});
+
+/** Minimal path-routing fake HttpClient for the human (OAuth) endpoints. */
+function humanFake(opts: {
+  projects: { id: string; name: string }[];
+  secrets: Record<string, { id: string; key: string; current_version: number }[]>; // pid -> secrets
+  reveal: Record<string, { key: string; value: string }>; // secretId -> revealed
+  onReveal?: (id: string) => void;
+}): HttpClient {
+  return {
+    get: (path: string) => {
+      if (path.endsWith("/secret-projects")) return Promise.resolve(opts.projects);
+      const m = path.match(/secret-projects\/([^/]+)\/secrets$/);
+      if (m) return Promise.resolve(opts.secrets[m[1]!] ?? []);
+      throw new Error(`unexpected GET ${path}`);
+    },
+    post: (path: string) => {
+      const m = path.match(/secrets\/([^/]+)\/reveal$/);
+      if (m) {
+        opts.onReveal?.(m[1]!);
+        return Promise.resolve(opts.reveal[m[1]!]);
+      }
+      throw new Error(`unexpected POST ${path}`);
+    },
+  } as unknown as HttpClient;
+}
+
+describe("humanResolver", () => {
+  test("reveals only the referenced keys, grouped per project", async () => {
+    const revealed: string[] = [];
+    const client = humanFake({
+      projects: [{ id: "pid1", name: "prod" }],
+      secrets: { pid1: [
+        { id: "s-a", key: "A", current_version: 1 },
+        { id: "s-b", key: "B", current_version: 1 },
+      ] },
+      reveal: { "s-a": { key: "A", value: "aaa" } },
+      onReveal: (id) => revealed.push(id),
+    });
+    const resolved = await humanResolver(client, "tid")([ref("prod", "A")]);
+    expect(resolved.get("prod")).toEqual({ A: "aaa" });
+    expect(revealed).toEqual(["s-a"]); // B never revealed
+  });
+
+  test("an unknown project throws ResolutionError", async () => {
+    const client = humanFake({ projects: [], secrets: {}, reveal: {} });
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(humanResolver(client, "tid")([ref("prod", "A")])).rejects.toBeInstanceOf(ResolutionError);
   });
 });

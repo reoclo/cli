@@ -5,7 +5,14 @@
 // under `../client/secrets`.
 
 import type { HttpClient } from "../client/http";
-import { accessibleProjects, openSession, resolve } from "../client/secrets";
+import {
+  accessibleProjects,
+  listProjects,
+  listSecrets,
+  openSession,
+  resolve,
+  revealSecret,
+} from "../client/secrets";
 import { ResolutionError, type OpRef, type ResolvedSecrets } from "./template";
 
 export type BatchResolver = (refs: OpRef[]) => Promise<ResolvedSecrets>;
@@ -37,6 +44,42 @@ export function machineResolver(
     for (let i = 0; i < wanted.length; i++) {
       const { values } = await resolve(sessionClient, [ids[i]!]);
       map.set(wanted[i]!, values);
+    }
+    return map;
+  };
+}
+
+/** Resolve op:// refs with an OAuth token: list projects, then reveal exactly
+ *  the referenced keys per project. */
+export function humanResolver(client: HttpClient, tenantId: string): BatchResolver {
+  return async (refs) => {
+    const map: ResolvedSecrets = new Map();
+    if (refs.length === 0) return map;
+
+    const projects = await listProjects(client, tenantId);
+    const neededByVault = new Map<string, Set<string>>();
+    for (const r of refs) {
+      const keys = neededByVault.get(r.vault) ?? new Set<string>();
+      keys.add(r.field);
+      neededByVault.set(r.vault, keys);
+    }
+
+    for (const [vault, keys] of neededByVault) {
+      const matches = projects.filter((p) => p.id === vault || p.name === vault);
+      const project = matches.length === 1 ? matches[0] : undefined;
+      if (!project) {
+        throw new ResolutionError(
+          `project '${vault}' is not accessible to this account or does not exist`,
+        );
+      }
+      const secrets = await listSecrets(client, tenantId, project.id);
+      const values: Record<string, string> = {};
+      for (const key of keys) {
+        const secret = secrets.find((s) => s.key === key);
+        if (!secret) continue; // absent -> lookup() throws ResolutionError naming the op path
+        values[key] = (await revealSecret(client, tenantId, secret.id)).value;
+      }
+      map.set(vault, values);
     }
     return map;
   };
