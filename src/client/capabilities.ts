@@ -7,13 +7,19 @@ export interface CapabilityGrant {
 }
 
 export interface CapabilitiesResponse {
-  grants: CapabilityGrant[];
+  capabilities: CapabilityGrant[];
 }
 
-/** Fetch the current user's effective capabilities (verbs only — scopes ignored client-side). */
+/** Fetch the current user's effective capabilities (verbs only — scopes ignored client-side).
+ *
+ *  The server (`GET /auth/me/capabilities` → `MeCapabilitiesResponse`) returns
+ *  `{ capabilities: [{ verb, scope_kind, scope_id }] }`. This reads that field
+ *  and flattens to the bare verb list the cache and the command-surface gate
+ *  expect. Reading the wrong field here silently degraded every login to an
+ *  empty capability cache (REO-167). */
 export async function fetchCapabilities(client: HttpClient): Promise<string[]> {
   const res = await client.get<CapabilitiesResponse>("/auth/me/capabilities");
-  return res.grants.map((g) => g.verb);
+  return (res.capabilities ?? []).map((g) => g.verb);
 }
 
 /** Check whether the cached capability list contains the given verb. */
