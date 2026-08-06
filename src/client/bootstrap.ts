@@ -125,6 +125,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   //
   // The legacy `REOCLO_API_KEY` env (tenant integration keys, rk_t_*) is no
   // longer honored — those keys are retired in favour of OAuth device flow.
+  // If it's set and no credential resolves below, a stderr hint points the
+  // caller at REOCLO_AUTOMATION_KEY instead.
   const flagToken = opts.token;
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
 
@@ -169,6 +171,11 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   }
 
   if (!token) {
+    if (process.env.REOCLO_API_KEY) {
+      process.stderr.write(
+        "REOCLO_API_KEY is not read by the CLI; set REOCLO_AUTOMATION_KEY instead.\n",
+      );
+    }
     const err = new Error("not authenticated — run 'reoclo login'") as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;

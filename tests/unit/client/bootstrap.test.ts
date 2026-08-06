@@ -62,6 +62,38 @@ test("REOCLO_API_KEY env is no longer respected (tenant integration keys retired
   expect((caught as { exitCode?: number }).exitCode).toBe(3);
 });
 
+test("hint is printed when REOCLO_API_KEY is set but no credential resolves", async () => {
+  process.env.REOCLO_API_KEY = "rk_t_legacy";
+  const writes: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: unknown): boolean => { writes.push(String(chunk)); return true; };
+  let caught: unknown = null;
+  try {
+    await bootstrap();
+  } catch (e) {
+    caught = e;
+  } finally {
+    process.stderr.write = orig;
+    delete process.env.REOCLO_API_KEY;
+  }
+  expect((caught as { exitCode?: number }).exitCode).toBe(3);
+  expect(writes.join("")).toContain("REOCLO_API_KEY is not read by the CLI");
+});
+
+test("no hint when REOCLO_API_KEY is unset and no credential resolves", async () => {
+  const writes: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: unknown): boolean => { writes.push(String(chunk)); return true; };
+  try {
+    await bootstrap();
+  } catch {
+    // expected exit 3
+  } finally {
+    process.stderr.write = orig;
+  }
+  expect(writes.join("")).not.toContain("REOCLO_API_KEY is not read");
+});
+
 test("REOCLO_AUTOMATION_KEY env is still respected", async () => {
   process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
   try {
