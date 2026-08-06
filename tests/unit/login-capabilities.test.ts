@@ -6,8 +6,9 @@ describe("buildProfileWithCapabilities", () => {
     const fakeClient = {
       get: mock((path: string) => {
         if (path === "/auth/me/capabilities") {
+          // Matches the server's MeCapabilitiesResponse: `{ capabilities: [...] }`.
           return Promise.resolve({
-            grants: [
+            capabilities: [
               { verb: "container:read", scope_kind: "*", scope_id: null },
               { verb: "container:exec", scope_kind: "*", scope_id: null },
             ],

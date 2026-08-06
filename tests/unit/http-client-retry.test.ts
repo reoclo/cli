@@ -43,8 +43,10 @@ describe("HttpClient 403 retry", () => {
         return Promise.resolve(textResponse("forbidden", 403));
       }
       if (u.includes("/auth/me/capabilities")) {
-        // Second call: caps refresh → success
-        return Promise.resolve(jsonResponse({ capabilities: ["cost:read"] }));
+        // Second call: caps refresh → success. Server shape is grant objects.
+        return Promise.resolve(
+          jsonResponse({ capabilities: [{ verb: "cost:read", scope_kind: "*", scope_id: null }] }),
+        );
       }
       // Third call: retry original → success
       return Promise.resolve(jsonResponse({ data: "ok" }));
@@ -74,5 +76,39 @@ describe("HttpClient 403 retry", () => {
     await expect(client.get("/cost/rollup")).rejects.toBeInstanceOf(PermissionError);
     expect(gatedCalls).toBe(2);   // original + one retry
     expect(capsCalls).toBe(1);    // caps refresh called exactly once
+  });
+
+  test("403 caps refresh persists verb strings, not raw grant objects (REO-167)", async () => {
+    const persisted: string[][] = [];
+    let callCount = 0;
+    globalThis.fetch = mock((url: string) => {
+      callCount++;
+      if (callCount === 1) return Promise.resolve(textResponse("forbidden", 403));
+      if (url.includes("/auth/me/capabilities")) {
+        return Promise.resolve(
+          jsonResponse({
+            capabilities: [
+              { verb: "container:read", scope_kind: "*", scope_id: null },
+              { verb: "server:exec", scope_kind: "*", scope_id: null },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({ data: "ok" }));
+    }) as unknown as typeof fetch;
+
+    const client = new HttpClient({
+      baseUrl: "https://api.example.com",
+      token: "sk_tenant_testtoken",
+      profile: "default",
+      onCapabilities: (_profile, caps) => {
+        persisted.push(caps);
+        return Promise.resolve();
+      },
+    });
+    await client.get("/cost/rollup");
+    // The cache must receive bare verb strings — persisting the grant objects is
+    // exactly what made the gate falsely deny every command.
+    expect(persisted).toEqual([["container:read", "server:exec"]]);
   });
 });

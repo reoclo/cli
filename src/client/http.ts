@@ -177,8 +177,13 @@ export class HttpClient {
       try {
         const capsRes = await this.doFetch("GET", "/auth/me/capabilities");
         if (capsRes.ok) {
-          const capsData = await capsRes.json() as { capabilities?: string[] };
-          const caps = capsData.capabilities ?? [];
+          // MeCapabilitiesResponse is `{ capabilities: [{ verb, ... }] }`. Flatten
+          // to bare verb strings — the shape the cache and the gate expect.
+          // Persisting the raw grant objects here was REO-167: a non-empty cache
+          // of objects made `capabilities.includes(verb)` always false and falsely
+          // denied every gated command.
+          const capsData = await capsRes.json() as { capabilities?: { verb: string }[] };
+          const caps = (capsData.capabilities ?? []).map((g) => g.verb);
           if (this.opts.profile) {
             const persist = this.opts.onCapabilities ?? _updateProfileCapabilities;
             void persist(this.opts.profile, caps);

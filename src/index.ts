@@ -37,6 +37,7 @@ import { registerDashboard } from "./commands/dashboard";
 import { registerInit } from "./commands/init";
 import { registerSecrets } from "./commands/secrets";
 import { registerRun } from "./commands/run";
+import { registerSync } from "./commands/sync";
 import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
 import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
@@ -114,6 +115,7 @@ if (import.meta.main) {
   registerInit(program);
   registerSecrets(program);
   registerRun(program);
+  registerSync(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
