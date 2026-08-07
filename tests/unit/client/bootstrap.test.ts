@@ -392,3 +392,52 @@ test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshab
   expect(typeof ctx.refresh).toBe("function");
   expect(ctx.accessTokenExpiresAt).toBe(futureExpiry);
 });
+
+// An oauth profile whose backend is an unreachable loopback address: any
+// attempt to reach the API (e.g. the tenant-switch probe) fails fast and
+// deterministically, with no real network.
+function oauthProfileUnreachable(slug: string) {
+  return {
+    api_url: "http://127.0.0.1:1",
+    token: `tok-${slug}`,
+    token_type: "tenant",
+    auth_kind: "oauth",
+    tenant_id: `t-${slug}`,
+    tenant_slug: slug,
+    user_email: "dev@example.com",
+    saved_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+test("ignoreProjectOrg makes bootstrap skip the .reoclo org (no tenant-switch probe)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  try {
+    // .reoclo binds "other-org" != profile slug "home". With the org suppressed
+    // there is no probe, so bootstrap resolves against the profile's own tenant.
+    const ctx = await bootstrap({ orgRequired: false, ignoreProjectOrg: true });
+    expect(ctx.tenantId).toBe("t-home");
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (control)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  try {
+    // "other-org" != "home" and the profile is oauth, so bootstrap attempts the
+    // /auth/me probe against the unreachable api and rejects. This proves the
+    // project-file org was NOT ignored when the flag is absent.
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects matcher types as void, not a Promise; await is harmless
+    await expect(bootstrap({ orgRequired: false })).rejects.toThrow();
+  } finally {
+    process.chdir(origCwd);
+  }
+});

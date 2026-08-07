@@ -19,6 +19,7 @@ import { mergeMcpServer } from "../init/mcp";
 import { promptChoice, promptYesNo } from "../ui/prompt";
 
 interface InitOpts {
+  org?: string; // command-local --org (discoverable in `init --help`)
   skills?: string | boolean; // "--skills <list>" → string; "--no-skills" → false
   mcp?: boolean;
   force?: boolean;
@@ -65,27 +66,52 @@ export function parseSkillsOption(skills: string | boolean | undefined): {
   return { skip: false };
 }
 
+/**
+ * Resolve the org the user asked `init` to bind: the command-local `--org`
+ * (preferred) then the global `--org`. Blank / whitespace is treated as unset.
+ * Returns undefined when neither is set, so the caller falls back to the
+ * interactive picker (TTY, multi-org) or the profile's active org.
+ */
+export function resolveInitOrgFlag(
+  localOrg: string | undefined,
+  globalOrg: string | undefined,
+): string | undefined {
+  const pick = (v: string | undefined): string | undefined => {
+    const t = v?.trim();
+    return t ? t : undefined;
+  };
+  return pick(localOrg) ?? pick(globalOrg);
+}
+
 export function registerInit(program: Command): void {
   program
     .command("init")
     .description("link this project to an organization and install reoclo skills")
+    .option("--org <slug>", "organization to link (skips the interactive picker)")
     .option("--skills <list>", "comma-separated skills to install (default: all)")
     .option("--no-skills", "skip installing skills")
     .option("--mcp", "register the reoclo MCP server in .mcp.json")
     .option("--force", "overwrite an existing .reoclo without asking")
     .option("-y, --yes", "assume yes for prompts (non-interactive)")
     .action(async (opts: InitOpts) => {
-      // bootstrap() requires auth (throws exit 3 if not) and honors the global
-      // `--org` flag, so /auth/me below reflects the org the user asked for.
+      // Resolve the org the user asked to bind (local --org preferred over the
+      // global --org) once, and use it both to scope bootstrap and to gate the
+      // picker, so the bound org can never diverge from the picker decision.
+      const flagOrg = resolveInitOrgFlag(opts.org, program.opts().org as string | undefined);
+      // bootstrap() requires auth (throws exit 3 if not); passing `org: flagOrg`
+      // scopes /auth/me below to exactly the org resolveInitOrgFlag picked,
+      // independent of commander's optsWithGlobals merge semantics.
       // orgRequired: false — init IS how a directory gets bound to an org, so
       // it must run before any org selection exists.
-      const ctx = await bootstrap({ orgRequired: false });
+      // ignoreProjectOrg: init IS how a directory gets bound, so a stale or
+      // ungranted `.reoclo` org must not block re-linking (bootstrap would else
+      // fail at exit 5 before this action runs).
+      const ctx = await bootstrap({ orgRequired: false, ignoreProjectOrg: true, org: flagOrg });
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
 
-      // Pick the org to bind. An explicit --org already resolved via bootstrap;
+      // Pick the org to bind. An explicit --org is already scoped via bootstrap;
       // otherwise offer a picker (interactive, multi-org) or take the active org.
-      const flagOrg = program.opts().org as string | undefined;
       let org = me.tenant_slug;
       if (!flagOrg && process.stdin.isTTY && memberships.length > 1) {
         const labels = memberships.map((m) => `${m.tenant_slug}  (${m.tenant_name})`);
