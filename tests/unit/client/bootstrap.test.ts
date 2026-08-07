@@ -403,6 +403,7 @@ test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (co
     // "other-org" != "home" and the profile is oauth, so bootstrap attempts the
     // /auth/me probe against the unreachable api and rejects. This proves the
     // project-file org was NOT ignored when the flag is absent.
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects matcher types as void, not a Promise; await is harmless
     await expect(bootstrap({ orgRequired: false })).rejects.toThrow();
   } finally {
     process.chdir(origCwd);
