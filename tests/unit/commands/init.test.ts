@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildProjectBinding, parseSkillsOption } from "../../../src/commands/init";
+import { buildProjectBinding, parseSkillsOption, resolveInitOrgFlag } from "../../../src/commands/init";
 
 describe("parseSkillsOption", () => {
   test("--no-skills (false) skips", () => {
@@ -58,5 +58,27 @@ describe("buildProjectBinding", () => {
       version: 1,
       skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
     });
+  });
+});
+
+describe("resolveInitOrgFlag", () => {
+  test("local --org wins over the global --org", () => {
+    expect(resolveInitOrgFlag("local-org", "global-org")).toBe("local-org");
+  });
+
+  test("falls back to the global --org when local is unset", () => {
+    expect(resolveInitOrgFlag(undefined, "global-org")).toBe("global-org");
+  });
+
+  test("a blank local value falls through to the global", () => {
+    expect(resolveInitOrgFlag("   ", "global-org")).toBe("global-org");
+  });
+
+  test("undefined when neither is set", () => {
+    expect(resolveInitOrgFlag(undefined, undefined)).toBeUndefined();
+  });
+
+  test("trims the returned value", () => {
+    expect(resolveInitOrgFlag("  acme ", undefined)).toBe("acme");
   });
 });

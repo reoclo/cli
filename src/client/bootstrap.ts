@@ -115,6 +115,11 @@ export interface BootstrapOptions {
   streams?: string; // --streams
   /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
   mcpSource?: boolean;
+  /** When true, the `.reoclo` project-file org is NOT read into the
+   *  per-invocation org override. `init` passes this: it is the command that
+   *  rewrites the binding, so a stale or ungranted `.reoclo` org must not block
+   *  it. `--org` / `$REOCLO_ORG` are unaffected. */
+  ignoreProjectOrg?: boolean;
 }
 
 /**
@@ -311,7 +316,9 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
-    projectOrg: projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
+    projectOrg: opts.ignoreProjectOrg
+      ? undefined
+      : projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
   const orgErr = orgSelectionError({
     orgRequired: opts.orgRequired ?? true,
