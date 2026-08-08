@@ -10,6 +10,7 @@ beforeEach(() => {
   process.env.REOCLO_CONFIG_DIR = tmp;
   delete process.env.REOCLO_API_KEY;
   delete process.env.REOCLO_AUTOMATION_KEY;
+  delete process.env.REOCLO_MACHINE_TOKEN;
   delete process.env.REOCLO_PROFILE;
   delete process.env.REOCLO_ORG;
   delete process.env.REOCLO_API_URL;
@@ -391,4 +392,127 @@ test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshab
   const ctx = await bootstrap({ org: "home" });
   expect(typeof ctx.refresh).toBe("function");
   expect(ctx.accessTokenExpiresAt).toBe(futureExpiry);
+});
+
+// --- REOCLO_MACHINE_TOKEN (rk_m_* machine-user credential) -----------------
+//
+// A machine token is, like REOCLO_AUTOMATION_KEY, an opaque env-provided
+// credential with no profile of its own — it must suppress the same
+// ambient-profile / .reoclo / refresh behavior automation keys do. Unlike an
+// automation key it routes to the full /mcp surface (detectKeyType returns
+// "tenant" for anything not rca_/rk_a_/rss_), so tokenType must come back
+// "tenant", not "automation".
+
+test("REOCLO_MACHINE_TOKEN is ingested and routes to the org surface", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_" + "a".repeat(48);
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe(process.env.REOCLO_MACHINE_TOKEN);
+  expect(ctx.tokenType).toBe("tenant"); // full /mcp surface, not automation
+});
+
+test("REOCLO_MACHINE_TOKEN outranks REOCLO_AUTOMATION_KEY (more specific credential)", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_AUTOMATION_KEY = "rca_auto";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.tokenType).toBe("tenant");
+});
+
+test("--token flag still outranks REOCLO_MACHINE_TOKEN", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap({ token: "flag-token" });
+  expect(ctx.token).toBe("flag-token");
+});
+
+test("REOCLO_MACHINE_TOKEN outranks a stored profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: profileRecord("tok-default", "home") },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+});
+
+test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient credential stays inert)", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), "{ this is : not json");
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rk_m_machine");
+    expect(ctx.tokenType).toBe("tenant");
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+test("a profile's api_url/streams_url are ignored under REOCLO_MACHINE_TOKEN (ambient profile suppressed)", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        api_url: "http://localhost:8000",
+        streams_url: "http://localhost:8001",
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.api).toBe("https://api.reoclo.com");
+  expect(ctx.streamsUrl).toBe("https://streams.reoclo.com");
+});
+
+test("a profile named with --profile still applies its endpoints under REOCLO_MACHINE_TOKEN", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: profileRecord("tok-default", "home"),
+      staging: {
+        ...profileRecord("tok-staging", "staging-org"),
+        api_url: "https://api.reoclo.dev",
+        streams_url: "https://streams.reoclo.dev",
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap({ profile: "staging" });
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.api).toBe("https://api.reoclo.dev");
+  expect(ctx.streamsUrl).toBe("https://streams.reoclo.dev");
+});
+
+test("REOCLO_MACHINE_TOKEN exempts the org requirement even with a cached OAuth profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.tokenType).toBe("tenant");
+  expect(ctx.token).toBe("rk_m_machine");
+});
+
+test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.refresh), even past-expiry", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: "2020-01-01T00:00:00Z", // well past
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.refresh).toBeUndefined();
 });
