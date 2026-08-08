@@ -7,8 +7,12 @@
 // (or a cache that was written while the account was mis-provisioned) leaves the
 // CLI denying commands the user now holds. This command re-fetches and rewrites
 // it on demand. See REO-167.
+//
+// Under an env credential (machine/automation token) there is no profile to
+// write, and gating is skipped for it (server enforces), so `sync` prints the
+// server-verified capabilities instead of persisting anything.
 import type { Command } from "commander";
-import { bootstrap } from "../client/bootstrap";
+import { bootstrap, isEnvCredential } from "../client/bootstrap";
 import type { HttpClient } from "../client/http";
 import { fetchCapabilities } from "../client/capabilities";
 import { updateProfileCapabilities } from "../config/store";
@@ -17,6 +21,31 @@ import { updateProfileCapabilities } from "../config/store";
 export function formatSyncLine(profile: string, count: number): string {
   const noun = count === 1 ? "capability" : "capabilities";
   return `Synced ${count} ${noun} for profile '${profile}'.`;
+}
+
+/** Pure formatter for the env-credential capability report. Server-enforced,
+ *  never cached locally — so the wording must not imply a local write. */
+export function formatEnvCapabilitiesReport(caps: string[]): string {
+  if (caps.length === 0) {
+    return "This credential has no capabilities (enforced server-side; not cached locally).";
+  }
+  const noun = caps.length === 1 ? "capability" : "capabilities";
+  const header =
+    `${caps.length} ${noun} for this credential ` +
+    "(enforced server-side; not cached locally for machine/automation credentials):";
+  const list = [...caps].sort().map((v) => `  ${v}`).join("\n");
+  return `${header}\n${list}`;
+}
+
+/** Fetch + format the env-credential capability report. No persistence — env
+ *  credentials own no profile. `deps.fetch` is injectable for testing. */
+export async function reportEnvCapabilities(
+  client: HttpClient,
+  deps: { fetch?: (c: HttpClient) => Promise<string[]> } = {},
+): Promise<string> {
+  const fetchFn = deps.fetch ?? fetchCapabilities;
+  const caps = await fetchFn(client);
+  return formatEnvCapabilitiesReport(caps);
 }
 
 /** Fetch the caller's effective capabilities and rewrite the profile cache,
@@ -46,6 +75,13 @@ export function registerSync(program: Command): void {
       // must run even when the cached capabilities are empty or malformed (that
       // is the very state it exists to repair), so it carries no capability gate.
       const ctx = await bootstrap({ orgRequired: false });
+      if (isEnvCredential()) {
+        // Machine/automation credentials own no profile and are enforced
+        // server-side; show the caps, never persist (a profile write here would
+        // either no-op or corrupt a human profile in the active slot).
+        console.log(await reportEnvCapabilities(ctx.client));
+        return;
+      }
       const count = await syncProfileCapabilities(ctx.client, ctx.profileName);
       console.log(formatSyncLine(ctx.profileName, count));
     });
