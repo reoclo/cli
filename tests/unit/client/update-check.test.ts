@@ -277,4 +277,15 @@ describe("updateCheckEnabledFor", () => {
   test('disabled when output is "json"', () => {
     expect(updateCheckEnabledFor({ ...opts, output: "json" }, env, true)).toBe(false);
   });
+
+  test("disabled when REOCLO_AUTOMATION_KEY is set (CI)", () => {
+    expect(updateCheckEnabledFor(opts, { REOCLO_AUTOMATION_KEY: "rca_x" }, true)).toBe(false);
+  });
+
+  // A machine token is just as much an ambient/CI-like credential as an
+  // automation key — an agent running under REOCLO_MACHINE_TOKEN must not get
+  // an interactive "a new version is available" advisory either.
+  test("disabled when REOCLO_MACHINE_TOKEN is set (agent)", () => {
+    expect(updateCheckEnabledFor(opts, { REOCLO_MACHINE_TOKEN: "rk_m_x" }, true)).toBe(false);
+  });
 });

@@ -117,6 +117,24 @@ export interface BootstrapOptions {
   mcpSource?: boolean;
 }
 
+/**
+ * True when an ambient, env-provided credential (`REOCLO_MACHINE_TOKEN` or
+ * `REOCLO_AUTOMATION_KEY`) is set. Both are opaque, tenant/org-bound
+ * credentials with no profile of their own, so every place that decides
+ * whether it's safe to read ambient local state on their behalf — `.reoclo`
+ * project config, an ambient stored profile, the OAuth refresh cache, the
+ * auto-update advisory notices — must treat them identically. `bootstrap()`
+ * itself computes this inline (it needs the actual token values, not just the
+ * boolean), but every OTHER call site that only needs the yes/no answer
+ * (index.ts's capability-gating + advisory hooks, update-check.ts's CI
+ * suppression) must go through this helper instead of re-deriving the
+ * predicate by hand — a bare `REOCLO_AUTOMATION_KEY` check at one of those
+ * sites is exactly the drift bug this helper exists to prevent.
+ */
+export function isEnvCredential(): boolean {
+  return Boolean(process.env.REOCLO_MACHINE_TOKEN || process.env.REOCLO_AUTOMATION_KEY);
+}
+
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
   // Precedence:
   //   1. --token flag                (programmatic; used by automation harness + tests)
@@ -185,7 +203,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   if (!token) {
     if (process.env.REOCLO_API_KEY) {
       process.stderr.write(
-        "REOCLO_API_KEY is not read by the CLI; set REOCLO_AUTOMATION_KEY instead.\n",
+        "REOCLO_API_KEY is not read by the CLI; set REOCLO_AUTOMATION_KEY (CI) or " +
+          "REOCLO_MACHINE_TOKEN (agents) instead.\n",
       );
     }
     const err = new Error("not authenticated — run 'reoclo login'") as Error & { exitCode: number };

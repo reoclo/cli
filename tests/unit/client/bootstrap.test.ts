@@ -2,7 +2,7 @@ import { expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { bootstrap, defaultStreamsUrl } from "../../../src/client/bootstrap";
+import { bootstrap, defaultStreamsUrl, isEnvCredential } from "../../../src/client/bootstrap";
 
 let tmp: string;
 beforeEach(() => {
@@ -515,4 +515,41 @@ test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.re
   const ctx = await bootstrap();
   expect(ctx.token).toBe("rk_m_machine");
   expect(ctx.refresh).toBeUndefined();
+});
+
+// --- isEnvCredential -----------------------------------------------------
+//
+// Single source of truth for "is an ambient, env-provided credential
+// (REOCLO_MACHINE_TOKEN or REOCLO_AUTOMATION_KEY) in use". Other call sites
+// (index.ts's capability-gating + advisory hooks, update-check.ts's CI
+// suppression) must go through this helper instead of re-deriving the
+// predicate by hand — a bare REOCLO_AUTOMATION_KEY check at one of those
+// sites was exactly the drift bug this helper exists to prevent.
+
+test("isEnvCredential is false when neither env var is set", () => {
+  expect(isEnvCredential()).toBe(false);
+});
+
+test("isEnvCredential is true when REOCLO_AUTOMATION_KEY is set", () => {
+  process.env.REOCLO_AUTOMATION_KEY = "rca_x";
+  try {
+    expect(isEnvCredential()).toBe(true);
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+test("isEnvCredential is true when REOCLO_MACHINE_TOKEN is set", () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_x";
+  expect(isEnvCredential()).toBe(true);
+});
+
+test("isEnvCredential is true when both env vars are set", () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_x";
+  process.env.REOCLO_AUTOMATION_KEY = "rca_x";
+  try {
+    expect(isEnvCredential()).toBe(true);
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
 });
