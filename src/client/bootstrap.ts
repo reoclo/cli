@@ -345,7 +345,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     const probe = new HttpClient({
       baseUrl: api,
       token,
-      profile: profileName,
+      profile: envCredential ? undefined : profileName,
       refreshToken: profileRefreshCallback,
     });
     const me = await probe.get<Me>("/auth/me");
@@ -383,7 +383,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const client = new HttpClient({
     baseUrl: api,
     token: effectiveToken,
-    profile: profileName,
+    profile: envCredential ? undefined : profileName,
     refreshToken: suppressRefresh ? undefined : profileRefreshCallback,
     mcpSource: opts.mcpSource,
   });
