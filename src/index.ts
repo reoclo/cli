@@ -56,6 +56,7 @@ import {
 } from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
+import { resolveGatingCapabilities } from "./client/gating";
 import { loadConfig } from "./config/store";
 import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
 import { readProjectConfig } from "./config/project-config";
@@ -153,7 +154,10 @@ if (import.meta.main) {
       projectProfile,
       activeProfile: cfg.active_profile,
     });
-    capabilities = cfg.profiles[gatingProfile]?.capabilities;
+    capabilities = resolveGatingCapabilities({
+      isEnvCredential: isEnvCredential(),
+      profileCapabilities: cfg.profiles[gatingProfile]?.capabilities,
+    });
   } catch {
     capabilities = undefined;
   }
