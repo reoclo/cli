@@ -28,21 +28,21 @@ test("syncProfileCapabilities fetches then persists the verb list under the prof
 
 test("formatEnvCapabilitiesReport lists sorted verbs with a server-enforced note", () => {
   expect(formatEnvCapabilitiesReport(["server:exec", "container:read"])).toBe(
-    "2 capabilities for this credential (enforced server-side; not cached locally for machine/automation credentials):\n" +
+    "2 capabilities for this machine credential (enforced server-side; not cached locally):\n" +
       "  container:read\n  server:exec",
   );
 });
 
 test("formatEnvCapabilitiesReport handles a single capability", () => {
   expect(formatEnvCapabilitiesReport(["container:read"])).toBe(
-    "1 capability for this credential (enforced server-side; not cached locally for machine/automation credentials):\n" +
+    "1 capability for this machine credential (enforced server-side; not cached locally):\n" +
       "  container:read",
   );
 });
 
 test("formatEnvCapabilitiesReport handles no capabilities", () => {
   expect(formatEnvCapabilitiesReport([])).toBe(
-    "This credential has no capabilities (enforced server-side; not cached locally).",
+    "This machine credential has no capabilities (enforced server-side; not cached locally).",
   );
 });
 

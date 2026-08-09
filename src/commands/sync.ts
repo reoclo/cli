@@ -8,9 +8,10 @@
 // CLI denying commands the user now holds. This command re-fetches and rewrites
 // it on demand. See REO-167.
 //
-// Under an env credential (machine/automation token) there is no profile to
-// write, and gating is skipped for it (server enforces), so `sync` prints the
-// server-verified capabilities instead of persisting anything.
+// Under a machine token (an env credential; automation keys are gated out of
+// `sync` by the command allowlist) there is no profile to write, and gating is
+// skipped for it (server enforces), so `sync` prints the server-verified
+// capabilities instead of persisting anything.
 import type { Command } from "commander";
 import { bootstrap, isEnvCredential } from "../client/bootstrap";
 import type { HttpClient } from "../client/http";
@@ -27,12 +28,12 @@ export function formatSyncLine(profile: string, count: number): string {
  *  never cached locally — so the wording must not imply a local write. */
 export function formatEnvCapabilitiesReport(caps: string[]): string {
   if (caps.length === 0) {
-    return "This credential has no capabilities (enforced server-side; not cached locally).";
+    return "This machine credential has no capabilities (enforced server-side; not cached locally).";
   }
   const noun = caps.length === 1 ? "capability" : "capabilities";
   const header =
-    `${caps.length} ${noun} for this credential ` +
-    "(enforced server-side; not cached locally for machine/automation credentials):";
+    `${caps.length} ${noun} for this machine credential ` +
+    "(enforced server-side; not cached locally):";
   const list = [...caps].sort().map((v) => `  ${v}`).join("\n");
   return `${header}\n${list}`;
 }
@@ -76,9 +77,10 @@ export function registerSync(program: Command): void {
       // is the very state it exists to repair), so it carries no capability gate.
       const ctx = await bootstrap({ orgRequired: false });
       if (isEnvCredential()) {
-        // Machine/automation credentials own no profile and are enforced
-        // server-side; show the caps, never persist (a profile write here would
-        // either no-op or corrupt a human profile in the active slot).
+        // Reached only by a machine token (`rk_m_`): an automation key is gated
+        // out of `sync` by the command allowlist. Machine tokens own no profile
+        // and are enforced server-side; show the caps, never persist (a profile
+        // write here would either no-op or corrupt a human profile in the slot).
         console.log(await reportEnvCapabilities(ctx.client));
         return;
       }
