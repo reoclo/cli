@@ -6,3 +6,7 @@ dist/
 coverage/
 .DS_Store
 .omc/
+
+# Superpowers design docs (specs/plans) live in the monorepo (docs/superpowers/),
+# never in this CLI repo, which is publicly mirrored. Ignore any that land here.
+docs/superpowers/
