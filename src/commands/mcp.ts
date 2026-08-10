@@ -1,10 +1,43 @@
 // src/commands/mcp.ts
 import type { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { bootstrap } from "../client/bootstrap";
+import { bootstrap, requireTenantId, type ResolvedContext } from "../client/bootstrap";
 import { createMcpServer } from "../mcp/server";
 import { startTokenRefreshLoop, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { loadConfig } from "../config/store";
+
+export interface McpBootstrapResult {
+  ctx: ResolvedContext;
+  tenantId: string;
+}
+
+/**
+ * Bootstrap + resolve the tenant the MCP server registers tools under.
+ *
+ * `ctx.tenantId` alone is only the ambient PROFILE's tenant — undefined for
+ * an env credential (REOCLO_MACHINE_TOKEN / REOCLO_AUTOMATION_KEY), which has
+ * no profile of its own (see bootstrap.ts's `requireTenantId` doc for the
+ * cross-org leak this guards against). Every MCP tool module reads
+ * `ctx.tenantId` raw and no-ops when it's undefined, so passing it straight
+ * through here used to register just the one tenant-optional tool (whoami)
+ * under an env credential — silently, no error, no stderr.
+ *
+ * `requireTenantId` instead resolves the credential's OWN tenant (one
+ * `/auth/me`, memoized on `ctx`; free when a profile already carries a
+ * tenant_id) and throws an honest exit 3 for the genuinely tenantless case,
+ * instead of a silently near-empty tool list.
+ *
+ * Exported so tests can drive this exact resolution path without also
+ * spinning up the stdio transport / background refresh loop that the rest of
+ * the action performs. Resolved up front — before the server starts serving —
+ * so a resolution failure surfaces immediately, not from inside a request
+ * handler.
+ */
+export async function resolveMcpBootstrap(): Promise<McpBootstrapResult> {
+  const ctx = await bootstrap({ mcpSource: true });
+  const tenantId = await requireTenantId(ctx);
+  return { ctx, tenantId };
+}
 
 export function registerMcp(program: Command): void {
   program
@@ -14,7 +47,7 @@ export function registerMcp(program: Command): void {
     // active profile).
     .description("start the stdio MCP server")
     .action(async () => {
-      const ctx = await bootstrap({ mcpSource: true });
+      const { ctx, tenantId } = await resolveMcpBootstrap();
 
       // stdout is sacred for MCP protocol framing — redirect any incidental
       // console.log to stderr while the server is running.
@@ -56,7 +89,7 @@ export function registerMcp(program: Command): void {
       try {
         const server = createMcpServer({
           client: ctx.client,
-          tenantId: ctx.tenantId,
+          tenantId,
         });
         await server.connect(new StdioServerTransport());
       } finally {

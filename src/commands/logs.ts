@@ -135,7 +135,7 @@ export function registerLogs(program: Command): void {
       }) => {
         const source = SourceTypeSchema.parse(opts.source);
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, opts.server);
 
         const baseQs = (sinceParam: string, tailParam: string): string => {
@@ -241,7 +241,7 @@ export function registerLogs(program: Command): void {
         ) => {
           const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
 
           const limit = parseLimit(opts.limit, HARD_LIMIT);
           const pageSize = Math.min(limit, SERVER_MAX_PAGE);
@@ -352,7 +352,7 @@ export function registerLogs(program: Command): void {
           opts: { unit: string; tail: string; since?: string; search?: string; level?: string },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const sid = await resolveServer(ctx.client, tid, server);
 
           const level = opts.level !== undefined ? LogLevelSchema.parse(opts.level) : undefined;
@@ -390,7 +390,7 @@ export function registerLogs(program: Command): void {
     .action(async (opts: { from?: string; to?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
 
       const q = new URLSearchParams();
       if (opts.from) q.set("from_date", parseTimeSpec(opts.from).toISOString());
@@ -430,7 +430,7 @@ export function registerLogs(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const r = await ctx.client.get<Record<string, unknown>>(`/tenants/${tid}/logs/usage`);
       printObject(r, fmt);
       if (fmt === "text" && ingestionLooksInactive(r)) {
@@ -449,7 +449,7 @@ export function registerLogs(program: Command): void {
       .action(async (server: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
 
         interface LogSources {

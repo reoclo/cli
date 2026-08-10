@@ -95,7 +95,7 @@ Examples:
     .action(async (opts: { server?: string; app?: string; status?: string; name?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const serverId = opts.server
         ? await resolveServer(ctx.client, tid, opts.server)
         : undefined;
@@ -151,7 +151,7 @@ Examples:
       .description("trigger a fleet container snapshot refresh")
       .action(async () => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const res = await ctx.client.post<Record<string, unknown>>(
           `/tenants/${tid}/runtime/refresh`,
         );
@@ -194,7 +194,7 @@ Examples:
         },
       ) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
         const body: Record<string, unknown> = {};
         if (Object.keys(opts.env).length > 0) body.env = opts.env;
@@ -222,7 +222,7 @@ Examples:
     .description("scale a Swarm service to N replicas")
     .action(async (server: string, name: string, replicas: string) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
       const res = await ctx.client.post<Record<string, unknown>>(
         `/tenants/${tid}/runtime/servers/${sid}/containers/${name}/scale`,
@@ -245,7 +245,7 @@ Examples:
         opts: { label: Record<string, string>; removeLabel: string[] },
       ) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
         const labels: Record<string, string | null> = { ...opts.label };
         for (const k of opts.removeLabel) labels[k] = null;
@@ -274,7 +274,7 @@ visible. Pass --show-secrets to reveal the values.
     .action(async (server: string, name: string, opts: { showSecrets?: boolean }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
       const res = await ctx.client.get<{ env_vars?: Array<{ key: string; value: string }> }>(
         `/tenants/${tid}/servers/${sid}/containers/${name}/inspect`,
@@ -314,7 +314,7 @@ regex filtering, and live follow.
       ) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, server);
 
         const useStream =
@@ -402,7 +402,7 @@ regex filtering, and live follow.
     .description("restart a container on a server")
     .action(async (server: string, name: string) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, server);
       const res = await ctx.client.post<Record<string, unknown>>(
         `/tenants/${tid}/servers/${sid}/containers/${name}/restart`,

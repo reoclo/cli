@@ -44,7 +44,7 @@ export function registerProviders(program: Command): void {
     .action(async (opts: { scope?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const scope = opts.scope ?? "all";
       const wantTenant = scope === "tenant" || scope === "all";
       const wantPlatform = scope === "platform" || scope === "all";
@@ -95,7 +95,7 @@ export function registerProviders(program: Command): void {
       .action(async (ref: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const p = await ctx.client.get<GitProvider>(`/tenants/${tid}/git-providers/${id}`);
         printObject(p as unknown as Record<string, unknown>, fmt);
@@ -119,7 +119,7 @@ export function registerProviders(program: Command): void {
     }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const slug =
         opts.slug ?? opts.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       const body = {
@@ -144,7 +144,7 @@ export function registerProviders(program: Command): void {
       .description("start OAuth flow (opens browser)")
       .action(async (ref: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const profile = await getActiveProfile();
         const slug = profile?.tenant_slug ?? "";
         if (!slug) {
@@ -170,7 +170,7 @@ export function registerProviders(program: Command): void {
       .description("test connection / refresh-token health")
       .action(async (ref: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const res = await ctx.client.post<{ ok: boolean; error?: string; message?: string }>(
           `/tenants/${tid}/git-providers/${id}/test-connection`,
@@ -192,7 +192,7 @@ export function registerProviders(program: Command): void {
       .option("--wait", "block until sync completes")
       .action(async (ref: string, opts: { wait?: boolean }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const start = await ctx.client.post<{ status: string }>(
           `/tenants/${tid}/git-providers/${id}/sync`,
@@ -231,7 +231,7 @@ export function registerProviders(program: Command): void {
       .action(async (ref: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const s = await ctx.client.get<SyncStatusResponse>(
           `/tenants/${tid}/git-providers/${id}/sync-status`,
@@ -247,7 +247,7 @@ export function registerProviders(program: Command): void {
       .action(async (ref: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const orgs = await ctx.client.get<Array<{ name: string; description: string }>>(
           `/tenants/${tid}/git-providers/${id}/organizations`,
@@ -266,7 +266,7 @@ export function registerProviders(program: Command): void {
       .description("print the webhook URL")
       .action(async (ref: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const provider = await ctx.client.get<GitProvider>(`/tenants/${tid}/git-providers/${id}`);
         if (provider.provider_type === "github") {
@@ -310,7 +310,7 @@ export function registerProviders(program: Command): void {
       }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         const body: Record<string, unknown> = {};
         if (opts.name !== undefined) body["name"] = opts.name;
@@ -336,7 +336,7 @@ export function registerProviders(program: Command): void {
       .description("delete a tenant-scoped provider")
       .action(async (ref: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);
         await ctx.client.del(`/tenants/${tid}/git-providers/${id}`);
         console.log("Provider deleted.");

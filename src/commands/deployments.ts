@@ -44,7 +44,7 @@ export function registerDeployments(program: Command): void {
       .action(async (opts: { app?: string; skip?: string; limit?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const skip = parseOffset(opts.skip ?? "0");
         const limit = parseLimit(opts.limit ?? "20", HARD_LIMIT);
         const params = new URLSearchParams();
@@ -88,7 +88,7 @@ export function registerDeployments(program: Command): void {
       .action(async (id: string, opts: { app: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);
         const dep = await ctx.client.get<DeploymentWithStages>(
           `/tenants/${tid}/applications/${appId}/deployments/${id}`,
@@ -109,7 +109,7 @@ export function registerDeployments(program: Command): void {
       .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
       .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
 
         if (opts.runtime) {
           process.stderr.write(
@@ -170,7 +170,7 @@ export function registerDeployments(program: Command): void {
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const stages = await ctx.client.get<DeploymentStage[]>(
           `/tenants/${tid}/deployments/${id}/stages`,
         );

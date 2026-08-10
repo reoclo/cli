@@ -38,7 +38,7 @@ export function registerChannels(program: Command): void {
       async (opts: { kind?: string; enabled?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const params = new URLSearchParams();
         if (opts.kind) params.set("kind", opts.kind);
         if (opts.enabled !== undefined) params.set("enabled", opts.enabled);
@@ -69,7 +69,7 @@ export function registerChannels(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<ChannelKindMeta[]>(
         `/tenants/${tid}/notification-channels/kinds`,
       );
@@ -97,7 +97,7 @@ export function registerChannels(program: Command): void {
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const channel = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/notification-channels/${id}`,
         );
@@ -133,7 +133,7 @@ export function registerChannels(program: Command): void {
           },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           let body: Record<string, unknown>;
           if (opts.fromFile) {
             body = (await loadFromFile(opts.fromFile)) as Record<string, unknown>;
@@ -186,7 +186,7 @@ export function registerChannels(program: Command): void {
           },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {};
           if (opts.name !== undefined) body.name = opts.name;
           if (opts.config !== undefined) body.config = parseKv(opts.config);
@@ -214,7 +214,7 @@ export function registerChannels(program: Command): void {
       .option("--force", "also strip references from alert routing")
       .action(async (id: string, opts: { force?: boolean }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const qs = opts.force ? "?force=true" : "";
         await ctx.client.del<void>(`/tenants/${tid}/notification-channels/${id}${qs}`);
         process.stdout.write(`✓ channel deleted: ${id}\n`);
@@ -233,7 +233,7 @@ export function registerChannels(program: Command): void {
       .option("--to <addr>", "override recipient address (email channels only)")
       .action(async (id: string, opts: { to?: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = {};
         if (opts.to) body.recipient_override = opts.to;
         const result = await ctx.client.post<Record<string, unknown>>(
@@ -255,7 +255,7 @@ export function registerChannels(program: Command): void {
       .description("enable a notification channel")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const channel = await ctx.client.patch<Record<string, unknown>>(
           `/tenants/${tid}/notification-channels/${id}`,
           { enabled: true },
@@ -271,7 +271,7 @@ export function registerChannels(program: Command): void {
       .description("disable a notification channel")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const channel = await ctx.client.patch<Record<string, unknown>>(
           `/tenants/${tid}/notification-channels/${id}`,
           { enabled: false },

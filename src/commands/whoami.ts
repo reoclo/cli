@@ -5,15 +5,11 @@ import type { KeyType } from "../client/routing";
 import type { Me } from "../client/types";
 
 /**
- * Maps a resolved token's routing type + prefix to the human-readable label
- * shown by `reoclo whoami`. `rk_m_*` machine-user tokens route as `"tenant"`
- * (full /mcp surface, same as an OAuth user session — see routing.ts), so
- * tokenType alone can't distinguish a human from an agent credential; the
- * prefix is what does. Every other tokenType passes through unchanged
- * ("tenant" -> "user", "automation" -> "automation").
+ * Maps a resolved token's routing type to the human-readable label shown by
+ * `reoclo whoami`. A pure map: "tenant" -> "user", "machine" -> "machine",
+ * everything else (currently "automation") passes through unchanged.
  */
-export function resolveWhoamiType(tokenType: KeyType, tokenPrefix: string): string {
-  if (tokenPrefix.startsWith("rk_m_")) return "machine";
+export function resolveWhoamiType(tokenType: KeyType): string {
   return tokenType === "tenant" ? "user" : tokenType;
 }
 
@@ -41,7 +37,7 @@ export function registerWhoami(program: Command): void {
       const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
       const prefix = ctx.token.slice(0, 8);
-      const displayType = resolveWhoamiType(ctx.tokenType, prefix);
+      const displayType = resolveWhoamiType(ctx.tokenType);
       for (const line of formatWhoamiLines({
         org: me.tenant_slug,
         user: me.email,

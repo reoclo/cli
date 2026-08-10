@@ -38,7 +38,7 @@ export function registerDomains(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
       cacheList("domains", list);
       printList(
@@ -59,7 +59,7 @@ export function registerDomains(program: Command): void {
       .action(async (fqdnOrId: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const list = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
         const d =
           list.find((x) => x.fqdn === fqdnOrId) ?? list.find((x) => x.id === fqdnOrId);
@@ -80,7 +80,7 @@ export function registerDomains(program: Command): void {
     .action(async (fqdn: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const d = await ctx.client.post<Domain>(`/tenants/${tid}/domains/`, { fqdn });
       console.log(`✓ added ${d.fqdn} (id: ${d.id}, status: ${d.status})`);
       console.log(
@@ -96,7 +96,7 @@ export function registerDomains(program: Command): void {
       .description("fetch the TXT record needed to verify a domain")
       .action(async (fqdnOrId: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
         const r = await ctx.client.post<VerifyResponse>(`/tenants/${tid}/domains/${id}/verify`);
         console.log("Add this DNS TXT record to verify the domain:");
@@ -116,7 +116,7 @@ export function registerDomains(program: Command): void {
       .action(async (fqdnOrId: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
 
         // The DNS endpoint is tenant-wide (`/dns/overview`) and groups
@@ -196,7 +196,7 @@ export function registerDomains(program: Command): void {
       .action(async (fqdnOrId: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
         const r = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/domains/${id}/health`,
@@ -220,7 +220,7 @@ export function registerDomains(program: Command): void {
           }
         }
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const { id, fqdn } = await resolveDomain(ctx.client, tid, fqdnOrId);
         await ctx.client.del<void>(`/tenants/${tid}/domains/${id}`);
         printMutation(

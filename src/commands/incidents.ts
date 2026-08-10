@@ -34,7 +34,7 @@ export function registerIncidents(program: Command): void {
       .action(async (opts: { state?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const qs = opts.state ? `?state=${encodeURIComponent(opts.state)}` : "";
         const list = await ctx.client.get<Incident[]>(`/tenants/${tid}/incidents/${qs}`);
         cacheList("incidents", list);
@@ -60,7 +60,7 @@ export function registerIncidents(program: Command): void {
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const incident = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/incidents/${id}`,
         );
@@ -102,7 +102,7 @@ export function registerIncidents(program: Command): void {
           statusPage?: string;
         }) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = { title: opts.title };
           if (opts.severity !== undefined) body.severity = opts.severity;
           if (opts.summary !== undefined) body.summary = opts.summary;
@@ -128,7 +128,7 @@ export function registerIncidents(program: Command): void {
           opts: { state?: string; severity?: string; title?: string; summary?: string },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {};
           if (opts.state !== undefined) body.state = opts.state;
           if (opts.severity !== undefined) body.severity = opts.severity;
@@ -152,7 +152,7 @@ export function registerIncidents(program: Command): void {
       .option("--state <state>", "also change the incident state")
       .action(async (id: string, opts: { message: string; state?: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = { message: opts.message };
         if (opts.state !== undefined) body.state = opts.state;
         const u = await ctx.client.post<Record<string, unknown>>(

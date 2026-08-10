@@ -148,7 +148,7 @@ export function registerShell(program: Command): void {
         }
 
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const serverId = await resolveServer(ctx.client, tid, idOrName);
 
         // Use the CF-bypass host (streams.reoclo.com in prod) so the WS

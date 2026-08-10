@@ -103,8 +103,17 @@ export function deleteSecret(c: HttpClient, tid: string, secretId: string): Prom
 // Machine (automation token) paths — prefix: /api/automation/v1 → /secrets/…
 // ---------------------------------------------------------------------------
 
+// The machine lane lives on the automation prefix even when the caller's
+// token routes to /mcp (a machine user's rk_m_ does). One helper, so both
+// credential classes share one code path; for an automation token this is
+// the prefix its client already uses.
+const MACHINE_LANE_PREFIX = "/api/automation/v1";
+function machineLane(c: HttpClient): HttpClient {
+  return c.withPrefix(MACHINE_LANE_PREFIX);
+}
+
 export function accessibleProjects(c: HttpClient): Promise<AccessibleProject[]> {
-  return c.get<AccessibleProject[]>(`/secrets/accessible-projects`);
+  return machineLane(c).get<AccessibleProject[]>(`/secrets/accessible-projects`);
 }
 
 export function openSession(
@@ -112,14 +121,14 @@ export function openSession(
   projectIds: string[],
   meta: { commit_sha?: string; workflow_run_id?: string },
 ): Promise<OpenSessionResponse> {
-  return c.post<OpenSessionResponse>(`/secrets/open-session`, {
+  return machineLane(c).post<OpenSessionResponse>(`/secrets/open-session`, {
     project_ids: projectIds,
     ...meta,
   });
 }
 
 export function resolve(c: HttpClient, projectIds: string[]): Promise<ResolveResponse> {
-  return c.post<ResolveResponse>(`/secrets/resolve`, { project_ids: projectIds });
+  return machineLane(c).post<ResolveResponse>(`/secrets/resolve`, { project_ids: projectIds });
 }
 
 // ---------------------------------------------------------------------------

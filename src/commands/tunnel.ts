@@ -379,7 +379,7 @@ Examples:
 
         try {
           const ctx = await bootstrap();
-          const tenantId = requireTenantId(ctx);
+          const tenantId = await requireTenantId(ctx);
           const serverId = await resolveServer(ctx.client, tenantId, parsed.server);
 
           // direct.reoclo.com bypass URL — CF-bypass host for tunnel traffic.
@@ -465,7 +465,7 @@ Examples:
         const fmt = resolveFormat(globalOutput(program));
         try {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
 
           const params = new URLSearchParams();
           if (opts.server) {
@@ -498,7 +498,7 @@ Examples:
         const fmt = resolveFormat(globalOutput(program));
         try {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const session = await ctx.client.get<TunnelSessionRead>(
             `/tenants/${tid}/tunnels/${tunnelId}`,
           );
@@ -524,7 +524,7 @@ Examples:
       .action(async (tunnelId: string) => {
         try {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
 
           let result: TunnelCloseResponse;
           try {

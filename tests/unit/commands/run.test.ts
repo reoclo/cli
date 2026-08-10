@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   assertEnvFileProjectExclusive,
+  assertMachineCredential,
   collectCiMeta,
   selectProjectIds,
   splitRunArgs,
@@ -96,6 +97,23 @@ describe("selectProjectIds", () => {
     expect(message.toLowerCase()).toContain("grant");
   });
 
+  // Task 6: the empty-list message must name both credential classes (an
+  // automation key and a machine user can both hit this path) and explain
+  // why a server-restricted project never shows up for a machine user —
+  // otherwise a machine user granted only restricted projects sees an empty
+  // list with no clue why.
+  test("a key with no grants names both credential classes and the restricted-server caveat", () => {
+    let message = "";
+    try {
+      selectProjectIds([], []);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("automation key");
+    expect(message).toContain("machine user");
+    expect(message.toLowerCase()).toContain("restricted to specific servers");
+  });
+
   test("-p naming an ungranted project fails with RESOLUTION_FAILED", () => {
     expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).toBe(EXIT.RESOLUTION_FAILED);
     expect(codeOf(() => selectProjectIds(P, ["not-granted"]))).not.toBe(EXIT.GENERIC);
@@ -123,6 +141,34 @@ describe("assertEnvFileProjectExclusive", () => {
   });
   test("allows --project alone (no env-file)", () => {
     expect(() => assertEnvFileProjectExclusive(undefined, ["prod"])).not.toThrow();
+  });
+});
+
+describe("assertMachineCredential", () => {
+  test("a machine token does not throw", () => {
+    expect(() => assertMachineCredential("machine")).not.toThrow();
+  });
+  test("an automation key does not throw", () => {
+    expect(() => assertMachineCredential("automation")).not.toThrow();
+  });
+  test("a tenant (interactive OAuth) session throws DENIED", () => {
+    let err: unknown;
+    try {
+      assertMachineCredential("tenant");
+    } catch (e) {
+      err = e;
+    }
+    expect((err as { exitCode?: number }).exitCode).toBe(EXIT.DENIED);
+  });
+  test("the tenant refusal names both env vars an operator can set instead", () => {
+    let message = "";
+    try {
+      assertMachineCredential("tenant");
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("REOCLO_AUTOMATION_KEY");
+    expect(message).toContain("REOCLO_MACHINE_TOKEN");
   });
 });
 

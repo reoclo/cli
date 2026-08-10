@@ -26,7 +26,7 @@ export function registerRepos(program: Command): void {
     .action(async (opts: { search?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const all: Repository[] = [];
       let skip = 0;
       const limit = 200;
@@ -61,7 +61,7 @@ export function registerRepos(program: Command): void {
       .action(async (repo: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveRepo(ctx.client, tid, repo);
         const r = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/repositories/${id}`,
@@ -78,7 +78,7 @@ export function registerRepos(program: Command): void {
       .action(async (repo: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveRepo(ctx.client, tid, repo);
         const res = await ctx.client.get<BranchListResponse>(
           `/tenants/${tid}/repositories/${id}/branches`,

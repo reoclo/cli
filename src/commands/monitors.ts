@@ -90,7 +90,7 @@ export function registerMonitors(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<Monitor[]>(`/tenants/${tid}/monitors`);
       cacheList("monitors", list);
       printList(
@@ -113,7 +113,7 @@ export function registerMonitors(program: Command): void {
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const m = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/monitors/${id}`,
         );
@@ -135,7 +135,7 @@ export function registerMonitors(program: Command): void {
     .option("--header <header>", "request header 'Name: value' (repeatable)", collect, [] as string[])
     .action(async (opts: MonitorFieldOpts) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const body = buildMonitorBody(opts);
       const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors`, body);
       printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor created: ${m.id}`);
@@ -161,7 +161,7 @@ export function registerMonitors(program: Command): void {
       )
       .action(async (id: string, opts: MonitorFieldOpts) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body = buildMonitorBody(opts);
         const m = await ctx.client.patch<Monitor>(`/tenants/${tid}/monitors/${id}`, body);
         printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor updated: ${m.id}`);
@@ -175,7 +175,7 @@ export function registerMonitors(program: Command): void {
       .description("pause a monitor")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/pause`);
         printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor paused: ${id}`);
       }),
@@ -188,7 +188,7 @@ export function registerMonitors(program: Command): void {
       .description("resume a monitor")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors/${id}/resume`);
         printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor resumed: ${id}`);
       }),
@@ -201,7 +201,7 @@ export function registerMonitors(program: Command): void {
       .description("delete a monitor")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/monitors/${id}`);
         process.stdout.write(`✓ monitor removed: ${id}\n`);
       }),

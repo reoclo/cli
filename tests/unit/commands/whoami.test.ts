@@ -20,18 +20,17 @@ test("formatWhoamiLines pluralizes/handles a single org", () => {
   expect(lines.join("\n")).toContain("organizations: 1");
 });
 
-// resolveWhoamiType: a machine token (rk_m_*) routes as tokenType "tenant"
-// (full /mcp surface, same as an OAuth user) but must be labeled "machine",
-// not "user", so operators can tell a human session from an agent's
-// credential at a glance.
-test("resolveWhoamiType labels an rk_m_ token 'machine' even though its tokenType is 'tenant'", () => {
-  expect(resolveWhoamiType("tenant", "rk_m_abcd")).toBe("machine");
+// resolveWhoamiType: with KeyType now a three-way union ("tenant" |
+// "automation" | "machine"), the label is a pure map off tokenType alone —
+// no more prefix-sniffing to tell a human session from an agent credential.
+test("resolveWhoamiType labels 'machine' tokenType 'machine'", () => {
+  expect(resolveWhoamiType("machine")).toBe("machine");
 });
 
-test("resolveWhoamiType labels a non-machine tenant token 'user'", () => {
-  expect(resolveWhoamiType("tenant", "oauth-tok")).toBe("user");
+test("resolveWhoamiType labels 'tenant' tokenType 'user'", () => {
+  expect(resolveWhoamiType("tenant")).toBe("user");
 });
 
 test("resolveWhoamiType passes through 'automation' unchanged", () => {
-  expect(resolveWhoamiType("automation", "rca_abcd")).toBe("automation");
+  expect(resolveWhoamiType("automation")).toBe("automation");
 });
