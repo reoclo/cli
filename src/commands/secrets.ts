@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability } from "../client/command-meta";
 import { EXIT } from "../client/exit-codes";
+import type { KeyType } from "../client/routing";
 import {
   listProjects,
   listSecrets,
@@ -33,6 +34,11 @@ import {
 } from "../secrets/template";
 import { machineResolver, humanResolver } from "../secrets/resolvers";
 import { collectCiMeta } from "./run";
+
+/** Only an interactive OAuth session takes the per-secret reveal path. */
+export function usesMachineLane(tokenType: KeyType): boolean {
+  return tokenType !== "tenant";
+}
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
   const byId = projects.find((p) => p.id === nameOrId);
@@ -280,10 +286,9 @@ Examples:
           // A machine credential (automation key or machine user token) takes
           // the session-backed machine path; only an interactive tenant/OAuth
           // session falls back to the per-secret reveal path.
-          const resolver =
-            ctx.tokenType !== "tenant"
-              ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
-              : humanResolver(ctx.client, await requireTenantId(ctx));
+          const resolver = usesMachineLane(ctx.tokenType)
+            ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
+            : humanResolver(ctx.client, await requireTenantId(ctx));
           resolved = await resolver(refs);
         }
 

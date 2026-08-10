@@ -84,6 +84,24 @@ describe("machineResolver", () => {
     expect((err as Error).message).toContain("prod");
   });
 
+  // Fix round 1 (finding 2): `--env-file`/`secrets inject` never call
+  // selectProjectIds, so this is the message a machine user actually sees
+  // when their op:// template references a server-restricted project (the
+  // API omits those from accessibleProjects entirely, so this is the
+  // guaranteed outcome, not an edge case). Pin the "this credential" wording
+  // and the server-restricted caveat added alongside selectProjectIds's.
+  test("an ungranted project's message names the credential and the restricted-server caveat", async () => {
+    const client = machineFake({ accessible: [], values: {} });
+    let message = "";
+    try {
+      await machineResolver(client, {})([ref("prod", "K")]);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("this credential");
+    expect(message.toLowerCase()).toContain("restricted to specific servers");
+  });
+
   test("no refs resolves to an empty map without any network call", async () => {
     const client = { get: () => { throw new Error("should not call"); } } as unknown as HttpClient;
     expect((await machineResolver(client, {})([])).size).toBe(0);
