@@ -18,6 +18,12 @@ function machineFake(opts: {
       }
       throw new Error(`unexpected ${path}`);
     },
+    // machineLane() pins the automation prefix via withPrefix() before every
+    // call; this fake is path-only (no baseUrl/prefix concatenation), so it
+    // just returns itself.
+    withPrefix() {
+      return this;
+    },
   };
   return {
     get: (path: string) => {
@@ -37,6 +43,9 @@ function machineFake(opts: {
       throw new Error(`unexpected POST ${path}`);
     },
     withToken: (_t: string) => resolveClient,
+    withPrefix() {
+      return this;
+    },
   } as unknown as HttpClient;
 }
 
