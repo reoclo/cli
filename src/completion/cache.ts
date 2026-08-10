@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { cacheDir } from "../config/paths";
 import { loadConfigSync } from "../config/store";
 import { resolveProfileName } from "../config/profile-resolve";
+import { isEnvCredential } from "../client/bootstrap";
 import { INDEX_KINDS, type Entry, type IndexKind } from "./types";
 
 const CACHE_VERSION = 4;
@@ -71,9 +72,20 @@ function configTenantId(): string | undefined {
 }
 
 /** The bucket key for the current invocation — always a string so it can key
- *  the cache; NO_TENANT when no tenant is resolvable. */
+ *  the cache; NO_TENANT when no tenant is resolvable.
+ *
+ * An env credential (machine token, automation key) carries no profile of
+ * its own, so — same rule as bootstrap()'s tenantId resolution — it must
+ * never fall back to the ambient on-disk profile's tenant_id: that profile
+ * can belong to a different organization than the credential actually in
+ * use, and bucketing under it would write (and later read back) one org's
+ * resource names under another org's cache key. Until setActiveTenantId()
+ * stamps the credential's OWN tenant (from requireTenantId's /auth/me
+ * resolution), an env credential buckets under NO_TENANT instead. */
 function currentTenantKey(): string {
-  return _activeTenantId ?? configTenantId() ?? NO_TENANT;
+  if (_activeTenantId) return _activeTenantId;
+  if (isEnvCredential()) return NO_TENANT;
+  return configTenantId() ?? NO_TENANT;
 }
 
 // ---------------------------------------------------------------------------

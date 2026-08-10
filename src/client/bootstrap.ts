@@ -108,6 +108,10 @@ export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
     throw err;
   }
   ctx.tenantId = me.tenant_id;
+  // Once the credential's OWN tenant is known, the completion cache must
+  // bucket under it (not NO_TENANT, and never an ambient profile's) — see
+  // completion/cache.ts's currentTenantKey() for the other half of this fix.
+  setActiveTenantId(ctx.tenantId);
   return me.tenant_id;
 }
 

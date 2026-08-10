@@ -2,7 +2,7 @@ import { expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { bootstrap, defaultStreamsUrl, isEnvCredential } from "../../../src/client/bootstrap";
+import { bootstrap, defaultStreamsUrl, isEnvCredential, requireTenantId } from "../../../src/client/bootstrap";
 
 let tmp: string;
 beforeEach(() => {
@@ -629,5 +629,56 @@ test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (co
     await expect(bootstrap({ orgRequired: false })).rejects.toThrow();
   } finally {
     process.chdir(origCwd);
+  }
+});
+
+// --- End-to-end: bootstrap() + requireTenantId() wired through a real request ---
+//
+// Every other test in this file (and in require-tenant-id.test.ts) exercises
+// bootstrap() and requireTenantId() separately, with a stub ctx.client. Only
+// this test runs them together against a real HTTP server and inspects the
+// actual request path, which is what proves the fix end to end: an env
+// credential's tenant-scoped request must carry the CREDENTIAL's own tenant
+// (from /auth/me), never the ambient profile's — the cross-org leak this
+// task exists to close.
+test("a tenant-scoped request under an env credential carries the token's own tenant, not an ambient profile's", async () => {
+  let tenantScopedPath: string | undefined;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/mcp/auth/me") {
+        return Response.json({
+          id: "u-1",
+          email: "m@x",
+          tenant_id: "t-token-own",
+          tenant_slug: "token-org",
+          roles: [],
+        });
+      }
+      tenantScopedPath = url.pathname;
+      return Response.json({ items: [] });
+    },
+  });
+  // The ambient profile belongs to a DIFFERENT org than the machine token.
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: profileRecord("tok-default", "profile-org") },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  try {
+    const ctx = await bootstrap({ api: `http://localhost:${server.port}` });
+    // Lazy: bootstrap() alone never called /auth/me, so the tenant is not yet
+    // known — and it must not have been silently filled from the profile.
+    expect(ctx.tenantId).toBeUndefined();
+
+    const tid = await requireTenantId(ctx);
+    expect(tid).toBe("t-token-own"); // the token's own tenant, not "t-profile-org"
+
+    await ctx.client.get(`/tenants/${tid}/servers/`);
+    expect(tenantScopedPath).toBe("/mcp/tenants/t-token-own/servers/");
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    await server.stop();
   }
 });
