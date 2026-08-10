@@ -48,7 +48,7 @@ export function registerDashboard(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const stats = await ctx.client.get<DashboardStats>(`/tenants/${tid}/dashboard/stats`);
 
       if (fmt === "json" || fmt === "yaml") {

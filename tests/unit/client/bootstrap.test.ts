@@ -434,6 +434,9 @@ test("REOCLO_MACHINE_TOKEN outranks a stored profile", async () => {
   process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
   const ctx = await bootstrap();
   expect(ctx.token).toBe("rk_m_machine");
+  // The cross-org leak: a machine token must never borrow the ambient
+  // profile's tenant_id. Its own identity (via /auth/me, lazily) answers.
+  expect(ctx.tenantId).toBeUndefined();
 });
 
 test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient credential stays inert)", async () => {
@@ -531,6 +534,7 @@ test("REOCLO_MACHINE_TOKEN exempts the org requirement even with a cached OAuth 
   const ctx = await bootstrap();
   expect(ctx.tokenType).toBe("machine");
   expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.tenantId).toBeUndefined();
 });
 
 test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.refresh), even past-expiry", async () => {
@@ -549,6 +553,7 @@ test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.re
   const ctx = await bootstrap();
   expect(ctx.token).toBe("rk_m_machine");
   expect(ctx.refresh).toBeUndefined();
+  expect(ctx.tenantId).toBeUndefined();
 });
 
 // --- assertEnvCredentialShape (bootstrap integration) ---------------------

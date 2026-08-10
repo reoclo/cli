@@ -19,7 +19,7 @@ export function registerServers(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<Server[]>(`/tenants/${tid}/servers/`);
       cacheList("servers", list);
       printList(
@@ -43,7 +43,7 @@ export function registerServers(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveServer(ctx.client, tid, idOrSlug);
         const srv = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
         printObject(srv as unknown as Record<string, unknown>, fmt);
@@ -58,7 +58,7 @@ export function registerServers(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveServer(ctx.client, tid, idOrSlug);
         const m = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/servers/${id}/metrics`,
@@ -74,7 +74,7 @@ export function registerServers(program: Command): void {
       .description("change a server's slug (URL- and CLI-safe identifier)")
       .action(async (idOrSlug: string, newSlug: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveServer(ctx.client, tid, idOrSlug);
 
         const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
@@ -94,7 +94,7 @@ export function registerServers(program: Command): void {
     .action(async (idOrSlug: string, opts: { status?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, idOrSlug);
       const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
       const res = await ctx.client.get<{ containers: Array<Record<string, unknown>> }>(
@@ -124,7 +124,7 @@ export function registerServers(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
         const res = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/servers/${sid}/health`,
@@ -141,7 +141,7 @@ export function registerServers(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
         const res = await ctx.client.get<
           {
@@ -179,7 +179,7 @@ export function registerServers(program: Command): void {
       .action(async (idOrSlug: string, opts: { hours?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
         const qs = opts.hours ? `?hours=${encodeURIComponent(opts.hours)}` : "";
         const res = await ctx.client.get<
@@ -213,7 +213,7 @@ export function registerServers(program: Command): void {
       .option("--yes", "skip the confirmation prompt")
       .action(async (idOrSlug: string, opts: { yes?: boolean }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sid = await resolveServer(ctx.client, tid, idOrSlug);
         if (!opts.yes) {
           const ok = await promptYesNo(`Reboot server '${idOrSlug}'? [y/N] `);

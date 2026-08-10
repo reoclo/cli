@@ -64,7 +64,7 @@ export function registerRegistry(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const items = await ctx.client.get<RegistryCredential[]>(
         `/tenants/${tid}/registry-credentials`,
       );
@@ -86,7 +86,7 @@ export function registerRegistry(program: Command): void {
     .action(async (id: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const r = await ctx.client.get<Record<string, unknown>>(
         `/tenants/${tid}/registry-credentials/${id}`,
       );
@@ -105,7 +105,7 @@ export function registerRegistry(program: Command): void {
         }
       }
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       await ctx.client.del<void>(`/tenants/${tid}/registry-credentials/${id}`);
       process.stdout.write(`✓ registry removed: ${id}\n`);
     });
@@ -133,7 +133,7 @@ export function registerRegistry(program: Command): void {
           promptLabel: "registry password",
         });
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = {
           name: opts.name,
           registry_type: registryType,
@@ -180,7 +180,7 @@ export function registerRegistry(program: Command): void {
           });
         }
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const r = await ctx.client.patch<Record<string, unknown> & { id: string }>(
           `/tenants/${tid}/registry-credentials/${id}`,
           body,
@@ -209,7 +209,7 @@ export function registerRegistry(program: Command): void {
           promptLabel: "registry password",
         });
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = {
           registry_type: registryType,
           registry_url: opts.url,

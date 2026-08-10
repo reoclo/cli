@@ -88,19 +88,27 @@ export function defaultStreamsUrl(apiUrl: string): string {
 }
 
 /**
- * Asserts that {@link ResolvedContext.tenantId} is present and returns it.
- * Throws with exit code 3 if missing — the same code as "not authenticated"
- * since the typical fix is to re-run `reoclo login`.
+ * Resolve the tenant id for this invocation, lazily.
+ *
+ * A profile carries its tenant; an env credential (machine token, automation
+ * key) does not, and MUST NOT borrow an ambient profile's — sending a machine
+ * token down another org's /tenants/{tid} path was a live cross-org leak. So
+ * the token's own identity answers, via ONE /auth/me, memoized on the context.
+ * Lazy rather than eager because bootstrap() runs twice per command (preAction
+ * + action) and preAction relies on it being network-free.
  */
-export function requireTenantId(ctx: ResolvedContext): string {
-  if (!ctx.tenantId) {
+export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
+  if (ctx.tenantId) return ctx.tenantId;
+  const me = await ctx.client.get<Me>("/auth/me");
+  if (!me.tenant_id) {
     const err = new Error(
-      "no tenant_id resolved — run 'reoclo login' to populate the profile, or call /auth/me",
+      "no tenant resolved from /auth/me — run 'reoclo login', or check the credential",
     ) as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;
   }
-  return ctx.tenantId;
+  ctx.tenantId = me.tenant_id;
+  return me.tenant_id;
 }
 
 export interface BootstrapOptions {
@@ -332,7 +340,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // the override already equals the profile's org it's a no-op (no extra network
   // calls). The `.reoclo` project file is consulted only for OAuth profiles (and
   // ranks below the flag/env), so it stays inert under automation-key CI.
-  let tenantId = profile?.tenant_id;
+  let tenantId = envCredential ? undefined : profile?.tenant_id;
   let effectiveToken = token;
   let suppressRefresh = false;
 
@@ -368,7 +376,9 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
-        "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
+        envCredential
+          ? "--org does not apply: an automation key or machine token is bound to one organization already"
+          : "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

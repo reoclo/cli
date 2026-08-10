@@ -101,7 +101,7 @@ export function registerSecrets(program: Command): void {
       .action(async () => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const rows = await listProjects(ctx.client, tid);
         printList(
           rows as unknown as Array<Record<string, unknown>>,
@@ -123,7 +123,7 @@ export function registerSecrets(program: Command): void {
       .action(async (opts: { project: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const rows = await listSecrets(ctx.client, tid, pid);
         printList(
@@ -145,7 +145,7 @@ export function registerSecrets(program: Command): void {
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const secret = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
         if (!secret) {
@@ -168,7 +168,7 @@ export function registerSecrets(program: Command): void {
       .action(
         async (key: string, opts: { project: string; value?: string; fromFile?: string }) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
           // Pass stdin as a lazy reader so it is consumed only when neither
           // --value nor --from-file was given; otherwise `--from-file /dev/stdin`
@@ -195,7 +195,7 @@ export function registerSecrets(program: Command): void {
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const secret = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
         if (!secret) {
@@ -220,7 +220,7 @@ export function registerSecrets(program: Command): void {
       .option("--dry-run", "print the import plan without writing")
       .action(async (opts: ImportFlags) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const source = buildSource(opts, { run: runCommand, env: process.env });
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
 
@@ -279,7 +279,7 @@ Examples:
           const resolver =
             ctx.tokenType === "automation"
               ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
-              : humanResolver(ctx.client, requireTenantId(ctx));
+              : humanResolver(ctx.client, await requireTenantId(ctx));
           resolved = await resolver(refs);
         }
 

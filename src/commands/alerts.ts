@@ -69,7 +69,7 @@ export function registerAlerts(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<AlertCatalogEntry[]>(`/tenants/${tid}/alerts/catalog`);
       cacheList("alert-codes", list);
       printList(
@@ -92,7 +92,7 @@ export function registerAlerts(program: Command): void {
       .action(async (code: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const entry = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/alerts/catalog/${code}`,
         );
@@ -124,7 +124,7 @@ export function registerAlerts(program: Command): void {
           },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {};
           if (opts.warn !== undefined) body.severity_warn = Number(opts.warn);
           if (opts.critical !== undefined) body.severity_critical = Number(opts.critical);
@@ -165,7 +165,7 @@ export function registerAlerts(program: Command): void {
         }) => {
           const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const params = new URLSearchParams();
           if (opts.state) params.set("state", opts.state);
           if (opts.severity) params.set("severity", opts.severity);
@@ -210,7 +210,7 @@ export function registerAlerts(program: Command): void {
       .action(async (instanceId: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const instance = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/alerts/instances/${instanceId}`,
         );
@@ -226,7 +226,7 @@ export function registerAlerts(program: Command): void {
       .option("--note <text>", "acknowledgment note")
       .action(async (instanceId: string, opts: { note?: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = {};
         if (opts.note !== undefined) body.note = opts.note;
         const result = await ctx.client.post<Record<string, unknown>>(
@@ -245,7 +245,7 @@ export function registerAlerts(program: Command): void {
       .requiredOption("--note <text>", "resolution note")
       .action(async (instanceId: string, opts: { note: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const result = await ctx.client.post<Record<string, unknown>>(
           `/tenants/${tid}/alerts/instances/${instanceId}/resolve`,
           { note: opts.note },
@@ -263,7 +263,7 @@ export function registerAlerts(program: Command): void {
       .action(async (opts: { since?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const since = opts.since ?? "7d";
         const list = await ctx.client.get<AlertInstance[]>(
           `/tenants/${tid}/alerts/instances?state=resolved&since=${encodeURIComponent(since)}`,
@@ -308,7 +308,7 @@ export function registerAlerts(program: Command): void {
             process.exit(1);
           }
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const [resourceKind, resourceId] = opts.resource.split(":");
           const body: Record<string, unknown> = {
             reason: opts.reason,
@@ -338,7 +338,7 @@ export function registerAlerts(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<AlertMute[]>(`/tenants/${tid}/alerts/mutes`);
       cacheList("alert-mutes", list);
       printList(
@@ -361,7 +361,7 @@ export function registerAlerts(program: Command): void {
       .description("remove a mute")
       .action(async (muteId: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/alerts/mutes/${muteId}`);
         process.stdout.write(`✓ mute removed: ${muteId}\n`);
       }),
@@ -380,7 +380,7 @@ export function registerAlerts(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const config = await ctx.client.get<Record<string, unknown>>(
         `/tenants/${tid}/alerts/routing`,
       );
@@ -407,7 +407,7 @@ export function registerAlerts(program: Command): void {
         process.exit(1);
       }
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const result = await ctx.client.put<Record<string, unknown>>(
         `/tenants/${tid}/alerts/routing`,
         body,
@@ -428,7 +428,7 @@ export function registerAlerts(program: Command): void {
           opts: { critical?: string; warn?: string; info?: string },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const routes: Record<string, unknown> = {};
           if (opts.critical !== undefined) routes.critical = await parseChannels(opts.critical, ctx, tid);
           if (opts.warn !== undefined) routes.warn = await parseChannels(opts.warn, ctx, tid);

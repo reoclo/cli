@@ -329,7 +329,7 @@ export function registerExec(program: Command): void {
           );
           res = buildAutomationExecOutput(r);
         } else {
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
           const body: Record<string, unknown> = { command };
           if (opts.timeout) body["timeout"] = Number.parseInt(opts.timeout, 10);

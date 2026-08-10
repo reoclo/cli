@@ -34,7 +34,7 @@ export function registerApps(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const [appsRes, servers] = await Promise.all([
         ctx.client.get<PaginatedResponse<Application>>(
           `/tenants/${tid}/applications/?limit=200`,
@@ -77,7 +77,7 @@ export function registerApps(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const id = await resolveApp(ctx.client, tid, idOrSlug);
         const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
         printObject(app as unknown as Record<string, unknown>, fmt);
@@ -95,7 +95,7 @@ export function registerApps(program: Command): void {
     .option("--wait", "wait for the deployment to finish (poll status every 3s)")
     .action(async (idOrSlug: string, opts: { ref?: string; wait?: boolean }) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
       const body: Record<string, unknown> = {};
@@ -143,7 +143,7 @@ export function registerApps(program: Command): void {
         async (idOrSlug: string, opts: { tail?: string; search?: string; since?: string }) => {
           const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
           const qs = new URLSearchParams();
@@ -187,7 +187,7 @@ export function registerApps(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
         interface RestartResponse {
@@ -230,7 +230,7 @@ export function registerApps(program: Command): void {
       .action(async (idOrSlug: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const aid = await resolveApp(ctx.client, tid, idOrSlug);
         const r = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/applications/${aid}/config`,
@@ -273,7 +273,7 @@ export function registerApps(program: Command): void {
           },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const aid = await resolveApp(ctx.client, tid, idOrSlug);
 
           // Start with --set first (typed flags overwrite on conflict).
