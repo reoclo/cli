@@ -398,16 +398,18 @@ test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshab
 //
 // A machine token is, like REOCLO_AUTOMATION_KEY, an opaque env-provided
 // credential with no profile of its own — it must suppress the same
-// ambient-profile / .reoclo / refresh behavior automation keys do. Unlike an
-// automation key it routes to the full /mcp surface (detectKeyType returns
-// "tenant" for anything not rca_/rk_a_/rss_), so tokenType must come back
-// "tenant", not "automation".
+// ambient-profile / .reoclo / refresh behavior automation keys do. It is its
+// own KeyType ("machine": detectKeyType returns "machine" for rk_m_*), and it
+// routes to the full /mcp surface just like "tenant" does (see apiPrefix),
+// but tokenType itself must come back "machine", not "tenant" or
+// "automation" — that's what lets `reoclo whoami` and command-gating tell a
+// machine credential apart from a human OAuth session.
 
 test("REOCLO_MACHINE_TOKEN is ingested and routes to the org surface", async () => {
   process.env.REOCLO_MACHINE_TOKEN = "rk_m_" + "a".repeat(48);
   const ctx = await bootstrap();
   expect(ctx.token).toBe(process.env.REOCLO_MACHINE_TOKEN);
-  expect(ctx.tokenType).toBe("tenant"); // full /mcp surface, not automation
+  expect(ctx.tokenType).toBe("machine"); // full /mcp surface, not automation
 });
 
 test("REOCLO_MACHINE_TOKEN outranks REOCLO_AUTOMATION_KEY (more specific credential)", async () => {
@@ -415,7 +417,7 @@ test("REOCLO_MACHINE_TOKEN outranks REOCLO_AUTOMATION_KEY (more specific credent
   process.env.REOCLO_AUTOMATION_KEY = "rca_auto";
   const ctx = await bootstrap();
   expect(ctx.token).toBe("rk_m_machine");
-  expect(ctx.tokenType).toBe("tenant");
+  expect(ctx.tokenType).toBe("machine");
 });
 
 test("--token flag still outranks REOCLO_MACHINE_TOKEN", async () => {
@@ -443,7 +445,7 @@ test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient cred
   try {
     const ctx = await bootstrap();
     expect(ctx.token).toBe("rk_m_machine");
-    expect(ctx.tokenType).toBe("tenant");
+    expect(ctx.tokenType).toBe("machine");
   } finally {
     process.chdir(origCwd);
   }
@@ -527,7 +529,7 @@ test("REOCLO_MACHINE_TOKEN exempts the org requirement even with a cached OAuth 
   });
   process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
   const ctx = await bootstrap();
-  expect(ctx.tokenType).toBe("tenant");
+  expect(ctx.tokenType).toBe("machine");
   expect(ctx.token).toBe("rk_m_machine");
 });
 

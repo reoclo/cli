@@ -102,3 +102,17 @@ describe("automationAllowedCommands", () => {
     expect(commandSupportedBy("servers rm", "automation")).toBe(false);
   });
 });
+
+test("rk_m_ tokens are the machine class", () => {
+  expect(detectKeyType("rk_m_" + "a".repeat(32))).toBe("machine");
+});
+test("machine class routes to the tenant surface", () => {
+  expect(apiPrefix("machine")).toBe("/mcp");
+});
+test("machine class may invoke any command", () => {
+  expect(commandSupportedBy("containers restart", "machine")).toBe(true);
+  expect(commandSupportedBy("run", "machine")).toBe(true);
+});
+test("automation class stays restricted", () => {
+  expect(commandSupportedBy("containers restart", "automation")).toBe(false);
+});

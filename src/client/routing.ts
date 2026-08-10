@@ -1,25 +1,22 @@
-export type KeyType = "tenant" | "automation";
+export type KeyType = "tenant" | "automation" | "machine";
 
 /**
  * Classifies a presented token for HTTP routing.
- *
- *   - `rca_*` and the legacy `rk_a_*` prefix → automation (hits
- *     `/api/automation/v1/*`, restricted command surface).
- *   - everything else → "tenant" routing (`/mcp/*`), which is the surface
- *     OAuth-issued access tokens use. The legacy `rk_t_*` tenant integration
- *     key prefix has been retired but still resolves here for read-compat
- *     with any in-flight requests during rollout.
+ *   - rca_* / rss_* / legacy rk_a_* → automation (/api/automation/v1, restricted commands)
+ *   - rk_m_* → machine (a machine user: full /mcp surface, org-bound, no expiry)
+ *   - everything else → tenant (OAuth session, /mcp)
  */
 export function detectKeyType(token: string): KeyType {
-  if (token.startsWith("rk_a_") || token.startsWith("rca_") || token.startsWith("rss_")) return "automation";
+  if (token.startsWith("rk_a_") || token.startsWith("rca_") || token.startsWith("rss_"))
+    return "automation";
+  if (token.startsWith("rk_m_")) return "machine";
   return "tenant";
 }
 
 export function apiPrefix(t: KeyType): string {
-  // Tenant keys hit Caddy's /mcp/* path which strips the prefix and forwards
-  // to the internal API. Automation keys hit the dedicated /api/automation/v1/*
-  // route (no prefix strip). Both terminate at the internal API but with
-  // different scopes, ACL rules, and rate limits.
+  // Machine tokens use the same tenant surface as OAuth sessions; only the
+  // three secret-resolution calls cross to the automation prefix, via
+  // machineLane() in client/secrets.ts.
   return t === "automation" ? "/api/automation/v1" : "/mcp";
 }
 
@@ -37,12 +34,13 @@ const AUTOMATION_ALLOWED = new Set([
 ]);
 
 /** Return true if a token of the given type can invoke this command path.
- *  Tenant keys can invoke anything; automation keys are restricted to a
- *  fixed set of full command paths (so e.g. `containers restart` is rejected
- *  even though its leaf is `restart`).
+ *  Tenant and machine keys can invoke anything (the server enforces
+ *  per-route); automation keys are restricted to a fixed set of full
+ *  command paths (so e.g. `containers restart` is rejected even though its
+ *  leaf is `restart`).
  */
 export function commandSupportedBy(commandPath: string, t: KeyType): boolean {
-  if (t === "tenant") return true;
+  if (t !== "automation") return true;
   return AUTOMATION_ALLOWED.has(commandPath);
 }
 
