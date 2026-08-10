@@ -259,7 +259,8 @@ export function registerSecrets(program: Command): void {
         `
 Examples:
   reoclo secrets inject -i .env.tpl -o .env
-  reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env`,
+  reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env
+  REOCLO_MACHINE_TOKEN=rk_m_... reoclo secrets inject -i .env.tpl -o .env`,
       )
       .action(async (opts: { input: string; output?: string; force?: boolean }) => {
         // All cheap, IO-only validation happens up front, before bootstrap()
@@ -276,8 +277,11 @@ Examples:
         const ctx = await bootstrap();
         let resolved: ResolvedSecrets = new Map();
         if (refs.length > 0) {
+          // A machine credential (automation key or machine user token) takes
+          // the session-backed machine path; only an interactive tenant/OAuth
+          // session falls back to the per-secret reveal path.
           const resolver =
-            ctx.tokenType === "automation"
+            ctx.tokenType !== "tenant"
               ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
               : humanResolver(ctx.client, await requireTenantId(ctx));
           resolved = await resolver(refs);
