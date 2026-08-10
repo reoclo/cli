@@ -14,6 +14,7 @@ import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
+import { EXIT } from "./exit-codes";
 import type { Me } from "./types";
 
 /**
@@ -140,6 +141,39 @@ export function isEnvCredential(): boolean {
   return Boolean(process.env.REOCLO_MACHINE_TOKEN || process.env.REOCLO_AUTOMATION_KEY);
 }
 
+/**
+ * Each env variable carries exactly one credential class. An rk_m_ in
+ * REOCLO_AUTOMATION_KEY half-works on tenant commands and then fails on
+ * `run` in confusing ways (the pre-1.149.2 dashboard even instructed it),
+ * so a mismatch fails fast, naming the variable to use instead.
+ */
+export function assertEnvCredentialShape(
+  envMachine: string | undefined,
+  envAuto: string | undefined,
+): void {
+  if (envMachine && !envMachine.startsWith("rk_m_")) {
+    const err = new Error(
+      "REOCLO_MACHINE_TOKEN must hold a machine user token (rk_m_). " +
+        "For an automation key, set REOCLO_AUTOMATION_KEY instead.",
+    ) as Error & { exitCode: number };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
+  if (
+    envAuto &&
+    !envAuto.startsWith("rca_") &&
+    !envAuto.startsWith("rss_") &&
+    !envAuto.startsWith("rk_a_")
+  ) {
+    const err = new Error(
+      "REOCLO_AUTOMATION_KEY must hold an automation key (rca_). " +
+        "For a machine user token (rk_m_), set REOCLO_MACHINE_TOKEN instead.",
+    ) as Error & { exitCode: number };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
+}
+
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
   // Precedence:
   //   1. --token flag                (programmatic; used by automation harness + tests)
@@ -156,6 +190,10 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const flagToken = opts.token;
   const envMachine = process.env.REOCLO_MACHINE_TOKEN;
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
+  // A mis-set variable is a misconfiguration wherever it sits in the
+  // precedence chain — checked even when --token outranks both env vars,
+  // so a stray malformed credential never goes unnoticed.
+  assertEnvCredentialShape(envMachine, envAuto);
   // Both env vars are opaque, ambient, env-provided credentials with no profile
   // of their own — everywhere below that gates .reoclo/profile/refresh behavior
   // on "is an env credential in use", either one must trigger it identically.

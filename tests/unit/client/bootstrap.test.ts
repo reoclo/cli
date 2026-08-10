@@ -551,6 +551,28 @@ test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.re
   expect(ctx.refresh).toBeUndefined();
 });
 
+// --- assertEnvCredentialShape (bootstrap integration) ---------------------
+//
+// Each env variable carries exactly one credential class. This is the exact
+// mistake the pre-1.149.2 dashboard copy taught users to make (paste an
+// rk_m_ machine token into REOCLO_AUTOMATION_KEY), which used to half-work
+// on tenant-surface commands and then fail confusingly on `run`. bootstrap()
+// now fails fast, before any network call.
+
+test("REOCLO_AUTOMATION_KEY set to an rk_m_ token rejects with exit 2", async () => {
+  process.env.REOCLO_AUTOMATION_KEY = "rk_m_x";
+  let caught: unknown = null;
+  try {
+    await bootstrap();
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(2);
+  expect(String(caught)).toContain("REOCLO_MACHINE_TOKEN");
+});
+
 // --- isEnvCredential -----------------------------------------------------
 //
 // Single source of truth for "is an ambient, env-provided credential
