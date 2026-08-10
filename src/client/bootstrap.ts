@@ -377,12 +377,32 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     authKind: flagToken || envCredential ? undefined : profile?.auth_kind,
   });
   if (orgErr) throw orgErr;
+  // An env credential (machine token / automation key) is tenant-bound on its
+  // own and has no profile of its own to probe or switch — true whether or
+  // not an ambient OAuth profile happens to be sitting on disk. This check
+  // MUST run before any network probe or token mint below: an ambient
+  // profile's auth_kind must never decide what happens to a credential that
+  // isn't the profile's, and the env credential must never be POSTed to
+  // whatever host the ambient profile's oauth_auth_url happens to name — the
+  // same class of ambient redirect that `profileEndpoints = null` already
+  // prevents for the API URL. Previously this lived inside the `!profile ||
+  // profile.auth_kind !== "oauth"` branch below, so it was unreachable
+  // whenever an ambient OAuth profile existed: a foreign --org fell through
+  // to the probe and came back exit 5 ("re-run reoclo login" — impossible for
+  // a machine token), and the credential's own org slug fell into
+  // mintTenantSwitchToken, sending the env credential to the ambient
+  // profile's oauth_auth_url and failing with an unmapped exit 1.
+  if (envCredential && orgOverride) {
+    const err = new Error(
+      "--org does not apply: an automation key or machine token is bound to one organization already",
+    ) as Error & { exitCode: number };
+    err.exitCode = 4;
+    throw err;
+  }
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
-        envCredential
-          ? "--org does not apply: an automation key or machine token is bound to one organization already"
-          : "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
+        "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

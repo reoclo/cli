@@ -556,6 +556,103 @@ test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.re
   expect(ctx.tenantId).toBeUndefined();
 });
 
+// --- --org honesty under an env credential + an ambient OAuth profile -----
+//
+// The env-credential "--org does not apply" message used to live INSIDE the
+// `!profile || profile.auth_kind !== "oauth"` branch, so it was unreachable
+// whenever an ambient OAuth profile happened to be on disk (a very ordinary
+// laptop state: `reoclo login` once, then use REOCLO_MACHINE_TOKEN for an
+// agent in the same shell). Two things went wrong instead:
+//   - a foreign --org slug fell through to the tenant-switch probe and came
+//     back exit 5, "not in your granted organizations ... re-run reoclo
+//     login" — impossible for a machine token, and contradicts the honest
+//     exit-4 message a caller gets with no profile on disk at all.
+//   - --org matching the credential's OWN org slug fell into
+//     mintTenantSwitchToken, which POSTs the machine token / automation key
+//     to the AMBIENT PROFILE's oauth_auth_url as if it were an OAuth access
+//     token — the same class of ambient redirect that `profileEndpoints =
+//     null` already prevents for the API URL — and failed with an unmapped
+//     exit 1.
+// Both are fixed by hoisting the env-credential check above the auth_kind
+// test, so it always wins before any network probe or token mint. These
+// tests assert exit 4 AND zero requests reaching the stub server, proving
+// the check fires first.
+
+test("REOCLO_MACHINE_TOKEN + --org (foreign slug) exits 4 even with an ambient OAuth profile on disk, and probes nothing", async () => {
+  let requestCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requestCount++;
+      return Response.json({ memberships: [] });
+    },
+  });
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" } },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_API_URL = `http://localhost:${server.port}`;
+  let caught: unknown;
+  try {
+    await bootstrap({ org: "some-foreign-org" });
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    delete process.env.REOCLO_API_URL;
+    await server.stop();
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(4);
+  expect((caught as Error).message).toContain("--org does not apply");
+  expect(requestCount).toBe(0);
+});
+
+test("REOCLO_MACHINE_TOKEN + --org (matching the token's OWN slug) exits 4 without minting a tenant-switch token against the ambient profile's oauth_auth_url", async () => {
+  let requestCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requestCount++;
+      const url = new URL(req.url);
+      if (url.pathname === "/mcp/auth/me") {
+        // The machine token's OWN identity: a DIFFERENT org than the ambient
+        // profile, but matching the --org value below — the exact case that
+        // used to reach mintTenantSwitchToken.
+        return Response.json({
+          id: "u-1",
+          email: "m@x",
+          tenant_id: "t-machine-own",
+          tenant_slug: "machine-org",
+          memberships: [{ tenant_id: "t-machine-own", tenant_slug: "machine-org" }],
+          roles: [],
+        });
+      }
+      return Response.json({});
+    },
+  });
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" } },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_API_URL = `http://localhost:${server.port}`;
+  let caught: unknown;
+  try {
+    await bootstrap({ org: "machine-org" });
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    delete process.env.REOCLO_API_URL;
+    await server.stop();
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(4);
+  expect((caught as Error).message).toContain("--org does not apply");
+  // The hoisted check must fire before any /auth/me probe or oauth/token mint.
+  expect(requestCount).toBe(0);
+});
+
 // --- assertEnvCredentialShape (bootstrap integration) ---------------------
 //
 // Each env variable carries exactly one credential class. This is the exact
