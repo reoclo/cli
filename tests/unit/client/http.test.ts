@@ -68,9 +68,17 @@ test("withToken preserves an explicit prefix", async () => {
   // machineResolver opens a session and re-issues resolve() against the
   // rss_ session token via withToken(); the derived client must stay on
   // the automation prefix, not fall back to the token-derived one.
+  //
+  // The new token is deliberately tenant-shaped (rk_t_), NOT rss_/rk_a_/
+  // rca_/rk_m_. If it were automation- or machine-shaped, the no-override
+  // fallback `apiPrefix(detectKeyType(token))` would independently land on
+  // the same /api/automation/v1 value and the assertion below couldn't tell
+  // "prefix survived" from "prefix happened to be re-derived" — a
+  // tenant-shaped token derives to /mcp on its own, so only genuine
+  // survival of the override produces /api/automation/v1 here.
   const c = new HttpClient({ baseUrl: base, token: "rk_m_a" })
     .withPrefix("/api/automation/v1")
-    .withToken("rss_b");
+    .withToken("rk_t_b");
   const body = await c.get<{ path: string }>("/secrets/resolve");
   expect(body.path).toBe("/api/automation/v1/secrets/resolve");
 });
