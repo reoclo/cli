@@ -26,3 +26,8 @@ test("rca_ in REOCLO_MACHINE_TOKEN exits 2 and names the right variable", () => 
     expect(String(e)).toContain("REOCLO_AUTOMATION_KEY");
   }
 });
+test("an empty variable is treated as absent, not as a malformed token", () => {
+  // Consistent with bootstrap's own precedence chain, where `else if (envMachine)`
+  // also skips "" and falls through to the next credential source.
+  expect(() => assertEnvCredentialShape("", "")).not.toThrow();
+});

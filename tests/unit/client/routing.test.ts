@@ -4,6 +4,10 @@ import {
   apiPrefix,
   commandSupportedBy,
   automationAllowedCommands,
+  AUTOMATION_KEY_PREFIXES,
+  MACHINE_TOKEN_PREFIX,
+  isAutomationKeyShaped,
+  isMachineTokenShaped,
 } from "../../../src/client/routing";
 
 test("rk_a_ → automation", () => {
@@ -115,4 +119,25 @@ test("machine class may invoke any command", () => {
 });
 test("automation class stays restricted", () => {
   expect(commandSupportedBy("containers restart", "automation")).toBe(false);
+});
+
+// AUTOMATION_KEY_PREFIXES / MACHINE_TOKEN_PREFIX are the single source of
+// truth consumed by both detectKeyType (here) and assertEnvCredentialShape
+// (bootstrap.ts). This pins that the exported declaration and detectKeyType's
+// actual classification agree for every prefix, so the two can never drift
+// silently apart — a new prefix added to one and not the other would fail
+// this test.
+test("AUTOMATION_KEY_PREFIXES and MACHINE_TOKEN_PREFIX match what detectKeyType actually classifies", () => {
+  for (const prefix of AUTOMATION_KEY_PREFIXES) {
+    expect(detectKeyType(`${prefix}x`)).toBe("automation");
+    expect(isAutomationKeyShaped(`${prefix}x`)).toBe(true);
+  }
+  expect(detectKeyType(`${MACHINE_TOKEN_PREFIX}x`)).toBe("machine");
+  expect(isMachineTokenShaped(`${MACHINE_TOKEN_PREFIX}x`)).toBe(true);
+
+  // The negative direction matters too: a token shaped like neither prefix
+  // must not be misclassified as automation or machine by either helper.
+  expect(detectKeyType("oauth-bearer-token")).toBe("tenant");
+  expect(isAutomationKeyShaped("oauth-bearer-token")).toBe(false);
+  expect(isMachineTokenShaped("oauth-bearer-token")).toBe(false);
 });

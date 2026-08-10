@@ -4,7 +4,7 @@ import { resolveStore } from "../config/token-store";
 import { cacheDir } from "../config/paths";
 import { withFileLock } from "../config/file-lock";
 import { refreshSession, singleFlightRefresh } from "../auth/refresh";
-import { detectKeyType, type KeyType } from "./routing";
+import { detectKeyType, isAutomationKeyShaped, isMachineTokenShaped, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
@@ -151,7 +151,7 @@ export function assertEnvCredentialShape(
   envMachine: string | undefined,
   envAuto: string | undefined,
 ): void {
-  if (envMachine && !envMachine.startsWith("rk_m_")) {
+  if (envMachine && !isMachineTokenShaped(envMachine)) {
     const err = new Error(
       "REOCLO_MACHINE_TOKEN must hold a machine user token (rk_m_). " +
         "For an automation key, set REOCLO_AUTOMATION_KEY instead.",
@@ -159,12 +159,7 @@ export function assertEnvCredentialShape(
     err.exitCode = EXIT.MISUSE;
     throw err;
   }
-  if (
-    envAuto &&
-    !envAuto.startsWith("rca_") &&
-    !envAuto.startsWith("rss_") &&
-    !envAuto.startsWith("rk_a_")
-  ) {
+  if (envAuto && !isAutomationKeyShaped(envAuto)) {
     const err = new Error(
       "REOCLO_AUTOMATION_KEY must hold an automation key (rca_). " +
         "For a machine user token (rk_m_), set REOCLO_MACHINE_TOKEN instead.",
