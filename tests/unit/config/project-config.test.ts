@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   findProjectConfigPath,
   projectConfigOutdated,
+  projectConfigPresent,
   projectOrgFor,
   PROJECT_CONFIG_VERSION,
   readProjectConfig,
@@ -51,6 +52,29 @@ describe("findProjectConfigPath", () => {
       () => false,
     );
     expect(found).toBeNull();
+  });
+});
+
+describe("projectConfigPresent", () => {
+  test("true when a .reoclo file is present in an ancestor", () => {
+    expect(projectConfigPresent("/a/b/c", fakeFs({ "/a/.reoclo": "{}" }))).toBe(true);
+  });
+
+  test("false when no .reoclo exists up to the root", () => {
+    expect(projectConfigPresent("/a/b/c", fakeFs({}))).toBe(false);
+  });
+
+  test("presence-only: a malformed .reoclo still counts as present (never parses)", () => {
+    expect(projectConfigPresent("/a/b/c", fakeFs({ "/a/.reoclo": "{ not json" }))).toBe(true);
+  });
+
+  test("skips a .reoclo that is a directory (the ~/.reoclo config-dir collision)", () => {
+    expect(
+      projectConfigPresent("/home/ubuntu", {
+        exists: (p: string) => p === "/home/ubuntu/.reoclo",
+        isFile: () => false,
+      }),
+    ).toBe(false);
   });
 });
 

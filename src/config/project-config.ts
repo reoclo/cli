@@ -59,6 +59,20 @@ const defaultFs: ProjectConfigFs = {
   warn: (line) => process.stderr.write(line),
 };
 
+/**
+ * Presence check for a `.reoclo` project binding: true when the nearest ancestor
+ * of `startDir` holds a `.reoclo` REGULAR FILE. Presence ONLY: the file is not
+ * parsed, so a malformed binding still counts as present and never throws. Used
+ * by identity display (`whoami`) to decide whether the caller is bound to an org
+ * in the immediate context.
+ */
+export function projectConfigPresent(
+  startDir: string = process.cwd(),
+  fs: Pick<ProjectConfigFs, "exists" | "isFile"> = defaultFs,
+): boolean {
+  return findProjectConfigPath(startDir, fs.exists, fs.isFile) !== null;
+}
+
 /** The `.reoclo` schema version this CLI writes. Bump when the shape of the
  *  file changes in a way older CLI versions can't read correctly. */
 export const PROJECT_CONFIG_VERSION = 1;
