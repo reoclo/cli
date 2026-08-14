@@ -35,6 +35,7 @@ import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
 import { registerInit } from "./commands/init";
+import { registerSkills } from "./commands/skills";
 import { registerSecrets } from "./commands/secrets";
 import { registerRun } from "./commands/run";
 import { registerSync } from "./commands/sync";
@@ -113,6 +114,7 @@ if (import.meta.main) {
   registerAudit(program);
   registerDashboard(program);
   registerInit(program);
+  registerSkills(program);
   registerSecrets(program);
   registerRun(program);
   registerSync(program);
@@ -168,6 +170,7 @@ if (import.meta.main) {
     "keyring",   // status/migrate/export operate on local stores
     "mcp",       // bootstrap happens inside the action with proper error handling
     "init",      // bootstrap happens inside the action with proper error handling
+    "skills",    // local install/list against github.com/reoclo/skills; no reoclo auth needed
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
   ]);
 

@@ -10,22 +10,15 @@
 
 import type { Command } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
 import { loadConfig } from "../config/store";
 import { PROJECT_CONFIG_VERSION } from "../config/project-config";
-import {
-  HARNESSES,
-  type HarnessId,
-  type Scope,
-  detectHarnesses,
-  destinationsFor,
-} from "../init/harness";
-import { installSkills } from "../init/skills";
+import { HARNESSES, type HarnessId, type Scope } from "../init/harness";
+import { runSkillsInstall } from "../init/flow";
 import { mergeMcpServer } from "../init/mcp";
-import { confirmPrompt, multiSelectPrompt, selectPrompt, withSpinner } from "../ui/interactive";
+import { confirmPrompt, selectPrompt } from "../ui/interactive";
 
 interface InitOpts {
   skills?: string | boolean; // "--skills <list>" → string; "--no-skills" → false
@@ -142,77 +135,37 @@ export function registerInit(program: Command): void {
 
       // 1. Install skills first, so the installed head SHA is known by the time
       // the `.reoclo` binding is written below. The flow is harness-aware and
-      // confirm-gated: it asks whether to install, for which scope, and which
-      // agent harness(es). Under -y or a non-TTY every prompt no-ops to a safe
-      // default (install, project scope, the detected harnesses) so scripted and
-      // CI runs never block. Explicit flags always win over a prompt.
+      // confirm-gated (shared with `reoclo skills install` via runSkillsInstall):
+      // it asks whether to install, for which scope, and which agent harness(es).
+      // Under -y or a non-TTY every prompt no-ops to a safe default (install,
+      // project scope, the detected harnesses) so scripted and CI runs never
+      // block. Explicit flags always win over a prompt.
       const assumeYes = opts.yes === true;
       const flagHarness = parseHarnessOption(opts.harness);
-      const detected = detectHarnesses(process.cwd(), homedir(), {
-        exists: existsSync,
-        which: (bin) => Boolean(Bun.which(bin)),
-      });
       const { skip, requested } = parseSkillsOption(opts.skills);
       let skillsMeta: SkillsMeta | undefined;
       if (skip) {
         process.stdout.write("• skipped skills (--no-skills)\n");
-      } else if (!(assumeYes || (await confirmPrompt("Install reoclo skills?", { fallback: true })))) {
-        process.stdout.write("• skipped skills\n");
       } else {
-        // Scope: this project (.agents/skills here) or all projects (~). A flag
-        // or -y decides it; otherwise ask, defaulting to project.
-        const scope: Scope = opts.global
-          ? "global"
-          : opts.project || assumeYes
-            ? "project"
-            : await selectPrompt<Scope>(
-                "Install skills for...",
-                [
-                  { value: "project", label: "This project (.agents/skills here)" },
-                  { value: "global", label: "All projects (~/.agents/skills)" },
-                ],
-                "project",
-              );
-        // Harness(es): an explicit --harness wins; otherwise multi-select,
-        // pre-checked to the detected harnesses (also the -y / non-TTY default).
-        const selection: HarnessId[] = flagHarness.length
-          ? flagHarness
-          : assumeYes
-            ? detected.filter((d) => d.present).map((d) => d.id)
-            : await multiSelectPrompt<HarnessId>(
-                "Which agents should get the skills?",
-                detected.map((d) => ({ value: d.id, label: d.label })),
-                detected.filter((d) => d.present).map((d) => d.id),
-              );
-        const placement = destinationsFor(selection, scope, process.cwd(), homedir());
-        try {
-          const { installed, missing, sha } = await withSpinner("Installing skills", () =>
-            installSkills({ placement, requested }),
-          );
-          const where = scope === "global" ? "~/.agents/skills" : ".agents/skills";
-          if (installed.length > 0) {
-            process.stdout.write(
-              `✓ installed ${installed.length} skill(s) into ${where}/: ${installed.join(", ")}\n`,
-            );
-          } else {
-            process.stdout.write("• no matching skills to install\n");
-          }
-          if (missing.length > 0) {
-            process.stderr.write(`  note: requested skill(s) not found: ${missing.join(", ")}\n`);
-          }
-          // sha may be null (best-effort GitHub lookup failed): the skills block
-          // is still written, just without a sha, so a later `doctor` sees
+        const outcome = await runSkillsInstall({
+          assumeYes,
+          flagHarness,
+          global: opts.global,
+          project: opts.project,
+          requested,
+        });
+        if (outcome.kind === "installed") {
+          // sha may be undefined (best-effort GitHub lookup failed): the skills
+          // block is still written, just without a sha, so a later `doctor` sees
           // "installed" rather than a false "up to date". `targets`/`scope` let a
           // later re-sync target the same destinations.
           skillsMeta = {
             ref: "main",
-            sha: sha ?? undefined,
+            sha: outcome.sha,
             installed_at: new Date().toISOString(),
-            targets: selection,
-            scope,
+            targets: outcome.selection,
+            scope: outcome.scope,
           };
-        } catch (e) {
-          process.stderr.write(`  warning: could not install skills: ${(e as Error).message}\n`);
         }
       }
 

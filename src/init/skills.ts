@@ -109,6 +109,69 @@ export interface InstallSkillsResult {
   sha?: string;
 }
 
+export interface AvailableSkills {
+  /** Skill dir names (any child with a SKILL.md), sorted. */
+  available: string[];
+  /** Extracted tarball root — each `available` name is a dir directly under it. */
+  sourceRoot: string;
+  /** Remove the temp download/extract dir. Always call when done with `sourceRoot`. */
+  cleanup: () => void;
+}
+
+/**
+ * Download the skills tarball and extract it to a temp dir, returning the
+ * available skill names (dirs containing SKILL.md). Shared by `installSkills`
+ * (which selects + places a subset, then cleans up) and `reoclo skills list`
+ * (which only needs the names). Throws a clear, actionable error when the
+ * download fails or `tar` is unavailable — same errors `installSkills` has
+ * always thrown for these cases.
+ */
+export async function fetchAvailableSkills(opts: {
+  ref?: string;
+  fetchImpl?: typeof fetch;
+}): Promise<AvailableSkills> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = skillsTarballUrl(opts.ref ?? "main");
+  const res = await fetchImpl(url);
+  if (!res.ok) {
+    throw new Error(`failed to download skills (HTTP ${res.status} from ${url})`);
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+
+  const work = mkdtempSync(join(tmpdir(), "reoclo-skills-"));
+  const cleanup = () => rmSync(work, { recursive: true, force: true });
+  try {
+    const tarball = join(work, "skills.tar.gz");
+    writeFileSync(tarball, bytes);
+    const extractDir = join(work, "extracted");
+    mkdirSync(extractDir, { recursive: true });
+
+    const tar = spawnSync("tar", ["-xzf", tarball, "-C", extractDir], { stdio: "ignore" });
+    if (tar.error) {
+      throw new Error(
+        "could not run 'tar' to extract skills — install tar, or clone manually:\n" +
+          "  git clone https://github.com/reoclo/skills.git ~/.claude/skills",
+      );
+    }
+    if (tar.status !== 0) throw new Error("failed to extract the skills archive");
+
+    // codeload wraps everything in a single top-level dir (skills-<ref>/).
+    const tops = readdirSync(extractDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+    const root = tops[0] ? join(extractDir, tops[0].name) : extractDir;
+
+    // A skill is any child dir that contains a SKILL.md.
+    const available = readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "SKILL.md")))
+      .map((d) => d.name)
+      .sort();
+
+    return { available, sourceRoot: root, cleanup };
+  } catch (e) {
+    cleanup();
+    throw e;
+  }
+}
+
 /** Best-effort: resolve the skills repo branch head commit SHA via the public
  *  GitHub API. Returns null on any non-ok/parse/network outcome (rate-limit
  *  tolerant — unauthenticated 60/hr) so callers never fail on it. */
@@ -147,45 +210,17 @@ export async function installSkills(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<InstallSkillsResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const url = skillsTarballUrl(opts.ref ?? "main");
-  const res = await fetchImpl(url);
-  if (!res.ok) {
-    throw new Error(`failed to download skills (HTTP ${res.status} from ${url})`);
-  }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-
-  const work = mkdtempSync(join(tmpdir(), "reoclo-skills-"));
+  const { available, sourceRoot, cleanup } = await fetchAvailableSkills({
+    ref: opts.ref,
+    fetchImpl,
+  });
   try {
-    const tarball = join(work, "skills.tar.gz");
-    writeFileSync(tarball, bytes);
-    const extractDir = join(work, "extracted");
-    mkdirSync(extractDir, { recursive: true });
-
-    const tar = spawnSync("tar", ["-xzf", tarball, "-C", extractDir], { stdio: "ignore" });
-    if (tar.error) {
-      throw new Error(
-        "could not run 'tar' to extract skills — install tar, or clone manually:\n" +
-          "  git clone https://github.com/reoclo/skills.git ~/.claude/skills",
-      );
-    }
-    if (tar.status !== 0) throw new Error("failed to extract the skills archive");
-
-    // codeload wraps everything in a single top-level dir (skills-<ref>/).
-    const tops = readdirSync(extractDir, { withFileTypes: true }).filter((d) => d.isDirectory());
-    const root = tops[0] ? join(extractDir, tops[0].name) : extractDir;
-
-    // A skill is any child dir that contains a SKILL.md.
-    const available = readdirSync(root, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "SKILL.md")))
-      .map((d) => d.name)
-      .sort();
-
     const { selected, missing } = selectSkills(available, opts.requested);
-    placeSkills({ sourceRoot: root, selected, placement: opts.placement });
+    placeSkills({ sourceRoot, selected, placement: opts.placement });
     const sha = (await resolveSkillsHead(opts.ref ?? "main", fetchImpl)) ?? undefined;
     return { installed: selected, missing, sha };
   } finally {
-    rmSync(work, { recursive: true, force: true });
+    cleanup();
   }
 }
 
