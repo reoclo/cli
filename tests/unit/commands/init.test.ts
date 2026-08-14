@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { buildProjectBinding, parseSkillsOption } from "../../../src/commands/init";
+import { buildProjectBinding, parseHarnessOption, parseSkillsOption } from "../../../src/commands/init";
+
+describe("parseHarnessOption", () => {
+  test("splits and validates a comma list", () => {
+    expect(parseHarnessOption("claude,codex")).toEqual(["claude", "codex"]);
+    expect(parseHarnessOption("  claude , gemini ")).toEqual(["claude", "gemini"]);
+    expect(parseHarnessOption(undefined)).toEqual([]);
+  });
+
+  test("drops unknown ids", () => {
+    expect(parseHarnessOption("claude,notareal")).toEqual(["claude"]);
+  });
+
+  test("an empty string yields no harnesses", () => {
+    expect(parseHarnessOption("")).toEqual([]);
+    expect(parseHarnessOption(" , ")).toEqual([]);
+  });
+});
 
 describe("parseSkillsOption", () => {
   test("--no-skills (false) skips", () => {
@@ -57,6 +74,29 @@ describe("buildProjectBinding", () => {
       org: "acme",
       version: 1,
       skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
+    });
+  });
+
+  test("carries the skills targets and scope through verbatim", () => {
+    expect(
+      buildProjectBinding({
+        org: "acme",
+        profileName: "default",
+        activeProfile: "default",
+        skills: {
+          ref: "main",
+          sha: "deadbeef",
+          installed_at: "2026-08-01T00:00:00.000Z",
+          targets: ["claude", "codex"],
+          scope: "global",
+        },
+      }).skills,
+    ).toEqual({
+      ref: "main",
+      sha: "deadbeef",
+      installed_at: "2026-08-01T00:00:00.000Z",
+      targets: ["claude", "codex"],
+      scope: "global",
     });
   });
 });

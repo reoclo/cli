@@ -67,35 +67,50 @@ describe("installSkills", () => {
   const fetchImpl = (() =>
     Promise.resolve(new Response(bytes, { status: 200 }))) as unknown as typeof fetch;
 
-  test("downloads, extracts skill dirs, and copies them into destDir", async () => {
-    const dest = join(mkdtempSync(join(tmpdir(), "dest-")), ".claude", "skills");
-    const result = await installSkills({ destDir: dest, fetchImpl });
+  /** A real (temp-dir) Placement: canonical `.agents/skills` + a Claude symlink dir. */
+  function tempPlacement() {
+    const base = mkdtempSync(join(tmpdir(), "dest-"));
+    return {
+      base,
+      placement: {
+        canonicalRoot: join(base, ".agents", "skills"),
+        symlinkDirs: [join(base, ".claude", "skills")],
+        pointerFiles: [] as string[],
+      },
+    };
+  }
+
+  test("downloads, extracts skill dirs, and places them in the canonical store", async () => {
+    const { base, placement } = tempPlacement();
+    const result = await installSkills({ placement, fetchImpl });
     expect(result.installed.sort()).toEqual(["reoclo-api", "reoclo-cli-usage"]);
     expect(result.missing).toEqual([]);
-    expect(existsSync(join(dest, "reoclo-cli-usage", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(dest, "reoclo-api", "SKILL.md"))).toBe(true);
-    // README.md is not a skill dir and must not be copied.
-    expect(existsSync(join(dest, "README.md"))).toBe(false);
+    expect(existsSync(join(placement.canonicalRoot, "reoclo-cli-usage", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(placement.canonicalRoot, "reoclo-api", "SKILL.md"))).toBe(true);
+    // Claude reads `.claude/skills`, so it gets a linked (or copied) skill too.
+    expect(existsSync(join(base, ".claude", "skills", "reoclo-cli-usage", "SKILL.md"))).toBe(true);
+    // README.md is not a skill dir and must not be placed.
+    expect(existsSync(join(placement.canonicalRoot, "README.md"))).toBe(false);
   });
 
   test("installs only the requested subset and reports missing ones", async () => {
-    const dest = join(mkdtempSync(join(tmpdir(), "dest-")), ".claude", "skills");
+    const { placement } = tempPlacement();
     const result = await installSkills({
-      destDir: dest,
+      placement,
       requested: ["reoclo-cli-usage", "nope"],
       fetchImpl,
     });
     expect(result.installed).toEqual(["reoclo-cli-usage"]);
     expect(result.missing).toEqual(["nope"]);
-    expect(existsSync(join(dest, "reoclo-cli-usage", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(dest, "reoclo-api"))).toBe(false);
+    expect(existsSync(join(placement.canonicalRoot, "reoclo-cli-usage", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(placement.canonicalRoot, "reoclo-api"))).toBe(false);
   });
 
   test("throws a clear error when the download fails", async () => {
     const failing = (() =>
       Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
-    const dest = join(mkdtempSync(join(tmpdir(), "dest-")), ".claude", "skills");
-    await expect(installSkills({ destDir: dest, fetchImpl: failing })).rejects.toThrow(/404/);
+    const { placement } = tempPlacement();
+    await expect(installSkills({ placement, fetchImpl: failing })).rejects.toThrow(/404/);
   });
 });
 

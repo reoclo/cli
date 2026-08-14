@@ -133,18 +133,15 @@ export async function resolveSkillsHead(ref = "main", fetchImpl: typeof fetch = 
 }
 
 /**
- * Download the skills tarball, extract it, and place each selected skill dir.
- * When `placement` is given, skills are placed via `placeSkills` (canonical
- * `.agents/skills` copy + portable frontmatter + Claude symlinks/pointers).
- * Otherwise, falls back to copying into `destDir` (a project's
- * `.claude/skills`) unchanged, for callers not yet migrated to `placement`.
- * Idempotent — re-running refreshes skills in place. Throws a clear,
- * actionable error when the download fails or `tar` is unavailable.
- * `fetchImpl` is injectable for tests.
+ * Download the skills tarball, extract it, and place each selected skill dir
+ * via `placeSkills` (canonical `.agents/skills` copy + portable frontmatter +
+ * Claude symlinks/pointers, per the resolved `placement`). Idempotent —
+ * re-running refreshes skills in place. Throws a clear, actionable error when
+ * the download fails or `tar` is unavailable. `fetchImpl` is injectable for
+ * tests.
  */
 export async function installSkills(opts: {
-  destDir?: string;
-  placement?: Placement;
+  placement: Placement;
   requested?: string[];
   ref?: string;
   fetchImpl?: typeof fetch;
@@ -184,16 +181,7 @@ export async function installSkills(opts: {
       .sort();
 
     const { selected, missing } = selectSkills(available, opts.requested);
-    if (opts.placement) {
-      placeSkills({ sourceRoot: root, selected, placement: opts.placement });
-    } else if (opts.destDir) {
-      mkdirSync(opts.destDir, { recursive: true });
-      for (const name of selected) {
-        cpSync(join(root, name), join(opts.destDir, name), { recursive: true });
-      }
-    } else {
-      throw new Error("installSkills requires either `placement` or `destDir`");
-    }
+    placeSkills({ sourceRoot: root, selected, placement: opts.placement });
     const sha = (await resolveSkillsHead(opts.ref ?? "main", fetchImpl)) ?? undefined;
     return { installed: selected, missing, sha };
   } finally {

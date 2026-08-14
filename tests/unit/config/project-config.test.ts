@@ -238,6 +238,35 @@ test("project config parses version + skills and detects plain (unversioned) as 
   expect(projectConfigOutdated(cfg)).toBe(true); // 0 < PROJECT_CONFIG_VERSION
 });
 
+test("readProjectConfig preserves the skills targets and scope when present", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () =>
+      JSON.stringify({
+        org: "acme",
+        skills: { ref: "main", sha: "abc", targets: ["claude", "codex"], scope: "global" },
+      }),
+  };
+  const cfg = readProjectConfig("/proj", fs);
+  expect(cfg?.skills?.targets).toEqual(["claude", "codex"]);
+  expect(cfg?.skills?.scope).toBe("global");
+});
+
+test("readProjectConfig ignores a malformed skills targets/scope but keeps ref", () => {
+  const fs = {
+    exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
+    read: () =>
+      JSON.stringify({
+        org: "acme",
+        skills: { ref: "main", targets: "claude", scope: "nope" },
+      }),
+  };
+  const cfg = readProjectConfig("/proj", fs);
+  expect(cfg?.skills?.ref).toBe("main");
+  expect(cfg?.skills?.targets).toBeUndefined();
+  expect(cfg?.skills?.scope).toBeUndefined();
+});
+
 test("current project config is not outdated; null is never outdated", () => {
   const fs = {
     exists: (p: string) => p === "/proj/.reoclo", isFile: () => true, warn: () => {},
