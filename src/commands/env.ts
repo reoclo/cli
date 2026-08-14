@@ -28,7 +28,7 @@ export function registerEnv(program: Command): void {
       .action(async (opts: { app: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);
         const list = await ctx.client.get<EnvVarRead[]>(
           `/tenants/${tid}/applications/${appId}/env/`,
@@ -54,7 +54,7 @@ export function registerEnv(program: Command): void {
     .argument("<assignments...>", "KEY=VALUE pairs")
     .action(async (assignments: string[], opts: { app: string }) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const appId = await resolveApp(ctx.client, tid, opts.app);
 
       const vars: EnvVarEntry[] = [];
@@ -81,7 +81,7 @@ export function registerEnv(program: Command): void {
       .argument("<key>", "the env var key to remove")
       .action(async (key: string, opts: { app: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);
         await ctx.client.del(
           `/tenants/${tid}/applications/${appId}/env/${encodeURIComponent(key)}`,

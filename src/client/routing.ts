@@ -1,25 +1,47 @@
-export type KeyType = "tenant" | "automation";
+export type KeyType = "tenant" | "automation" | "machine";
+
+/**
+ * Prefixes that classify a token as an automation key: `rca_` (the one a
+ * person sets by hand), `rss_` (minted by the API), and legacy `rk_a_`.
+ * Single source of truth for the automation shape — `detectKeyType` below
+ * and `assertEnvCredentialShape` (bootstrap.ts) both derive from this list,
+ * so the two classifiers cannot silently drift apart.
+ */
+export const AUTOMATION_KEY_PREFIXES = ["rk_a_", "rca_", "rss_"] as const;
+
+/**
+ * Prefix that classifies a token as a machine-user credential. Single source
+ * of truth for the machine shape, same rationale as
+ * {@link AUTOMATION_KEY_PREFIXES}.
+ */
+export const MACHINE_TOKEN_PREFIX = "rk_m_";
+
+/** True when `token` matches one of {@link AUTOMATION_KEY_PREFIXES}. */
+export function isAutomationKeyShaped(token: string): boolean {
+  return AUTOMATION_KEY_PREFIXES.some((prefix) => token.startsWith(prefix));
+}
+
+/** True when `token` matches {@link MACHINE_TOKEN_PREFIX}. */
+export function isMachineTokenShaped(token: string): boolean {
+  return token.startsWith(MACHINE_TOKEN_PREFIX);
+}
 
 /**
  * Classifies a presented token for HTTP routing.
- *
- *   - `rca_*` and the legacy `rk_a_*` prefix → automation (hits
- *     `/api/automation/v1/*`, restricted command surface).
- *   - everything else → "tenant" routing (`/mcp/*`), which is the surface
- *     OAuth-issued access tokens use. The legacy `rk_t_*` tenant integration
- *     key prefix has been retired but still resolves here for read-compat
- *     with any in-flight requests during rollout.
+ *   - rca_* / rss_* / legacy rk_a_* → automation (/api/automation/v1, restricted commands)
+ *   - rk_m_* → machine (a machine user: full /mcp surface, org-bound, no expiry)
+ *   - everything else → tenant (OAuth session, /mcp)
  */
 export function detectKeyType(token: string): KeyType {
-  if (token.startsWith("rk_a_") || token.startsWith("rca_") || token.startsWith("rss_")) return "automation";
+  if (isAutomationKeyShaped(token)) return "automation";
+  if (isMachineTokenShaped(token)) return "machine";
   return "tenant";
 }
 
 export function apiPrefix(t: KeyType): string {
-  // Tenant keys hit Caddy's /mcp/* path which strips the prefix and forwards
-  // to the internal API. Automation keys hit the dedicated /api/automation/v1/*
-  // route (no prefix strip). Both terminate at the internal API but with
-  // different scopes, ACL rules, and rate limits.
+  // Machine tokens use the same tenant surface as OAuth sessions; only the
+  // three secret-resolution calls cross to the automation prefix, via
+  // machineLane() in client/secrets.ts.
   return t === "automation" ? "/api/automation/v1" : "/mcp";
 }
 
@@ -37,12 +59,13 @@ const AUTOMATION_ALLOWED = new Set([
 ]);
 
 /** Return true if a token of the given type can invoke this command path.
- *  Tenant keys can invoke anything; automation keys are restricted to a
- *  fixed set of full command paths (so e.g. `containers restart` is rejected
- *  even though its leaf is `restart`).
+ *  Tenant and machine keys can invoke anything (the server enforces
+ *  per-route); automation keys are restricted to a fixed set of full
+ *  command paths (so e.g. `containers restart` is rejected even though its
+ *  leaf is `restart`).
  */
 export function commandSupportedBy(commandPath: string, t: KeyType): boolean {
-  if (t === "tenant") return true;
+  if (t !== "automation") return true;
   return AUTOMATION_ALLOWED.has(commandPath);
 }
 

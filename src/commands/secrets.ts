@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability } from "../client/command-meta";
 import { EXIT } from "../client/exit-codes";
+import type { KeyType } from "../client/routing";
 import {
   listProjects,
   listSecrets,
@@ -33,6 +34,11 @@ import {
 } from "../secrets/template";
 import { machineResolver, humanResolver } from "../secrets/resolvers";
 import { collectCiMeta } from "./run";
+
+/** Only an interactive OAuth session takes the per-secret reveal path. */
+export function usesMachineLane(tokenType: KeyType): boolean {
+  return tokenType !== "tenant";
+}
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
   const byId = projects.find((p) => p.id === nameOrId);
@@ -101,7 +107,7 @@ export function registerSecrets(program: Command): void {
       .action(async () => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const rows = await listProjects(ctx.client, tid);
         printList(
           rows as unknown as Array<Record<string, unknown>>,
@@ -123,7 +129,7 @@ export function registerSecrets(program: Command): void {
       .action(async (opts: { project: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const rows = await listSecrets(ctx.client, tid, pid);
         printList(
@@ -145,7 +151,7 @@ export function registerSecrets(program: Command): void {
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const secret = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
         if (!secret) {
@@ -168,7 +174,7 @@ export function registerSecrets(program: Command): void {
       .action(
         async (key: string, opts: { project: string; value?: string; fromFile?: string }) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
           // Pass stdin as a lazy reader so it is consumed only when neither
           // --value nor --from-file was given; otherwise `--from-file /dev/stdin`
@@ -195,7 +201,7 @@ export function registerSecrets(program: Command): void {
       .requiredOption("--project <name>", "project name or id")
       .action(async (key: string, opts: { project: string }) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
         const secret = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
         if (!secret) {
@@ -220,7 +226,7 @@ export function registerSecrets(program: Command): void {
       .option("--dry-run", "print the import plan without writing")
       .action(async (opts: ImportFlags) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const source = buildSource(opts, { run: runCommand, env: process.env });
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
 
@@ -259,7 +265,8 @@ export function registerSecrets(program: Command): void {
         `
 Examples:
   reoclo secrets inject -i .env.tpl -o .env
-  reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env`,
+  reoclo secrets inject -i .env.tpl >> /opt/reoclo/.env
+  REOCLO_MACHINE_TOKEN=rk_m_... reoclo secrets inject -i .env.tpl -o .env`,
       )
       .action(async (opts: { input: string; output?: string; force?: boolean }) => {
         // All cheap, IO-only validation happens up front, before bootstrap()
@@ -276,10 +283,12 @@ Examples:
         const ctx = await bootstrap();
         let resolved: ResolvedSecrets = new Map();
         if (refs.length > 0) {
-          const resolver =
-            ctx.tokenType === "automation"
-              ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
-              : humanResolver(ctx.client, requireTenantId(ctx));
+          // A machine credential (automation key or machine user token) takes
+          // the session-backed machine path; only an interactive tenant/OAuth
+          // session falls back to the per-secret reveal path.
+          const resolver = usesMachineLane(ctx.tokenType)
+            ? machineResolver(ctx.client, collectCiMeta(process.env, undefined))
+            : humanResolver(ctx.client, await requireTenantId(ctx));
           resolved = await resolver(refs);
         }
 

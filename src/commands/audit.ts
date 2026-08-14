@@ -54,7 +54,7 @@ export function registerAudit(program: Command): void {
       }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
 
         // Resolve --actor email → id if it looks like an email.
         let actorId: string | undefined;

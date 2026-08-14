@@ -26,6 +26,8 @@ export interface HttpClientOptions {
    * works without affecting regular CLI usage.
    */
   mcpSource?: boolean;
+  /** Overrides the token-derived API prefix for every request this client makes. */
+  prefix?: string;
 }
 
 export class HttpClient {
@@ -33,18 +35,25 @@ export class HttpClient {
   private currentToken: string;
 
   constructor(private readonly opts: HttpClientOptions) {
-    this.prefix = apiPrefix(detectKeyType(opts.token));
+    this.prefix = opts.prefix ?? apiPrefix(detectKeyType(opts.token));
     this.currentToken = opts.token;
   }
 
   /**
-   * Return a new HttpClient using the given token (re-derives the API prefix).
+   * Return a new HttpClient using the given token (re-derives the API prefix,
+   * unless an explicit `prefix` override is set — see `withPrefix`).
    * `refreshToken` is deliberately dropped: a short-lived session token (rss_)
    * that 401s should surface the failure, not silently refresh via the parent
    * (rca_) client's refresh closure.
    */
   withToken(token: string): HttpClient {
     return new HttpClient({ ...this.opts, token, refreshToken: undefined });
+  }
+
+  /** A client identical to this one but pinned to `prefix`. Survives withToken(),
+   *  because the spread carries opts.prefix into the derived client. */
+  withPrefix(prefix: string): HttpClient {
+    return new HttpClient({ ...this.opts, prefix });
   }
 
   /**

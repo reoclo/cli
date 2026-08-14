@@ -33,7 +33,8 @@ export function machineResolver(
       const id = accessible.find((p) => p.name === name || p.id === name)?.id;
       if (!id) {
         throw new ResolutionError(
-          `project '${name}' is not accessible to this key or does not exist`,
+          `project '${name}' is not accessible to this credential or does not exist. ` +
+            "A project that is restricted to specific servers is never available to a machine user.",
         );
       }
       return id;

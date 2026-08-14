@@ -74,6 +74,43 @@ describe("tenant-scoped completion cache", () => {
     rmSync(cfgDir, { recursive: true, force: true });
   });
 
+  // Regression: an env credential (machine token, automation key) carries no
+  // profile of its own and MUST NOT borrow the ambient on-disk profile's
+  // tenant — the same cross-org leak requireTenantId() closes for the
+  // network path (bootstrap.test.ts), but on the completion-cache path.
+  // Before the fix, currentTenantKey() fell through to configTenantId()
+  // unconditionally, so a machine token running in a directory with a
+  // different org's cached OAuth profile would write (and later read back)
+  // that org's server/app names under the profile's tenant bucket.
+  test("an env credential never buckets the completion cache under an ambient profile's tenant (cross-org leak)", () => {
+    const cfgDir = mkdtempSync(join(tmpdir(), "reoclo-cfg-"));
+    process.env.REOCLO_CONFIG_DIR = cfgDir;
+    writeFileSync(
+      join(cfgDir, "config.json"),
+      JSON.stringify({
+        active_profile: "default",
+        profiles: { default: { tenant_id: "T-profile-org" } },
+      }),
+      "utf8",
+    );
+    process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+    try {
+      // No setActiveTenantId call — this is the window before
+      // requireTenantId() has resolved the credential's own tenant via
+      // /auth/me (or any code path that writes to the cache without ever
+      // calling it). Before the fix, this landed under "T-profile-org".
+      writeSlice("servers", [srv("org-a-web")]);
+
+      // The write must NOT be reachable under the ambient profile's tenant —
+      // that bucket must stay empty.
+      setActiveTenantId("T-profile-org");
+      expect(getSlice("servers")).toEqual([]);
+    } finally {
+      delete process.env.REOCLO_MACHINE_TOKEN;
+      rmSync(cfgDir, { recursive: true, force: true });
+    }
+  });
+
   test("a v3 (pre-partition) cache file is discarded", () => {
     writeFileSync(
       join(tmp, "completion-cache.json"),

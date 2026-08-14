@@ -124,7 +124,7 @@ async function runPowerAction(
   opts: PowerActionOpts,
 ): Promise<void> {
   const ctx = await bootstrap();
-  const tid = requireTenantId(ctx);
+  const tid = await requireTenantId(ctx);
   const sid = await resolveServer(ctx.client, tid, idOrSlug);
 
   if (powerNeedsConfirm(action) && !opts.yes) {
@@ -220,7 +220,7 @@ export function registerServersPower(program: Command, serversGroup: Command): v
     .action(async (idOrSlug: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, idOrSlug);
       const res = await ctx.client.post<StatusCheckResponse>(
         `/tenants/${tid}/servers/${sid}/cloud/status`,
@@ -235,7 +235,7 @@ export function registerServersPower(program: Command, serversGroup: Command): v
     .action(async (idOrSlug: string) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const sid = await resolveServer(ctx.client, tid, idOrSlug);
       const res = await ctx.client.get<CapabilitiesResponse>(
         `/tenants/${tid}/servers/${sid}/cloud/capabilities`,

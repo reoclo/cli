@@ -39,7 +39,12 @@ import { registerSkills } from "./commands/skills";
 import { registerSecrets } from "./commands/secrets";
 import { registerRun } from "./commands/run";
 import { registerSync } from "./commands/sync";
-import { bootstrap, setGlobalProfileOverride, setGlobalOrgOverride } from "./client/bootstrap";
+import {
+  bootstrap,
+  setGlobalProfileOverride,
+  setGlobalOrgOverride,
+  isEnvCredential,
+} from "./client/bootstrap";
 import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import {
@@ -52,6 +57,7 @@ import {
 } from "./client/update-check";
 import { filterCommandsByCapability } from "./client/help-filter";
 import { ensureCapabilityOrExit, getRequiredCapability } from "./client/command-meta";
+import { resolveGatingCapabilities } from "./client/gating";
 import { loadConfig } from "./config/store";
 import { extractProfileFromArgv, resolveProfileName } from "./config/profile-resolve";
 import { readProjectConfig } from "./config/project-config";
@@ -138,18 +144,22 @@ if (import.meta.main) {
   try {
     const cfg = await loadConfig();
     // A `.reoclo` `profile` binding selects the profile too — so the gated
-    // command set matches what bootstrap() will run. Skipped under an automation
-    // key (CI), matching bootstrap's "never read .reoclo in CI" rule.
-    const projectProfile = process.env.REOCLO_AUTOMATION_KEY
-      ? undefined
-      : readProjectConfig()?.profile;
+    // command set matches what bootstrap() will run. Skipped under an ambient
+    // env credential (automation key OR machine token; CI/agent), matching
+    // bootstrap's "never read .reoclo under an env credential" rule — otherwise
+    // an ambient .reoclo profile's `capabilities` could wrongly gate commands
+    // for a machine token that bootstrap() itself never binds to that profile.
+    const projectProfile = isEnvCredential() ? undefined : readProjectConfig()?.profile;
     const gatingProfile = resolveProfileName({
       flagProfile: extractProfileFromArgv(process.argv),
       envProfile: process.env.REOCLO_PROFILE,
       projectProfile,
       activeProfile: cfg.active_profile,
     });
-    capabilities = cfg.profiles[gatingProfile]?.capabilities;
+    capabilities = resolveGatingCapabilities({
+      isEnvCredential: isEnvCredential(),
+      profileCapabilities: cfg.profiles[gatingProfile]?.capabilities,
+    });
   } catch {
     capabilities = undefined;
   }
@@ -237,12 +247,13 @@ if (import.meta.main) {
     // each, both pointing at 'reoclo init' (it reinstalls skills by default,
     // so there's no separate skills-only flag to suggest). Gated by the
     // same `enabled` predicate as the update notice above (never read .reoclo
-    // under an automation key, matching bootstrap's CI rule; a still-broken
-    // .reoclo — shouldn't happen after discovery was made graceful — must not
-    // crash the postAction hook, so the read is wrapped defensively).
+    // under an ambient env credential — automation key or machine token —
+    // matching bootstrap's CI/agent rule; a still-broken .reoclo — shouldn't
+    // happen after discovery was made graceful — must not crash the
+    // postAction hook, so the read is wrapped defensively).
     if (enabled) {
       let pc: ReturnType<typeof readProjectConfig> = null;
-      if (!process.env.REOCLO_AUTOMATION_KEY) {
+      if (!isEnvCredential()) {
         try {
           pc = readProjectConfig();
         } catch {

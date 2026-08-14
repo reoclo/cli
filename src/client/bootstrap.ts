@@ -4,7 +4,7 @@ import { resolveStore } from "../config/token-store";
 import { cacheDir } from "../config/paths";
 import { withFileLock } from "../config/file-lock";
 import { refreshSession, singleFlightRefresh } from "../auth/refresh";
-import { detectKeyType, type KeyType } from "./routing";
+import { detectKeyType, isAutomationKeyShaped, isMachineTokenShaped, type KeyType } from "./routing";
 import { HttpClient } from "./http";
 import { refreshAccessToken } from "../auth/oauth-device";
 import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from "../lib/urls";
@@ -14,6 +14,7 @@ import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveTenantId } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
+import { EXIT } from "./exit-codes";
 import type { Me } from "./types";
 
 /**
@@ -87,19 +88,31 @@ export function defaultStreamsUrl(apiUrl: string): string {
 }
 
 /**
- * Asserts that {@link ResolvedContext.tenantId} is present and returns it.
- * Throws with exit code 3 if missing — the same code as "not authenticated"
- * since the typical fix is to re-run `reoclo login`.
+ * Resolve the tenant id for this invocation, lazily.
+ *
+ * A profile carries its tenant; an env credential (machine token, automation
+ * key) does not, and MUST NOT borrow an ambient profile's — sending a machine
+ * token down another org's /tenants/{tid} path was a live cross-org leak. So
+ * the token's own identity answers, via ONE /auth/me, memoized on the context.
+ * Lazy rather than eager because bootstrap() runs twice per command (preAction
+ * + action) and preAction relies on it being network-free.
  */
-export function requireTenantId(ctx: ResolvedContext): string {
-  if (!ctx.tenantId) {
+export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
+  if (ctx.tenantId) return ctx.tenantId;
+  const me = await ctx.client.get<Me>("/auth/me");
+  if (!me.tenant_id) {
     const err = new Error(
-      "no tenant_id resolved — run 'reoclo login' to populate the profile, or call /auth/me",
+      "no tenant resolved from /auth/me — run 'reoclo login', or check the credential",
     ) as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;
   }
-  return ctx.tenantId;
+  ctx.tenantId = me.tenant_id;
+  // Once the credential's OWN tenant is known, the completion cache must
+  // bucket under it (not NO_TENANT, and never an ambient profile's) — see
+  // completion/cache.ts's currentTenantKey() for the other half of this fix.
+  setActiveTenantId(ctx.tenantId);
+  return me.tenant_id;
 }
 
 export interface BootstrapOptions {
@@ -115,26 +128,91 @@ export interface BootstrapOptions {
   streams?: string; // --streams
   /** When true, the HttpClient will send X-Reoclo-Source: mcp on every request. */
   mcpSource?: boolean;
+  /** When true, the `.reoclo` project-file org is NOT read into the
+   *  per-invocation org override. `init` passes this: it is the command that
+   *  rewrites the binding, so a stale or ungranted `.reoclo` org must not block
+   *  it. `--org` / `$REOCLO_ORG` are unaffected. */
+  ignoreProjectOrg?: boolean;
+}
+
+/**
+ * True when an ambient, env-provided credential (`REOCLO_MACHINE_TOKEN` or
+ * `REOCLO_AUTOMATION_KEY`) is set. Both are opaque, tenant/org-bound
+ * credentials with no profile of their own, so every place that decides
+ * whether it's safe to read ambient local state on their behalf — `.reoclo`
+ * project config, an ambient stored profile, the OAuth refresh cache, the
+ * auto-update advisory notices — must treat them identically. `bootstrap()`
+ * itself computes this inline (it needs the actual token values, not just the
+ * boolean), but every OTHER call site that only needs the yes/no answer
+ * (index.ts's capability-gating + advisory hooks, update-check.ts's CI
+ * suppression) must go through this helper instead of re-deriving the
+ * predicate by hand — a bare `REOCLO_AUTOMATION_KEY` check at one of those
+ * sites is exactly the drift bug this helper exists to prevent.
+ */
+export function isEnvCredential(): boolean {
+  return Boolean(process.env.REOCLO_MACHINE_TOKEN || process.env.REOCLO_AUTOMATION_KEY);
+}
+
+/**
+ * Each env variable carries exactly one credential class. An rk_m_ in
+ * REOCLO_AUTOMATION_KEY half-works on tenant commands and then fails on
+ * `run` in confusing ways (the pre-1.149.2 dashboard even instructed it),
+ * so a mismatch fails fast, naming the variable to use instead.
+ */
+export function assertEnvCredentialShape(
+  envMachine: string | undefined,
+  envAuto: string | undefined,
+): void {
+  if (envMachine && !isMachineTokenShaped(envMachine)) {
+    const err = new Error(
+      "REOCLO_MACHINE_TOKEN must hold a machine user token (rk_m_). " +
+        "For an automation key, set REOCLO_AUTOMATION_KEY instead.",
+    ) as Error & { exitCode: number };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
+  if (envAuto && !isAutomationKeyShaped(envAuto)) {
+    const err = new Error(
+      "REOCLO_AUTOMATION_KEY must hold an automation key (rca_). " +
+        "For a machine user token (rk_m_), set REOCLO_MACHINE_TOKEN instead.",
+    ) as Error & { exitCode: number };
+    err.exitCode = EXIT.MISUSE;
+    throw err;
+  }
 }
 
 export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedContext> {
   // Precedence:
   //   1. --token flag                (programmatic; used by automation harness + tests)
-  //   2. REOCLO_AUTOMATION_KEY env   (CI/CD with rca_* automation keys)
-  //   3. ~/.reoclo/config.json active profile (populated by `reoclo login` OAuth)
+  //   2. REOCLO_MACHINE_TOKEN env    (agent/machine-user credential, rk_m_*: org-scoped,
+  //                                   full /mcp surface, no expiry — the more specific
+  //                                   of the two env credentials)
+  //   3. REOCLO_AUTOMATION_KEY env   (CI/CD with rca_* automation keys)
+  //   4. ~/.reoclo/config.json active profile (populated by `reoclo login` OAuth)
   //
   // The legacy `REOCLO_API_KEY` env (tenant integration keys, rk_t_*) is no
   // longer honored — those keys are retired in favour of OAuth device flow.
   // If it's set and no credential resolves below, a stderr hint points the
   // caller at REOCLO_AUTOMATION_KEY instead.
   const flagToken = opts.token;
+  const envMachine = process.env.REOCLO_MACHINE_TOKEN;
   const envAuto = process.env.REOCLO_AUTOMATION_KEY;
+  // A mis-set variable is a misconfiguration wherever it sits in the
+  // precedence chain — checked even when --token outranks both env vars,
+  // so a stray malformed credential never goes unnoticed.
+  assertEnvCredentialShape(envMachine, envAuto);
+  // Both env vars are opaque, ambient, env-provided credentials with no profile
+  // of their own — everywhere below that gates .reoclo/profile/refresh behavior
+  // on "is an env credential in use", either one must trigger it identically.
+  // Only the token-selection precedence and any user-facing message need to
+  // tell the two apart.
+  const envCredential = envMachine ?? envAuto;
 
   // `.reoclo` is ambient, committed repo config: consult it only for interactive
-  // (non-automation-key) use, so under automation-key CI it's never even read and
-  // a malformed file never throws. It can pin the profile (below --profile /
-  // $REOCLO_PROFILE) and, further down, the org.
-  const projectConfig = envAuto ? null : readProjectConfig();
+  // (non-env-credential) use, so under automation-key/machine-token CI it's
+  // never even read and a malformed file never throws. It can pin the profile
+  // (below --profile / $REOCLO_PROFILE) and, further down, the org.
+  const projectConfig = envCredential ? null : readProjectConfig();
 
   const cfg = await loadConfig();
   const profileName = resolveProfileName({
@@ -159,6 +237,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   let token: string | undefined;
   if (flagToken) {
     token = flagToken;
+  } else if (envMachine) {
+    token = envMachine;
   } else if (envAuto) {
     token = envAuto;
   } else if (profile) {
@@ -173,7 +253,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   if (!token) {
     if (process.env.REOCLO_API_KEY) {
       process.stderr.write(
-        "REOCLO_API_KEY is not read by the CLI; set REOCLO_AUTOMATION_KEY instead.\n",
+        "REOCLO_API_KEY is not read by the CLI; set REOCLO_AUTOMATION_KEY (CI) or " +
+          "REOCLO_MACHINE_TOKEN (agents) instead.\n",
       );
     }
     const err = new Error("not authenticated — run 'reoclo login'") as Error & { exitCode: number };
@@ -181,10 +262,10 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     throw err;
   }
 
-  // An automation key is tenant-bound and carries no profile of its own. Under
-  // one, an *ambient* profile (the saved `active_profile`) must not redirect CI
-  // traffic to whatever host it happens to point at. `.reoclo` is suppressed
-  // above for the same reason.
+  // An automation key or machine token is tenant-bound and carries no profile
+  // of its own. Under either, an *ambient* profile (the saved `active_profile`)
+  // must not redirect CI/agent traffic to whatever host it happens to point
+  // at. `.reoclo` is suppressed above for the same reason.
   //
   // A profile the caller *named* is a different thing, and must still apply.
   // `reoclo --profile staging run -- ./verify.sh` with a staging key has to
@@ -195,11 +276,11 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   //
   // `REOCLO_API_URL` / `REOCLO_STREAMS_URL` remain the only other override. No
   // CLI flag can do it, because `--api` is command-local to `login` and
-  // `connect-omega-mcp`, and an automation key can run neither.
+  // `connect-omega-mcp`, and an automation key/machine token can run neither.
   const profileWasNamed = Boolean(
     opts.profile ?? globalProfileOverride ?? process.env.REOCLO_PROFILE,
   );
-  const profileEndpoints = envAuto && !profileWasNamed ? null : profile;
+  const profileEndpoints = envCredential && !profileWasNamed ? null : profile;
 
   const api = opts.api ?? process.env.REOCLO_API_URL ?? profileEndpoints?.api_url ?? PROD_API_URL;
   const streamsUrl =
@@ -214,13 +295,13 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // separate org-override token (see suppressRefresh).
   //
   // profileRefreshCallback refreshes the PROFILE's OAuth token, so it must be
-  // suppressed when a --token / automation key is the credential actually in
-  // use (they outrank the profile token in the precedence chain above).
-  // Otherwise the proactive or reactive refresh would swap in an ambient
-  // profile's token behind the caller's back: wrong credential, possibly a
-  // different tenant.
+  // suppressed when a --token / automation key / machine token is the
+  // credential actually in use (they outrank the profile token in the
+  // precedence chain above). Otherwise the proactive or reactive refresh would
+  // swap in an ambient profile's token behind the caller's back: wrong
+  // credential, possibly a different tenant.
   let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
-  if (!flagToken && !envAuto && profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
+  if (!flagToken && !envCredential && profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
     const capturedProfileName = profileName;
     const capturedProfile = profile;
     const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
@@ -263,7 +344,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // the override already equals the profile's org it's a no-op (no extra network
   // calls). The `.reoclo` project file is consulted only for OAuth profiles (and
   // ranks below the flag/env), so it stays inert under automation-key CI.
-  let tenantId = profile?.tenant_id;
+  let tenantId = envCredential ? undefined : profile?.tenant_id;
   let effectiveToken = token;
   let suppressRefresh = false;
 
@@ -280,19 +361,44 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const orgOverride = resolveOrgOverride({
     flagOrg: opts.org ?? globalOrgOverride,
     envOrg: process.env.REOCLO_ORG,
-    projectOrg: projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
+    projectOrg: opts.ignoreProjectOrg
+      ? undefined
+      : projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
   const orgErr = orgSelectionError({
     orgRequired: opts.orgRequired ?? true,
     orgOverride,
     // `profile.auth_kind` reflects whatever profile happens to be on disk, not
-    // necessarily the credential actually in use — --token / REOCLO_AUTOMATION_KEY
-    // both outrank the profile token (see the precedence chain above). Those
-    // credentials are single-tenant on their own, so when either is set, the
-    // profile's auth_kind must not trigger the OAuth-only org requirement.
-    authKind: flagToken || envAuto ? undefined : profile?.auth_kind,
+    // necessarily the credential actually in use — --token / REOCLO_MACHINE_TOKEN
+    // / REOCLO_AUTOMATION_KEY all outrank the profile token (see the precedence
+    // chain above). Those credentials are single-tenant, or org-scoped on their
+    // own, so when any is set, the profile's auth_kind must not trigger the
+    // OAuth-only org requirement.
+    authKind: flagToken || envCredential ? undefined : profile?.auth_kind,
   });
   if (orgErr) throw orgErr;
+  // An env credential (machine token / automation key) is tenant-bound on its
+  // own and has no profile of its own to probe or switch — true whether or
+  // not an ambient OAuth profile happens to be sitting on disk. This check
+  // MUST run before any network probe or token mint below: an ambient
+  // profile's auth_kind must never decide what happens to a credential that
+  // isn't the profile's, and the env credential must never be POSTed to
+  // whatever host the ambient profile's oauth_auth_url happens to name — the
+  // same class of ambient redirect that `profileEndpoints = null` already
+  // prevents for the API URL. Previously this lived inside the `!profile ||
+  // profile.auth_kind !== "oauth"` branch below, so it was unreachable
+  // whenever an ambient OAuth profile existed: a foreign --org fell through
+  // to the probe and came back exit 5 ("re-run reoclo login" — impossible for
+  // a machine token), and the credential's own org slug fell into
+  // mintTenantSwitchToken, sending the env credential to the ambient
+  // profile's oauth_auth_url and failing with an unmapped exit 1.
+  if (envCredential && orgOverride) {
+    const err = new Error(
+      "--org does not apply: an automation key or machine token is bound to one organization already",
+    ) as Error & { exitCode: number };
+    err.exitCode = 4;
+    throw err;
+  }
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
@@ -306,7 +412,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     const probe = new HttpClient({
       baseUrl: api,
       token,
-      profile: profileName,
+      profile: envCredential ? undefined : profileName,
       refreshToken: profileRefreshCallback,
     });
     const me = await probe.get<Me>("/auth/me");
@@ -344,7 +450,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   const client = new HttpClient({
     baseUrl: api,
     token: effectiveToken,
-    profile: profileName,
+    profile: envCredential ? undefined : profileName,
     refreshToken: suppressRefresh ? undefined : profileRefreshCallback,
     mcpSource: opts.mcpSource,
   });

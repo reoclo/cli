@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildProjectBinding, parseHarnessOption, parseSkillsOption } from "../../../src/commands/init";
+import {
+  buildProjectBinding,
+  parseHarnessOption,
+  parseSkillsOption,
+  resolveInitOrgFlag,
+} from "../../../src/commands/init";
 
 describe("parseHarnessOption", () => {
   test("splits and validates a comma list", () => {
@@ -98,5 +103,27 @@ describe("buildProjectBinding", () => {
       targets: ["claude", "codex"],
       scope: "global",
     });
+  });
+});
+
+describe("resolveInitOrgFlag", () => {
+  test("local --org wins over the global --org", () => {
+    expect(resolveInitOrgFlag("local-org", "global-org")).toBe("local-org");
+  });
+
+  test("falls back to the global --org when local is unset", () => {
+    expect(resolveInitOrgFlag(undefined, "global-org")).toBe("global-org");
+  });
+
+  test("a blank local value falls through to the global", () => {
+    expect(resolveInitOrgFlag("   ", "global-org")).toBe("global-org");
+  });
+
+  test("undefined when neither is set", () => {
+    expect(resolveInitOrgFlag(undefined, undefined)).toBeUndefined();
+  });
+
+  test("trims the returned value", () => {
+    expect(resolveInitOrgFlag("  acme ", undefined)).toBe("acme");
   });
 });

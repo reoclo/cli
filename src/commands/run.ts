@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
 import { EXIT } from "../client/exit-codes";
-import { detectKeyType } from "../client/routing";
+import type { KeyType } from "../client/routing";
 import { accessibleProjects, mergeEnv, openSession, resolve } from "../client/secrets";
 import { assertInputExists, buildEnv, collectRefs, parseTemplate } from "../secrets/template";
 import { machineResolver } from "../secrets/resolvers";
@@ -23,6 +23,17 @@ export function assertEnvFileProjectExclusive(
     err.exitCode = EXIT.MISUSE;
     throw err;
   }
+}
+
+/** Refuse interactive sessions: run hands secrets to a process, a machine act. */
+export function assertMachineCredential(tokenType: KeyType): void {
+  if (tokenType !== "tenant") return;
+  const err = new Error(
+    "reoclo run requires a machine credential; set REOCLO_AUTOMATION_KEY (rca_) " +
+      "or REOCLO_MACHINE_TOKEN (rk_m_)",
+  ) as Error & { exitCode: number };
+  err.exitCode = EXIT.DENIED;
+  throw err;
 }
 
 export function splitRunArgs(rest: string[]): { cmd: string; args: string[] } {
@@ -51,9 +62,10 @@ export function selectProjectIds(
 ): string[] {
   if (accessible.length === 0) {
     const err = new Error(
-      "this key is granted no secret projects. Enabling the 'Read secrets' " +
-        "operation does not grant a project. Grant each project to this key " +
-        "on the project's Access tab in the dashboard, then try again.",
+      "this credential is granted no secret projects. An operation or a role " +
+        "does not grant a project: grant each project to this automation key " +
+        "or machine user on the project's Access tab. A project that is " +
+        "restricted to specific servers is never available to a machine user.",
     ) as Error & {
       exitCode: number;
     };
@@ -107,8 +119,8 @@ export function registerRun(program: Command): void {
       `
 Examples:
   REOCLO_AUTOMATION_KEY=rca_... reoclo run -- node deploy.js
-  REOCLO_AUTOMATION_KEY=rca_... reoclo run -p prod -- ./migrate.sh
-  REOCLO_AUTOMATION_KEY=rca_... reoclo run --commit abc123 -- ./release.sh
+  REOCLO_MACHINE_TOKEN=rk_m_... reoclo run -- node deploy.js
+  REOCLO_MACHINE_TOKEN=rk_m_... reoclo run -p prod -- ./migrate.sh
   REOCLO_AUTOMATION_KEY=rca_... reoclo run --env-file .env.tpl -- ./migrate.sh`,
     )
     .action(
@@ -118,16 +130,10 @@ Examples:
 
         const ctx = await bootstrap();
 
-        // Precheck: this command requires an automation key (rca_ or rss_).
-        // If bootstrap resolved a tenant/OAuth token, fail fast before hitting
-        // the automation surface.
-        if (detectKeyType(ctx.token) === "tenant") {
-          const err = new Error(
-            "reoclo run requires an automation key; set REOCLO_AUTOMATION_KEY",
-          ) as Error & { exitCode: number };
-          err.exitCode = EXIT.DENIED;
-          throw err;
-        }
+        // Precheck: this command requires a machine credential (an automation
+        // key or a machine user's token). If bootstrap resolved an interactive
+        // tenant/OAuth session, fail fast before hitting the automation surface.
+        assertMachineCredential(ctx.tokenType);
 
         let values: Record<string, string>;
         if (opts.envFile) {

@@ -246,7 +246,12 @@ export function updateCheckEnabledFor(
     disabledByFlag: opts.updateCheck === false,
     isTTY: stderrIsTty,
     outputFormat: String(opts.output ?? "text"),
-    automationKey: Boolean(env.REOCLO_AUTOMATION_KEY),
+    // Ambient env credential — automation key OR machine token — both mean a
+    // CI/agent context, not an interactive human at a terminal, so the update
+    // advisory must stay suppressed under either. `env` here is the injected
+    // ProcessEnv, not the live `process.env`, so this stays independent of
+    // (and doesn't need) bootstrap.ts's `isEnvCredential()`.
+    automationKey: Boolean(env.REOCLO_AUTOMATION_KEY || env.REOCLO_MACHINE_TOKEN),
     quiet: Boolean(opts.quiet),
   });
 }

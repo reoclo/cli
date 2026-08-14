@@ -80,7 +80,7 @@ Examples:
       .action(async (opts: { status?: string; type?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const params = new URLSearchParams();
         if (opts.status) params.set("status", opts.status);
         if (opts.type) params.set("operation_type", opts.type);
@@ -118,7 +118,7 @@ Examples:
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const op = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/scheduled-operations/${id}`,
         );
@@ -176,7 +176,7 @@ Examples:
           timeout?: string;
         }) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {
             name: opts.name,
             operation_type: opts.type,
@@ -248,7 +248,7 @@ Examples:
           },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {};
           if (opts.name !== undefined) body.name = opts.name;
           if (opts.description !== undefined) body.description = opts.description;
@@ -283,7 +283,7 @@ Examples:
       .description("delete a scheduled operation")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/scheduled-operations/${id}`);
         process.stdout.write(`✓ scheduled operation removed: ${id}\n`);
       }),
@@ -296,7 +296,7 @@ Examples:
       .description("pause a scheduled operation")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const op = await ctx.client.post<ScheduledOp>(
           `/tenants/${tid}/scheduled-operations/${id}/pause`,
         );
@@ -311,7 +311,7 @@ Examples:
       .description("resume a scheduled operation")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const op = await ctx.client.post<ScheduledOp>(
           `/tenants/${tid}/scheduled-operations/${id}/resume`,
         );
@@ -326,7 +326,7 @@ Examples:
       .description("trigger a scheduled operation to run now")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const run = await ctx.client.post<ScheduledRun>(
           `/tenants/${tid}/scheduled-operations/${id}/trigger`,
         );
@@ -343,7 +343,7 @@ Examples:
       .action(async (id: string, opts: { status?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : "";
         const list = await ctx.client.get<ScheduledRun[]>(
           `/tenants/${tid}/scheduled-operations/${id}/runs${qs}`,
@@ -371,7 +371,7 @@ Examples:
       .action(async (id: string, runId: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const run = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/scheduled-operations/${id}/runs/${runId}`,
         );

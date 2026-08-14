@@ -2,7 +2,7 @@ import { expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { bootstrap, defaultStreamsUrl } from "../../../src/client/bootstrap";
+import { bootstrap, defaultStreamsUrl, isEnvCredential, requireTenantId } from "../../../src/client/bootstrap";
 
 let tmp: string;
 beforeEach(() => {
@@ -10,6 +10,7 @@ beforeEach(() => {
   process.env.REOCLO_CONFIG_DIR = tmp;
   delete process.env.REOCLO_API_KEY;
   delete process.env.REOCLO_AUTOMATION_KEY;
+  delete process.env.REOCLO_MACHINE_TOKEN;
   delete process.env.REOCLO_PROFILE;
   delete process.env.REOCLO_ORG;
   delete process.env.REOCLO_API_URL;
@@ -391,4 +392,390 @@ test("bootstrap exposes ctx.refresh and ctx.accessTokenExpiresAt for a refreshab
   const ctx = await bootstrap({ org: "home" });
   expect(typeof ctx.refresh).toBe("function");
   expect(ctx.accessTokenExpiresAt).toBe(futureExpiry);
+});
+
+// --- REOCLO_MACHINE_TOKEN (rk_m_* machine-user credential) -----------------
+//
+// A machine token is, like REOCLO_AUTOMATION_KEY, an opaque env-provided
+// credential with no profile of its own — it must suppress the same
+// ambient-profile / .reoclo / refresh behavior automation keys do. It is its
+// own KeyType ("machine": detectKeyType returns "machine" for rk_m_*), and it
+// routes to the full /mcp surface just like "tenant" does (see apiPrefix),
+// but tokenType itself must come back "machine", not "tenant" or
+// "automation" — that's what lets `reoclo whoami` and command-gating tell a
+// machine credential apart from a human OAuth session.
+
+test("REOCLO_MACHINE_TOKEN is ingested and routes to the org surface", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_" + "a".repeat(48);
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe(process.env.REOCLO_MACHINE_TOKEN);
+  expect(ctx.tokenType).toBe("machine"); // full /mcp surface, not automation
+});
+
+test("REOCLO_MACHINE_TOKEN outranks REOCLO_AUTOMATION_KEY (more specific credential)", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_AUTOMATION_KEY = "rca_auto";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.tokenType).toBe("machine");
+});
+
+test("--token flag still outranks REOCLO_MACHINE_TOKEN", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap({ token: "flag-token" });
+  expect(ctx.token).toBe("flag-token");
+});
+
+test("REOCLO_MACHINE_TOKEN outranks a stored profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: profileRecord("tok-default", "home") },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  // The cross-org leak: a machine token must never borrow the ambient
+  // profile's tenant_id. Its own identity (via /auth/me, lazily) answers.
+  expect(ctx.tenantId).toBeUndefined();
+});
+
+test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient credential stays inert)", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), "{ this is : not json");
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  try {
+    const ctx = await bootstrap();
+    expect(ctx.token).toBe("rk_m_machine");
+    expect(ctx.tokenType).toBe("machine");
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+// An oauth profile whose backend is an unreachable loopback address: any
+// attempt to reach the API (e.g. the tenant-switch probe) fails fast and
+// deterministically, with no real network.
+function oauthProfileUnreachable(slug: string) {
+  return {
+    api_url: "http://127.0.0.1:1",
+    token: `tok-${slug}`,
+    token_type: "tenant",
+    auth_kind: "oauth",
+    tenant_id: `t-${slug}`,
+    tenant_slug: slug,
+    user_email: "dev@example.com",
+    saved_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+test("ignoreProjectOrg makes bootstrap skip the .reoclo org (no tenant-switch probe)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  try {
+    // .reoclo binds "other-org" != profile slug "home". With the org suppressed
+    // there is no probe, so bootstrap resolves against the profile's own tenant.
+    const ctx = await bootstrap({ orgRequired: false, ignoreProjectOrg: true });
+    expect(ctx.tenantId).toBe("t-home");
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+test("a profile's api_url/streams_url are ignored under REOCLO_MACHINE_TOKEN (ambient profile suppressed)", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        api_url: "http://localhost:8000",
+        streams_url: "http://localhost:8001",
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.api).toBe("https://api.reoclo.com");
+  expect(ctx.streamsUrl).toBe("https://streams.reoclo.com");
+});
+
+test("a profile named with --profile still applies its endpoints under REOCLO_MACHINE_TOKEN", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: profileRecord("tok-default", "home"),
+      staging: {
+        ...profileRecord("tok-staging", "staging-org"),
+        api_url: "https://api.reoclo.dev",
+        streams_url: "https://streams.reoclo.dev",
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap({ profile: "staging" });
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.api).toBe("https://api.reoclo.dev");
+  expect(ctx.streamsUrl).toBe("https://streams.reoclo.dev");
+});
+
+test("REOCLO_MACHINE_TOKEN exempts the org requirement even with a cached OAuth profile", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.tokenType).toBe("machine");
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.tenantId).toBeUndefined();
+});
+
+test("a machine token suppresses the OAuth profile's refresh (proactive + ctx.refresh), even past-expiry", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...profileRecord("tok-default", "home"),
+        auth_kind: "oauth",
+        refresh_token_ref: "keyring:default-refresh",
+        access_token_expires_at: "2020-01-01T00:00:00Z", // well past
+      },
+    },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  const ctx = await bootstrap();
+  expect(ctx.token).toBe("rk_m_machine");
+  expect(ctx.refresh).toBeUndefined();
+  expect(ctx.tenantId).toBeUndefined();
+});
+
+// --- --org honesty under an env credential + an ambient OAuth profile -----
+//
+// The env-credential "--org does not apply" message used to live INSIDE the
+// `!profile || profile.auth_kind !== "oauth"` branch, so it was unreachable
+// whenever an ambient OAuth profile happened to be on disk (a very ordinary
+// laptop state: `reoclo login` once, then use REOCLO_MACHINE_TOKEN for an
+// agent in the same shell). Two things went wrong instead:
+//   - a foreign --org slug fell through to the tenant-switch probe and came
+//     back exit 5, "not in your granted organizations ... re-run reoclo
+//     login" — impossible for a machine token, and contradicts the honest
+//     exit-4 message a caller gets with no profile on disk at all.
+//   - --org matching the credential's OWN org slug fell into
+//     mintTenantSwitchToken, which POSTs the machine token / automation key
+//     to the AMBIENT PROFILE's oauth_auth_url as if it were an OAuth access
+//     token — the same class of ambient redirect that `profileEndpoints =
+//     null` already prevents for the API URL — and failed with an unmapped
+//     exit 1.
+// Both are fixed by hoisting the env-credential check above the auth_kind
+// test, so it always wins before any network probe or token mint. These
+// tests assert exit 4 AND zero requests reaching the stub server, proving
+// the check fires first.
+
+test("REOCLO_MACHINE_TOKEN + --org (foreign slug) exits 4 even with an ambient OAuth profile on disk, and probes nothing", async () => {
+  let requestCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requestCount++;
+      return Response.json({ memberships: [] });
+    },
+  });
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" } },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_API_URL = `http://localhost:${server.port}`;
+  let caught: unknown;
+  try {
+    await bootstrap({ org: "some-foreign-org" });
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    delete process.env.REOCLO_API_URL;
+    await server.stop();
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(4);
+  expect((caught as Error).message).toContain("--org does not apply");
+  expect(requestCount).toBe(0);
+});
+
+test("REOCLO_MACHINE_TOKEN + --org (matching the token's OWN slug) exits 4 without minting a tenant-switch token against the ambient profile's oauth_auth_url", async () => {
+  let requestCount = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requestCount++;
+      const url = new URL(req.url);
+      if (url.pathname === "/mcp/auth/me") {
+        // The machine token's OWN identity: a DIFFERENT org than the ambient
+        // profile, but matching the --org value below — the exact case that
+        // used to reach mintTenantSwitchToken.
+        return Response.json({
+          id: "u-1",
+          email: "m@x",
+          tenant_id: "t-machine-own",
+          tenant_slug: "machine-org",
+          memberships: [{ tenant_id: "t-machine-own", tenant_slug: "machine-org" }],
+          roles: [],
+        });
+      }
+      return Response.json({});
+    },
+  });
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-default", "home"), auth_kind: "oauth" } },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  process.env.REOCLO_API_URL = `http://localhost:${server.port}`;
+  let caught: unknown;
+  try {
+    await bootstrap({ org: "machine-org" });
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    delete process.env.REOCLO_API_URL;
+    await server.stop();
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(4);
+  expect((caught as Error).message).toContain("--org does not apply");
+  // The hoisted check must fire before any /auth/me probe or oauth/token mint.
+  expect(requestCount).toBe(0);
+});
+
+// --- assertEnvCredentialShape (bootstrap integration) ---------------------
+//
+// Each env variable carries exactly one credential class. This is the exact
+// mistake the pre-1.149.2 dashboard copy taught users to make (paste an
+// rk_m_ machine token into REOCLO_AUTOMATION_KEY), which used to half-work
+// on tenant-surface commands and then fail confusingly on `run`. bootstrap()
+// now fails fast, before any network call.
+
+test("REOCLO_AUTOMATION_KEY set to an rk_m_ token rejects with exit 2", async () => {
+  process.env.REOCLO_AUTOMATION_KEY = "rk_m_x";
+  let caught: unknown = null;
+  try {
+    await bootstrap();
+  } catch (e) {
+    caught = e;
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+  expect((caught as { exitCode?: number })?.exitCode).toBe(2);
+  expect(String(caught)).toContain("REOCLO_MACHINE_TOKEN");
+});
+
+// --- isEnvCredential -----------------------------------------------------
+//
+// Single source of truth for "is an ambient, env-provided credential
+// (REOCLO_MACHINE_TOKEN or REOCLO_AUTOMATION_KEY) in use". Other call sites
+// (index.ts's capability-gating + advisory hooks, update-check.ts's CI
+// suppression) must go through this helper instead of re-deriving the
+// predicate by hand — a bare REOCLO_AUTOMATION_KEY check at one of those
+// sites was exactly the drift bug this helper exists to prevent.
+
+test("isEnvCredential is false when neither env var is set", () => {
+  expect(isEnvCredential()).toBe(false);
+});
+
+test("isEnvCredential is true when REOCLO_AUTOMATION_KEY is set", () => {
+  process.env.REOCLO_AUTOMATION_KEY = "rca_x";
+  try {
+    expect(isEnvCredential()).toBe(true);
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+test("isEnvCredential is true when REOCLO_MACHINE_TOKEN is set", () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_x";
+  expect(isEnvCredential()).toBe(true);
+});
+
+test("isEnvCredential is true when both env vars are set", () => {
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_x";
+  process.env.REOCLO_AUTOMATION_KEY = "rca_x";
+  try {
+    expect(isEnvCredential()).toBe(true);
+  } finally {
+    delete process.env.REOCLO_AUTOMATION_KEY;
+  }
+});
+
+test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (control)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
+  writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
+  const origCwd = process.cwd();
+  process.chdir(projectDir);
+  try {
+    // "other-org" != "home" and the profile is oauth, so bootstrap attempts the
+    // /auth/me probe against the unreachable api and rejects. This proves the
+    // project-file org was NOT ignored when the flag is absent.
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's .rejects matcher types as void, not a Promise; await is harmless
+    await expect(bootstrap({ orgRequired: false })).rejects.toThrow();
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+// --- End-to-end: bootstrap() + requireTenantId() wired through a real request ---
+//
+// Every other test in this file (and in require-tenant-id.test.ts) exercises
+// bootstrap() and requireTenantId() separately, with a stub ctx.client. Only
+// this test runs them together against a real HTTP server and inspects the
+// actual request path, which is what proves the fix end to end: an env
+// credential's tenant-scoped request must carry the CREDENTIAL's own tenant
+// (from /auth/me), never the ambient profile's — the cross-org leak this
+// task exists to close.
+test("a tenant-scoped request under an env credential carries the token's own tenant, not an ambient profile's", async () => {
+  let tenantScopedPath: string | undefined;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/mcp/auth/me") {
+        return Response.json({
+          id: "u-1",
+          email: "m@x",
+          tenant_id: "t-token-own",
+          tenant_slug: "token-org",
+          roles: [],
+        });
+      }
+      tenantScopedPath = url.pathname;
+      return Response.json({ items: [] });
+    },
+  });
+  // The ambient profile belongs to a DIFFERENT org than the machine token.
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: profileRecord("tok-default", "profile-org") },
+  });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
+  try {
+    const ctx = await bootstrap({ api: `http://localhost:${server.port}` });
+    // Lazy: bootstrap() alone never called /auth/me, so the tenant is not yet
+    // known — and it must not have been silently filled from the profile.
+    expect(ctx.tenantId).toBeUndefined();
+
+    const tid = await requireTenantId(ctx);
+    expect(tid).toBe("t-token-own"); // the token's own tenant, not "t-profile-org"
+
+    await ctx.client.get(`/tenants/${tid}/servers/`);
+    expect(tenantScopedPath).toBe("/mcp/tenants/t-token-own/servers/");
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+    await server.stop();
+  }
 });

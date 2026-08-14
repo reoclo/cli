@@ -21,7 +21,7 @@ export function registerStatusPages(program: Command): void {
     .action(async () => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const list = await ctx.client.get<StatusPage[]>(`/tenants/${tid}/status-pages/`);
       cacheList("status-pages", list);
       printList(
@@ -43,7 +43,7 @@ export function registerStatusPages(program: Command): void {
       .action(async (id: string) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         const sp = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/status-pages/${id}`,
         );
@@ -59,7 +59,7 @@ export function registerStatusPages(program: Command): void {
     .option("--description <text>", "page description")
     .action(async (opts: { title?: string; label?: string; description?: string }) => {
       const ctx = await bootstrap();
-      const tid = requireTenantId(ctx);
+      const tid = await requireTenantId(ctx);
       const body: Record<string, unknown> = {};
       if (opts.title !== undefined) body.title = opts.title;
       if (opts.label !== undefined) body.label = opts.label;
@@ -82,7 +82,7 @@ export function registerStatusPages(program: Command): void {
           opts: { title?: string; label?: string; description?: string; published?: string },
         ) => {
           const ctx = await bootstrap();
-          const tid = requireTenantId(ctx);
+          const tid = await requireTenantId(ctx);
           const body: Record<string, unknown> = {};
           if (opts.title !== undefined) body.title = opts.title;
           if (opts.label !== undefined) body.label = opts.label;
@@ -112,7 +112,7 @@ export function registerStatusPages(program: Command): void {
       .description("delete a status page")
       .action(async (id: string) => {
         const ctx = await bootstrap();
-        const tid = requireTenantId(ctx);
+        const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/status-pages/${id}`);
         process.stdout.write(`✓ status page removed: ${id}\n`);
       }),
