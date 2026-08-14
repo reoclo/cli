@@ -2,8 +2,9 @@
 //
 // `reoclo init` — bootstrap reoclo into a project in one command: link the
 // directory to an organization (writes `.reoclo`, consumed by bootstrap()'s
-// org-override seam), download the reoclo agent skills into `.claude/skills/`,
-// and optionally register the reoclo MCP server in `.mcp.json`. Auth is required
+// org-override seam), install the reoclo agent skills for the developer's agent
+// harness(es) (canonical `.agents/skills/` + a Claude Code symlink), and
+// optionally register the reoclo MCP server in `.mcp.json`. Auth is required
 // (run `reoclo login` first); the org to bind comes from the global `--org` flag
 // or an interactive picker over the OAuth-granted orgs.
 
@@ -14,16 +15,30 @@ import { bootstrap } from "../client/bootstrap";
 import type { Me } from "../client/types";
 import { loadConfig } from "../config/store";
 import { PROJECT_CONFIG_VERSION } from "../config/project-config";
-import { installSkills } from "../init/skills";
+import { HARNESSES, type HarnessId, type Scope } from "../init/harness";
+import { runSkillsInstall } from "../init/flow";
 import { mergeMcpServer } from "../init/mcp";
-import { promptChoice, promptYesNo } from "../ui/prompt";
+import { confirmPrompt, selectPrompt } from "../ui/interactive";
 
 interface InitOpts {
   org?: string; // command-local --org (discoverable in `init --help`)
   skills?: string | boolean; // "--skills <list>" → string; "--no-skills" → false
+  harness?: string;          // "--harness <list>" → comma-separated harness ids
+  global?: boolean;          // "--global" → install skills for all projects (~)
+  project?: boolean;         // "--project" → install skills for this project only
   mcp?: boolean;
   force?: boolean;
   yes?: boolean;
+}
+
+/** The `skills` block recorded in `.reoclo` after an install: which ref/sha, when,
+ *  which harness `targets` were installed for, and the install `scope`. */
+export interface SkillsMeta {
+  ref: string;
+  sha?: string;
+  installed_at?: string;
+  targets?: string[];
+  scope?: Scope;
 }
 
 /**
@@ -33,25 +48,41 @@ interface InitOpts {
  * binding silently re-resolves the slug against the active profile later (and
  * slugs like "platform" can collide across staging/prod). On the active profile
  * we write only `org`, so the project still floats with the active profile.
- * Every binding also records the `.reoclo` schema `version`, and — when skills
- * were installed — the `skills` block (ref/sha/installed_at) so a later `init`
- * or `doctor` can tell whether the installed skills are stale.
+ * Every binding also records the `.reoclo` schema `version`, and (when skills
+ * were installed) the `skills` block (ref/sha/installed_at plus the harness
+ * `targets` and `scope`) so a later `init` or `doctor` can tell whether the
+ * installed skills are stale and re-sync the same destinations.
  */
 export function buildProjectBinding(opts: {
   org: string;
   profileName: string;
   activeProfile: string;
-  skills?: { ref: string; sha?: string; installed_at?: string };
+  skills?: SkillsMeta;
 }): {
   profile?: string;
   org: string;
   version: number;
-  skills?: { ref: string; sha?: string; installed_at?: string };
+  skills?: SkillsMeta;
 } {
   const base = opts.profileName === opts.activeProfile
     ? { org: opts.org, version: PROJECT_CONFIG_VERSION }
     : { profile: opts.profileName, org: opts.org, version: PROJECT_CONFIG_VERSION };
   return opts.skills ? { ...base, skills: opts.skills } : base;
+}
+
+/**
+ * Parse the `--harness` option into a validated list of harness ids. Splits a
+ * comma list, trims each entry, and drops any id not in {@link HARNESSES} (so a
+ * typo installs nowhere rather than silently). Absent/empty → `[]`, meaning
+ * "fall back to detection / the multi-select".
+ */
+export function parseHarnessOption(value?: string): HarnessId[] {
+  if (!value) return [];
+  const known = new Set<HarnessId>(HARNESSES.map((h) => h.id));
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is HarnessId => known.has(s as HarnessId));
 }
 
 /** Resolve the `--skills` / `--no-skills` option into a concrete intent. */
@@ -90,6 +121,9 @@ export function registerInit(program: Command): void {
     .option("--org <slug>", "organization to link (skips the interactive picker)")
     .option("--skills <list>", "comma-separated skills to install (default: all)")
     .option("--no-skills", "skip installing skills")
+    .option("--harness <list>", "comma-separated agent harnesses to install skills for (e.g. claude,codex)")
+    .option("--global", "install skills for all projects (~/.agents/skills)")
+    .option("--project", "install skills for this project only (default)")
     .option("--mcp", "register the reoclo MCP server in .mcp.json")
     .option("--force", "overwrite an existing .reoclo without asking")
     .option("-y, --yes", "assume yes for prompts (non-interactive)")
@@ -110,43 +144,54 @@ export function registerInit(program: Command): void {
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
 
-      // Pick the org to bind. An explicit --org is already scoped via bootstrap;
-      // otherwise offer a picker (interactive, multi-org) or take the active org.
+      // Pick the org to bind. An explicit --org already resolved via bootstrap
+      // (flagOrg above); otherwise offer a picker (multi-org only). selectPrompt
+      // returns the initial value (the active org) verbatim on a non-TTY, so a
+      // scripted run still binds the active org without prompting.
       let org = me.tenant_slug;
-      if (!flagOrg && process.stdin.isTTY && memberships.length > 1) {
-        const labels = memberships.map((m) => `${m.tenant_slug}  (${m.tenant_name})`);
-        const activeIdx = Math.max(
-          0,
-          memberships.findIndex((m) => m.tenant_slug === me.tenant_slug),
-        );
-        const idx = await promptChoice("Which organization should this project use?", labels, activeIdx);
-        org = memberships[idx]?.tenant_slug ?? me.tenant_slug;
+      if (!flagOrg && memberships.length > 1) {
+        const options = memberships.map((m) => ({
+          value: m.tenant_slug,
+          label: `${m.tenant_slug}  (${m.tenant_name})`,
+        }));
+        const initial =
+          memberships.find((m) => m.tenant_slug === me.tenant_slug)?.tenant_slug ?? me.tenant_slug;
+        org = await selectPrompt("Which organization should this project use?", options, initial);
       }
 
-      // 1. Download skills into .claude/skills/ first, so the installed head
-      // SHA is known by the time the `.reoclo` binding is written below.
+      // 1. Install skills first, so the installed head SHA is known by the time
+      // the `.reoclo` binding is written below. The flow is harness-aware and
+      // confirm-gated (shared with `reoclo skills install` via runSkillsInstall):
+      // it asks whether to install, for which scope, and which agent harness(es).
+      // Under -y or a non-TTY every prompt no-ops to a safe default (install,
+      // project scope, the detected harnesses) so scripted and CI runs never
+      // block. Explicit flags always win over a prompt.
+      const assumeYes = opts.yes === true;
+      const flagHarness = parseHarnessOption(opts.harness);
       const { skip, requested } = parseSkillsOption(opts.skills);
-      let skillsMeta: { ref: string; sha?: string; installed_at?: string } | undefined;
+      let skillsMeta: SkillsMeta | undefined;
       if (skip) {
         process.stdout.write("• skipped skills (--no-skills)\n");
       } else {
-        const dest = join(process.cwd(), ".claude", "skills");
-        try {
-          const { installed, missing, sha } = await installSkills({ destDir: dest, requested });
-          if (installed.length > 0) {
-            process.stdout.write(`✓ installed ${installed.length} skill(s) into .claude/skills/: ${installed.join(", ")}\n`);
-          } else {
-            process.stdout.write("• no matching skills to install\n");
-          }
-          if (missing.length > 0) {
-            process.stderr.write(`  note: requested skill(s) not found: ${missing.join(", ")}\n`);
-          }
-          // sha may be null (best-effort GitHub lookup failed) — the skills
-          // block is still written, just without a sha, so a later `doctor`
-          // sees "installed" rather than a false "up to date".
-          skillsMeta = { ref: "main", sha: sha ?? undefined, installed_at: new Date().toISOString() };
-        } catch (e) {
-          process.stderr.write(`  warning: could not install skills — ${(e as Error).message}\n`);
+        const outcome = await runSkillsInstall({
+          assumeYes,
+          flagHarness,
+          global: opts.global,
+          project: opts.project,
+          requested,
+        });
+        if (outcome.kind === "installed") {
+          // sha may be undefined (best-effort GitHub lookup failed): the skills
+          // block is still written, just without a sha, so a later `doctor` sees
+          // "installed" rather than a false "up to date". `targets`/`scope` let a
+          // later re-sync target the same destinations.
+          skillsMeta = {
+            ref: "main",
+            sha: outcome.sha,
+            installed_at: new Date().toISOString(),
+            targets: outcome.selection,
+            scope: outcome.scope,
+          };
         }
       }
 
@@ -164,8 +209,9 @@ export function registerInit(program: Command): void {
       const reocloPath = join(process.cwd(), ".reoclo");
       let wroteReoclo = true;
       if (existsSync(reocloPath) && !opts.force && !opts.yes) {
-        const ok = await promptYesNo(
-          `.reoclo already exists — overwrite with org '${org}'${onProfile}? [y/N] `,
+        const ok = await confirmPrompt(
+          `.reoclo already exists. Overwrite with org '${org}'${onProfile}?`,
+          { initialValue: false, fallback: false },
         );
         if (!ok) {
           wroteReoclo = false;

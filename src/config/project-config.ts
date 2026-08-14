@@ -59,6 +59,20 @@ const defaultFs: ProjectConfigFs = {
   warn: (line) => process.stderr.write(line),
 };
 
+/**
+ * Presence check for a `.reoclo` project binding: true when the nearest ancestor
+ * of `startDir` holds a `.reoclo` REGULAR FILE. Presence ONLY: the file is not
+ * parsed, so a malformed binding still counts as present and never throws. Used
+ * by identity display (`whoami`) to decide whether the caller is bound to an org
+ * in the immediate context.
+ */
+export function projectConfigPresent(
+  startDir: string = process.cwd(),
+  fs: Pick<ProjectConfigFs, "exists" | "isFile"> = defaultFs,
+): boolean {
+  return findProjectConfigPath(startDir, fs.exists, fs.isFile) !== null;
+}
+
 /** The `.reoclo` schema version this CLI writes. Bump when the shape of the
  *  file changes in a way older CLI versions can't read correctly. */
 export const PROJECT_CONFIG_VERSION = 1;
@@ -67,7 +81,13 @@ export interface ProjectConfig {
   org?: string;
   profile?: string;
   version?: number;
-  skills?: { ref: string; sha?: string; installed_at?: string };
+  skills?: {
+    ref: string;
+    sha?: string;
+    installed_at?: string;
+    targets?: string[];
+    scope?: "project" | "global";
+  };
 }
 
 /** Read + validate a present `<key>` as a non-empty string. Absent → undefined;
@@ -134,10 +154,18 @@ export function readProjectConfig(
   if (skills && typeof skills === "object" && !Array.isArray(skills)) {
     const s = skills as Record<string, unknown>;
     if (typeof s.ref === "string" && s.ref.trim() !== "") {
+      // `targets`/`scope` are additive, forward-compat: carried through when
+      // well-formed, otherwise silently dropped (a malformed shape never taints
+      // the org/profile binding that gates which backend commands run against).
+      const targets = Array.isArray(s.targets) && s.targets.every((t) => typeof t === "string")
+        ? (s.targets.filter((t): t is string => typeof t === "string"))
+        : undefined;
       config.skills = {
         ref: s.ref.trim(),
         sha: typeof s.sha === "string" ? s.sha : undefined,
         installed_at: typeof s.installed_at === "string" ? s.installed_at : undefined,
+        targets,
+        scope: s.scope === "project" || s.scope === "global" ? s.scope : undefined,
       };
     }
   }
