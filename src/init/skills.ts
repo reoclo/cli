@@ -19,7 +19,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { load, dump } from "js-yaml";
 import type { Placement } from "./harness";
 
 const REPO = "reoclo/skills";
@@ -30,18 +29,34 @@ const PORTABLE_KEYS = new Set([
 
 /** Rewrite a SKILL.md's YAML frontmatter to the six portable Agent Skills fields,
  *  dropping vendor extensions that hard-fail validation on non-Claude clients. A
- *  file with no frontmatter fence is returned unchanged. */
+ *  file with no frontmatter fence is returned unchanged.
+ *
+ *  Line-oriented on purpose: it keeps each portable top-level `key:` line (plus
+ *  any of its indented continuation / block-scalar lines) VERBATIM, and drops
+ *  every line belonging to a non-portable key. Nothing is parsed or re-emitted
+ *  through js-yaml, so values survive byte-for-byte. That matters because a real
+ *  `description` is an unquoted plain scalar with a bare "colon-space" (e.g.
+ *  "(or its `rc` alias): signing in") — valid to Claude Code / the Agent Skills
+ *  spec, but something `js-yaml.load` rejects as a nested mapping key. A
+ *  round-trip would throw there, or silently re-quote/reflow the value. */
 export function toPortableFrontmatter(skillMd: string): string {
   const m = /^---\n([\s\S]*?)\n---\n?/.exec(skillMd);
   if (!m) return skillMd;
-  const parsed = (load(m[1] ?? "") ?? {}) as Record<string, unknown>;
-  const kept: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(parsed)) {
-    if (PORTABLE_KEYS.has(k)) kept[k] = v;
-  }
   const body = skillMd.slice(m[0].length);
-  const yaml = dump(kept, { lineWidth: -1 }).trimEnd();
-  return `---\n${yaml}\n---\n${body}`;
+
+  // A top-level key is at column 0: no leading whitespace, an unquoted key, then
+  // a colon that is followed by whitespace or the end of the line (YAML's own
+  // mapping rule). Any other line (indented, blank, block-scalar text) belongs
+  // to the top-level key that opened above it.
+  const topKey = /^([A-Za-z0-9_-]+):(?:\s|$)/;
+  const kept: string[] = [];
+  let keeping = false;
+  for (const line of (m[1] ?? "").split("\n")) {
+    const key = topKey.exec(line);
+    if (key) keeping = PORTABLE_KEYS.has(key[1] ?? "");
+    if (keeping) kept.push(line);
+  }
+  return `---\n${kept.join("\n")}\n---\n${body}`;
 }
 
 export interface PlaceFs {

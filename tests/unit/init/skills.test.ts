@@ -147,6 +147,38 @@ test("toPortableFrontmatter keeps only the six portable fields", () => {
   expect(out).toContain("# Body stays");
 });
 
+test("toPortableFrontmatter survives a real description with an inline colon", () => {
+  // Verbatim from skills/reoclo-cli-usage/SKILL.md. The unquoted plain scalar
+  // holds "(or its `rc` alias): signing in" — a bare "colon-space" that js-yaml's
+  // load() rejects as a nested mapping key. Claude Code / Agent Skills accept it,
+  // so we must not throw, and must preserve the value byte-for-byte.
+  const name = "reoclo-cli-usage";
+  const description =
+    "Use when operating Reoclo from the terminal with the `reoclo` CLI (or its `rc` alias): " +
+    "signing in; managing servers, apps, containers, and deployments; cloud server power " +
+    "controls; tailing and searching logs; running commands or shells on servers; tunnels; " +
+    "env vars; domains; secrets and `run`; uptime monitors, status pages, and incidents; " +
+    "alerts and notification channels; git repos, providers, and container registries; " +
+    "scheduled operations; audit logs; and scripting Reoclo with JSON/YAML output.";
+  const raw = [
+    "---",
+    `name: ${name}`,
+    `description: ${description}`,
+    "context: fork", // Claude-only vendor extension -> must still be dropped
+    "---",
+    "",
+    "# reoclo-cli-usage: Operate Reoclo from the CLI",
+  ].join("\n");
+
+  let out = "";
+  expect(() => { out = toPortableFrontmatter(raw); }).not.toThrow();
+  expect(out).toContain(`name: ${name}`);
+  // Byte-faithful: the whole colon-bearing description survives unchanged.
+  expect(out).toContain(`description: ${description}`);
+  expect(out).not.toContain("context:");
+  expect(out).toContain("# reoclo-cli-usage: Operate Reoclo from the CLI");
+});
+
 test("toPortableFrontmatter leaves a body-only file untouched", () => {
   const raw = "# no frontmatter here";
   expect(toPortableFrontmatter(raw)).toBe(raw);
