@@ -39,6 +39,8 @@ import { registerSkills } from "./commands/skills";
 import { registerSecrets } from "./commands/secrets";
 import { registerRun } from "./commands/run";
 import { registerSync } from "./commands/sync";
+import { registerApi } from "./commands/api";
+import { registerGroups } from "./commands/groups";
 import {
   bootstrap,
   setGlobalProfileOverride,
@@ -124,6 +126,8 @@ if (import.meta.main) {
   registerSecrets(program);
   registerRun(program);
   registerSync(program);
+  registerApi(program);
+  registerGroups(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
