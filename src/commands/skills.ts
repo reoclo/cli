@@ -2,18 +2,25 @@
 //
 // `reoclo skills` — manage the reoclo agent skills independently of `init`.
 //
-//   `skills install` runs the same harness-aware, confirm-gated flow `init`
-//   runs (see ../init/flow.ts's runSkillsInstall, shared by both commands) but
-//   never writes `.reoclo` — that binding, and the decision of which org a
-//   project targets, is init's job, not skills install's. Useful to re-sync
-//   skills, add a harness, or install into a directory that's already linked.
+//   `skills install` (alias `skills init`) runs the same harness-aware,
+//   confirm-gated flow `reoclo init` runs (see ../init/flow.ts's
+//   runSkillsInstall, shared by both commands) but never writes `.reoclo` —
+//   that binding, and the decision of which org a project targets, is init's
+//   job, not skills install's. Useful to re-sync skills, add a harness, or
+//   install into a directory that's already linked.
+//
+//   `skills update` refreshes the skills ALREADY installed under the canonical
+//   `.agents/skills` root (project or `--global`) to the latest, in place (see
+//   ../init/update.ts's runSkillsUpdate). Unlike install it never prompts and
+//   never adds new skills — it reads what's on disk and re-downloads exactly
+//   those — and, like install, never writes `.reoclo`.
 //
 //   `skills list` shows every skill available in the reoclo/skills repo and
 //   marks which ones are already sitting in the resolved canonical
 //   `.agents/skills` root (project or global) — no download/install, no
 //   auth, purely informational.
 //
-// Neither subcommand talks to the reoclo API, so `skills` is registered as a
+// No subcommand talks to the reoclo API, so `skills` is registered as a
 // preAction passthrough in index.ts (same reasoning as `init`/`mcp`).
 
 import type { Command } from "commander";
@@ -22,6 +29,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { HARNESSES, type HarnessId, type Scope, destinationsFor } from "../init/harness";
 import { runSkillsInstall } from "../init/flow";
+import { runSkillsUpdate } from "../init/update";
 import { fetchAvailableSkills } from "../init/skills";
 import { parseHarnessOption, parseSkillsOption } from "./init";
 import { withCompletion } from "../client/command-meta";
@@ -40,6 +48,11 @@ interface SkillsListOpts {
   project?: boolean;
 }
 
+interface SkillsUpdateOpts {
+  global?: boolean; // "--global" → update the global skills root (~)
+  project?: boolean; // "--project" → update this project's skills root
+}
+
 /** Resolve the `--global`/`--project` pair into a Scope (default: project). */
 function resolveScope(opts: { global?: boolean; project?: boolean }): Scope {
   return opts.global ? "global" : "project";
@@ -51,6 +64,7 @@ export function registerSkills(program: Command): void {
   withCompletion(
     skills
       .command("install")
+      .alias("init")
       .description("install reoclo agent skills into this project or globally")
       .option(
         "--harness <list>",
@@ -118,5 +132,17 @@ export function registerSkills(program: Command): void {
         ],
         fmt,
       );
+    });
+
+  skills
+    .command("update")
+    .description("refresh already-installed reoclo agent skills to the latest")
+    .option("--global", "update the global skills root (~/.agents/skills)")
+    .option("--project", "update this project's skills root (default)")
+    .action(async (opts: SkillsUpdateOpts) => {
+      const outcome = await runSkillsUpdate({ global: opts.global, project: opts.project });
+      if (outcome.kind === "error") {
+        process.exit(1);
+      }
     });
 }
