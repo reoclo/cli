@@ -71,6 +71,13 @@ describe("getCompletionCandidates", () => {
     expect(values(cands)).toContain("--server");
   });
 
+  test("resolves a command typed under an alias", () => {
+    writeSlice("servers", [{ id: "1", value: "prod-web", name: "Prod", desc: "" }]);
+    const p = program();
+    p.commands.find((c) => c.name() === "servers")!.commands[0]!.alias("show");
+    expect(values(getCompletionCandidates(p, ["servers", "show"], ""))).toEqual(["prod-web"]);
+  });
+
   test("never throws on garbage input", () => {
     expect(() => getCompletionCandidates(program(), ["nonsense", "--"], "x")).not.toThrow();
     expect(getCompletionCandidates(program(), ["nonsense", "--"], "x")).toEqual([]);
