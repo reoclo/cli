@@ -15,6 +15,7 @@ import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
+import { registerVerifiedDomains } from "./commands/verified-domains";
 import { registerMonitors } from "./commands/monitors";
 import { registerStatusPages } from "./commands/status-pages";
 import { registerIncidents } from "./commands/incidents";
@@ -65,6 +66,7 @@ import { extractProfileFromArgv, resolveProfileName } from "./config/profile-res
 import { readProjectConfig } from "./config/project-config";
 import { configAdvisories } from "./config/config-advisory";
 import { detectProgramName } from "./lib/program-name";
+import { applyVerbAliases } from "./lib/verb-aliases";
 
 export const VERSION = pkg.version;
 
@@ -102,6 +104,7 @@ if (import.meta.main) {
   registerLogs(program);
   registerEnv(program);
   registerDomains(program);
+  registerVerifiedDomains(program);
   registerMonitors(program);
   registerStatusPages(program);
   registerIncidents(program);
@@ -138,6 +141,11 @@ if (import.meta.main) {
     .action(async () => {
       await performUpdateCheck();
     });
+
+  // Every collection verb answers to its equivalent spellings ('ls' also as
+  // 'list', 'rm' also as 'delete'/'remove'). Must run after every register*()
+  // call so it sees the whole tree, and before parse.
+  applyVerbAliases(program);
 
   // Load capabilities for the profile this invocation will actually use, so the
   // visible/gated command set reflects --profile / $REOCLO_PROFILE — not just the

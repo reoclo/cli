@@ -51,7 +51,10 @@ function walk(program: Command, words: string[]): Walked {
       i += opt && (opt.required || opt.optional) ? 2 : 1;
       continue;
     }
-    const sub = commandsOf(cmd).find((c) => c.name() === w);
+    // Match aliases as well as names, so a line typed with an equivalent verb
+    // ("servers list ") still resolves to the command carrying the completion
+    // tag. Candidates are still emitted under the canonical name only.
+    const sub = commandsOf(cmd).find((c) => c.name() === w || c.aliases().includes(w));
     if (!sub) break;
     cmd = sub;
     i += 1;

@@ -25,6 +25,8 @@ Commands:
   logs                    tail or query application logs
   env                     application environment variables
   domains                 manage domains
+  verified-domains        manage verified root domains (proof of ownership)
+  status-pages            manage status pages
   exec                    run a command on a server
   shell                   open an interactive shell on a server
   tunnel                  forward / reverse TCP and UDP tunnels
@@ -34,6 +36,10 @@ Commands:
   mcp                     run as a Model Context Protocol server
   completion              generate shell completion scripts
 ```
+
+Every `ls` subcommand also answers to `list`, and every `rm` also answers to
+`delete` and `remove`, so `reoclo servers list` and `reoclo servers ls` are the
+same command.
 
 ## Install
 

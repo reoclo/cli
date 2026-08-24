@@ -29,6 +29,28 @@ export const REGISTRY_TYPES = ["docker", "ecr", "private"] as const;
 export type RegistryType = (typeof REGISTRY_TYPES)[number];
 export const RegistryTypeSchema = z.enum(REGISTRY_TYPES);
 
+/** What a status component watches. Every kind except "manual" needs a ref id. */
+export const COMPONENT_SOURCE_KINDS = [
+  "domain",
+  "server",
+  "application",
+  "monitor",
+  "manual",
+] as const;
+export type ComponentSourceKind = (typeof COMPONENT_SOURCE_KINDS)[number];
+export const ComponentSourceKindSchema = z.enum(COMPONENT_SOURCE_KINDS);
+
+export const COMPONENT_STATUSES = [
+  "operational",
+  "degraded_performance",
+  "partial_outage",
+  "major_outage",
+  "maintenance",
+  "unknown",
+] as const;
+export type ComponentStatus = (typeof COMPONENT_STATUSES)[number];
+export const ComponentStatusSchema = z.enum(COMPONENT_STATUSES);
+
 // Shared positive-integer schema for `limit` params in MCP tools. The CLI
 // equivalent is `parseLimit` in src/util/parse-limit.ts.
 export const LimitSchema = z.number().int().positive();
