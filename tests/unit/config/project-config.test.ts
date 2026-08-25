@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   findProjectConfigPath,
   projectConfigOutdated,
@@ -274,4 +277,58 @@ test("current project config is not outdated; null is never outdated", () => {
   };
   expect(projectConfigOutdated(readProjectConfig("/proj", fs))).toBe(false);
   expect(projectConfigOutdated(null)).toBe(false);
+});
+
+describe("$REOCLO_PROJECT_DIR pins where discovery starts", () => {
+  // Discovery walks from cwd to the filesystem root, so a `.reoclo` sitting
+  // above the checkout is picked up from anywhere below it. That is correct for
+  // real use and wrong for a test suite running inside a bound repo, which is
+  // what this env var exists to control. See tests/helpers/preload-env.ts.
+  const withProjectDir = <T,>(value: string | undefined, run: () => T): T => {
+    const original = process.env.REOCLO_PROJECT_DIR;
+    if (value === undefined) delete process.env.REOCLO_PROJECT_DIR;
+    else process.env.REOCLO_PROJECT_DIR = value;
+    try {
+      return run();
+    } finally {
+      if (original === undefined) delete process.env.REOCLO_PROJECT_DIR;
+      else process.env.REOCLO_PROJECT_DIR = original;
+    }
+  };
+
+  test("a binding under the pinned dir is found", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pin-hit-"));
+    writeFileSync(join(dir, ".reoclo"), JSON.stringify({ org: "acme" }));
+    expect(withProjectDir(dir, () => readProjectOrg())).toBe("acme");
+    expect(withProjectDir(dir, () => projectConfigPresent())).toBe(true);
+  });
+
+  test("a binding outside the pinned dir is invisible", () => {
+    const bound = mkdtempSync(join(tmpdir(), "pin-bound-"));
+    writeFileSync(join(bound, ".reoclo"), JSON.stringify({ org: "acme" }));
+    const elsewhere = mkdtempSync(join(tmpdir(), "pin-empty-"));
+    expect(withProjectDir(elsewhere, () => readProjectOrg())).toBeNull();
+    expect(withProjectDir(elsewhere, () => projectConfigPresent())).toBe(false);
+  });
+
+  test("blank or unset falls back to cwd, so normal use is unchanged", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pin-cwd-"));
+    writeFileSync(join(dir, ".reoclo"), JSON.stringify({ org: "from-cwd" }));
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(withProjectDir(undefined, () => readProjectOrg())).toBe("from-cwd");
+      expect(withProjectDir("   ", () => readProjectOrg())).toBe("from-cwd");
+    } finally {
+      process.chdir(origCwd);
+    }
+  });
+
+  test("an explicit startDir argument still wins over the pin", () => {
+    const pinned = mkdtempSync(join(tmpdir(), "pin-a-"));
+    writeFileSync(join(pinned, ".reoclo"), JSON.stringify({ org: "pinned" }));
+    const explicit = mkdtempSync(join(tmpdir(), "pin-b-"));
+    writeFileSync(join(explicit, ".reoclo"), JSON.stringify({ org: "explicit" }));
+    expect(withProjectDir(pinned, () => readProjectOrg(explicit))).toBe("explicit");
+  });
 });

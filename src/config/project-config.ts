@@ -17,6 +17,21 @@ import { dirname, join } from "node:path";
 const FILE_NAME = ".reoclo";
 
 /**
+ * Where discovery starts walking up from.
+ *
+ * `$REOCLO_PROJECT_DIR` pins it, which is the escape hatch for a caller that
+ * must not inherit whatever `.reoclo` happens to sit above the working
+ * directory. Discovery walks to the filesystem root, so an ancestor binding is
+ * picked up from anywhere below it, and clearing `REOCLO_*` does not help: the
+ * leak is directory-walk based, not environment based. Absent or blank falls
+ * back to the real cwd, which is the normal case.
+ */
+function discoveryStartDir(): string {
+  const pinned = process.env.REOCLO_PROJECT_DIR;
+  return pinned !== undefined && pinned.trim() !== "" ? pinned : process.cwd();
+}
+
+/**
  * Walk up from `startDir` to the filesystem root, returning the path of the
  * nearest `.reoclo` REGULAR FILE, or null when none exists. A candidate that
  * exists but isn't a regular file (e.g. the `~/.reoclo` global config
@@ -67,7 +82,7 @@ const defaultFs: ProjectConfigFs = {
  * in the immediate context.
  */
 export function projectConfigPresent(
-  startDir: string = process.cwd(),
+  startDir: string = discoveryStartDir(),
   fs: Pick<ProjectConfigFs, "exists" | "isFile"> = defaultFs,
 ): boolean {
   return findProjectConfigPath(startDir, fs.exists, fs.isFile) !== null;
@@ -109,7 +124,7 @@ function stringField(obj: Record<string, unknown>, key: string, path: string): s
  * non-empty string). Unknown keys are ignored for forward-compat.
  */
 export function readProjectConfig(
-  startDir: string = process.cwd(),
+  startDir: string = discoveryStartDir(),
   fs: ProjectConfigFs = defaultFs,
 ): ProjectConfig | null {
   const path = findProjectConfigPath(startDir, fs.exists, fs.isFile);
@@ -185,7 +200,7 @@ export function projectConfigOutdated(cfg: ProjectConfig | null): boolean {
  * {@link readProjectConfig}; shares its fail-loud behaviour on a malformed file.
  */
 export function readProjectOrg(
-  startDir: string = process.cwd(),
+  startDir: string = discoveryStartDir(),
   fs: ProjectConfigFs = defaultFs,
 ): string | null {
   return readProjectConfig(startDir, fs)?.org ?? null;

@@ -112,7 +112,11 @@ test("a committed .reoclo is never read under an automation key (CI stays safe)"
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), "{ this is : not json");
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
   try {
     const ctx = await bootstrap();
@@ -120,6 +124,7 @@ test("a committed .reoclo is never read under an automation key (CI stays safe)"
     expect(ctx.tokenType).toBe("automation");
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
     delete process.env.REOCLO_AUTOMATION_KEY;
   }
 });
@@ -148,13 +153,18 @@ test("a .reoclo `profile` binding selects that profile", async () => {
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "work" }));
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   try {
     const ctx = await bootstrap();
     expect(ctx.profileName).toBe("work");
     expect(ctx.token).toBe("tok-work");
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
   }
 });
 
@@ -163,7 +173,11 @@ test("a .reoclo `profile` that doesn't exist fails loud (exit 3, names the profi
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "ghost" }));
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   let caught: unknown = null;
   try {
     await bootstrap();
@@ -171,6 +185,7 @@ test("a .reoclo `profile` that doesn't exist fails loud (exit 3, names the profi
     caught = e;
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
   }
   expect((caught as { exitCode?: number })?.exitCode).toBe(3);
   expect((caught as Error).message).toMatch(/ghost/);
@@ -180,7 +195,11 @@ test("a .reoclo `profile` is ignored under an automation key", async () => {
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ profile: "ghost" }));
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   process.env.REOCLO_AUTOMATION_KEY = "rca_ciauto";
   try {
     const ctx = await bootstrap();
@@ -188,6 +207,7 @@ test("a .reoclo `profile` is ignored under an automation key", async () => {
     expect(ctx.tokenType).toBe("automation");
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
     delete process.env.REOCLO_AUTOMATION_KEY;
   }
 });
@@ -443,7 +463,11 @@ test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient cred
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), "{ this is : not json");
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   process.env.REOCLO_MACHINE_TOKEN = "rk_m_machine";
   try {
     const ctx = await bootstrap();
@@ -451,6 +475,7 @@ test("a committed .reoclo is never read under REOCLO_MACHINE_TOKEN (ambient cred
     expect(ctx.tokenType).toBe("machine");
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
   }
 });
 
@@ -475,7 +500,11 @@ test("ignoreProjectOrg makes bootstrap skip the .reoclo org (no tenant-switch pr
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   try {
     // .reoclo binds "other-org" != profile slug "home". With the org suppressed
     // there is no probe, so bootstrap resolves against the profile's own tenant.
@@ -483,6 +512,7 @@ test("ignoreProjectOrg makes bootstrap skip the .reoclo org (no tenant-switch pr
     expect(ctx.tenantId).toBe("t-home");
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
   }
 });
 
@@ -717,7 +747,11 @@ test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (co
   const projectDir = mkdtempSync(join(tmpdir(), "proj-"));
   writeFileSync(join(projectDir, ".reoclo"), JSON.stringify({ org: "other-org" }));
   const origCwd = process.cwd();
+  const origProjectDir = process.env.REOCLO_PROJECT_DIR as string;
   process.chdir(projectDir);
+  // Discovery reads $REOCLO_PROJECT_DIR, not cwd (see preload-env.ts), so the
+  // fixture has to be pinned explicitly or it is invisible to bootstrap().
+  process.env.REOCLO_PROJECT_DIR = projectDir;
   try {
     // "other-org" != "home" and the profile is oauth, so bootstrap attempts the
     // /auth/me probe against the unreachable api and rejects. This proves the
@@ -726,6 +760,7 @@ test("without ignoreProjectOrg, the .reoclo org drives a tenant-switch probe (co
     await expect(bootstrap({ orgRequired: false })).rejects.toThrow();
   } finally {
     process.chdir(origCwd);
+    process.env.REOCLO_PROJECT_DIR = origProjectDir;
   }
 });
 
