@@ -13,16 +13,14 @@ export function registerApplicationTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   server.tool(
     "list_applications",
-    "List all applications in your organization",
-    {},
-    async () => {
+    "List all applications in an organization",
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const apps = await ctx.client.get(`/tenants/${tenantId}/applications/`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const apps = await client.get(`/tenants/${tenantId}/applications/`);
         return asToolResult(apps);
       } catch (error: unknown) {
         return asToolError(error);
@@ -33,10 +31,11 @@ export function registerApplicationTools(
   server.tool(
     "get_application",
     "Get detailed info for an application",
-    { application_id: z.string().min(1).describe("Application ID") },
-    async ({ application_id }) => {
+    { ...ctx.orgParam, application_id: z.string().min(1).describe("Application ID") },
+    async ({ application_id, ...args }) => {
       try {
-        const app = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const app = await client.get(
           `/tenants/${tenantId}/applications/${application_id}`,
         );
         return asToolResult(app);
@@ -49,10 +48,11 @@ export function registerApplicationTools(
   server.tool(
     "get_app_config",
     "Get the build and runtime configuration for an application",
-    { application_id: z.string().min(1).describe("Application ID") },
-    async ({ application_id }) => {
+    { ...ctx.orgParam, application_id: z.string().min(1).describe("Application ID") },
+    async ({ application_id, ...args }) => {
       try {
-        const config = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const config = await client.get(
           `/tenants/${tenantId}/applications/${application_id}/config`,
         );
         return asToolResult(config);
@@ -66,12 +66,14 @@ export function registerApplicationTools(
     "update_app_config",
     "Update build or runtime configuration for an application",
     {
+      ...ctx.orgParam,
       application_id: z.string().min(1).describe("Application ID"),
       config: z.record(z.string(), z.unknown()).describe("Configuration key-value pairs to update"),
     },
-    async ({ application_id, config }) => {
+    async ({ application_id, config, ...args }) => {
       try {
-        const updated = await ctx.client.patch(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const updated = await client.patch(
           `/tenants/${tenantId}/applications/${application_id}/config`,
           config,
         );
@@ -86,12 +88,14 @@ export function registerApplicationTools(
     "trigger_deploy",
     "Trigger a new deployment for an application",
     {
+      ...ctx.orgParam,
       application_id: z.string().min(1).describe("Application ID"),
       commit_ref: z.string().optional().describe("Git commit or branch (defaults to main)"),
     },
-    async ({ application_id, commit_ref }) => {
+    async ({ application_id, commit_ref, ...args }) => {
       try {
-        const deployment = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const deployment = await client.post(
           `/tenants/${tenantId}/applications/${application_id}/deploy`,
           { ...(commit_ref ? { commit_ref } : {}) },
         );

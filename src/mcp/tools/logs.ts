@@ -12,13 +12,11 @@ export function registerLogTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   server.tool(
     "search_logs",
     "Search aggregated logs with filters (paginated Loki query)",
     {
+      ...ctx.orgParam,
       search: z.string().optional().describe("Text search string"),
       server_id: z.string().optional().describe("Filter by server ID"),
       source_type: z
@@ -60,19 +58,10 @@ export function registerLogTools(
       to_date,
       page,
       page_size,
-    }: {
-      search?: string;
-      server_id?: string;
-      source_type?: string;
-      source_name?: string;
-      stream?: string;
-      level?: string;
-      from_date?: string;
-      to_date?: string;
-      page?: number;
-      page_size?: number;
+      ...args
     }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const params = new URLSearchParams();
         if (search) params.set("search", search);
         if (server_id) params.set("server_id", server_id);
@@ -85,7 +74,7 @@ export function registerLogTools(
         if (page) params.set("page", String(page));
         if (page_size) params.set("page_size", String(page_size));
         const qs = params.toString();
-        const logs = await ctx.client.get(`/tenants/${tenantId}/logs${qs ? `?${qs}` : ""}`);
+        const logs = await client.get(`/tenants/${tenantId}/logs${qs ? `?${qs}` : ""}`);
         return asToolResult(logs);
       } catch (error: unknown) {
         return asToolError(error);
@@ -97,6 +86,7 @@ export function registerLogTools(
     "live_logs",
     "Stream recent live logs from a server for real-time log inspection",
     {
+      ...ctx.orgParam,
       server_id: z.string().min(1).describe("Server ID"),
       source_type: z
         .enum([
@@ -131,16 +121,10 @@ export function registerLogTools(
       since,
       search,
       level,
-    }: {
-      server_id: string;
-      source_type: string;
-      source_name: string;
-      tail?: number;
-      since?: string;
-      search?: string;
-      level?: string;
+      ...args
     }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const params = new URLSearchParams();
         params.set("server_id", server_id);
         params.set("source_type", source_type);
@@ -149,7 +133,7 @@ export function registerLogTools(
         if (since) params.set("since", since);
         if (search) params.set("search", search);
         if (level) params.set("level", level);
-        const logs = await ctx.client.get(`/tenants/${tenantId}/logs/live?${params.toString()}`);
+        const logs = await client.get(`/tenants/${tenantId}/logs/live?${params.toString()}`);
         return asToolResult(logs);
       } catch (error: unknown) {
         return asToolError(error);
@@ -161,6 +145,7 @@ export function registerLogTools(
     "get_system_logs",
     "Get journal/system logs for a specific systemd unit on a server",
     {
+      ...ctx.orgParam,
       server_id: z.string().min(1).describe("Server ID"),
       unit: z
         .enum([
@@ -190,14 +175,10 @@ export function registerLogTools(
       tail,
       since,
       level,
-    }: {
-      server_id: string;
-      unit: string;
-      tail?: number;
-      since?: string;
-      level?: string;
+      ...args
     }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const unitMap: Record<string, { source_type: string; source_name: string }> =
           {
             system: { source_type: "system", source_name: "system" },
@@ -225,7 +206,7 @@ export function registerLogTools(
         if (tail) params.set("tail", String(tail));
         if (since) params.set("since", since);
         if (level) params.set("level", level);
-        const logs = await ctx.client.get(`/tenants/${tenantId}/logs/live?${params.toString()}`);
+        const logs = await client.get(`/tenants/${tenantId}/logs/live?${params.toString()}`);
         return asToolResult(logs);
       } catch (error: unknown) {
         return asToolError(error);
@@ -236,10 +217,11 @@ export function registerLogTools(
   server.tool(
     "get_log_usage",
     "Get log storage usage statistics for the organization",
-    {},
-    async () => {
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const usage = await ctx.client.get(`/tenants/${tenantId}/logs/usage`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const usage = await client.get(`/tenants/${tenantId}/logs/usage`);
         return asToolResult(usage);
       } catch (error: unknown) {
         return asToolError(error);
@@ -250,10 +232,11 @@ export function registerLogTools(
   server.tool(
     "get_server_log_sources",
     "Discover available log sources (servers, containers, systemd units)",
-    {},
-    async () => {
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const sources = await ctx.client.get(`/tenants/${tenantId}/logs/sources`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const sources = await client.get(`/tenants/${tenantId}/logs/sources`);
         return asToolResult(sources);
       } catch (error: unknown) {
         return asToolError(error);
@@ -265,16 +248,18 @@ export function registerLogTools(
     "get_log_stats",
     "Get log volume statistics and error rates",
     {
+      ...ctx.orgParam,
       since: z.string().optional().describe("Start time (ISO 8601)"),
       until: z.string().optional().describe("End time (ISO 8601)"),
     },
-    async ({ since, until }: { since?: string; until?: string }) => {
+    async ({ since, until, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const params = new URLSearchParams();
         if (since) params.set("since", since);
         if (until) params.set("until", until);
         const qs = params.toString();
-        const stats = await ctx.client.get(`/tenants/${tenantId}/logs/stats${qs ? `?${qs}` : ""}`);
+        const stats = await client.get(`/tenants/${tenantId}/logs/stats${qs ? `?${qs}` : ""}`);
         return asToolResult(stats);
       } catch (error: unknown) {
         return asToolError(error);

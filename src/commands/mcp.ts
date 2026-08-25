@@ -3,6 +3,8 @@ import type { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { bootstrap, requireTenantId, type ResolvedContext } from "../client/bootstrap";
 import { createMcpServer } from "../mcp/server";
+import type { McpRegistrationContext } from "../mcp/tools/context";
+import type { HttpClient } from "../client/http";
 import { startTokenRefreshLoop, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { loadConfig } from "../config/store";
 
@@ -37,6 +39,21 @@ export async function resolveMcpBootstrap(): Promise<McpBootstrapResult> {
   const ctx = await bootstrap({ mcpSource: true });
   const tenantId = await requireTenantId(ctx);
   return { ctx, tenantId };
+}
+
+/**
+ * The CLI host's tool context. The org is fixed for the life of the process:
+ * `bootstrap()` has already applied `--org` / $REOCLO_ORG / `.reoclo` (minting
+ * an in-memory tenant_switch token when it differs from the login org) and
+ * rejected an OAuth profile with no binding (exit 4). So no `organization`
+ * argument is exposed, and any value a client passes anyway is ignored.
+ */
+export function buildCliMcpContext(client: HttpClient, tenantId: string): McpRegistrationContext {
+  return {
+    client,
+    orgParam: {},
+    resolveOrg: async () => ({ tenantId, client }),
+  };
 }
 
 export function registerMcp(program: Command): void {
@@ -87,10 +104,7 @@ export function registerMcp(program: Command): void {
       }
 
       try {
-        const server = createMcpServer({
-          client: ctx.client,
-          tenantId,
-        });
+        const server = createMcpServer(buildCliMcpContext(ctx.client, tenantId));
         await server.connect(new StdioServerTransport());
       } finally {
         stopRefresh?.();

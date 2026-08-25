@@ -14,17 +14,15 @@ export function registerOtherTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   // Repositories
   server.tool(
     "list_repositories",
     "List connected Git repositories",
-    {},
-    async () => {
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const repos = await ctx.client.get(`/tenants/${tenantId}/repositories/`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const repos = await client.get(`/tenants/${tenantId}/repositories/`);
         return asToolResult(repos);
       } catch (error: unknown) {
         return asToolError(error);
@@ -35,10 +33,11 @@ export function registerOtherTools(
   server.tool(
     "get_repository",
     "Get a single connected Git repository by id.",
-    { repository_id: z.string().min(1).describe("Repository id") },
-    async ({ repository_id }) => {
+    { ...ctx.orgParam, repository_id: z.string().min(1).describe("Repository id") },
+    async ({ repository_id, ...args }) => {
       try {
-        const repo = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const repo = await client.get(
           `/tenants/${tenantId}/repositories/${repository_id}`,
         );
         return asToolResult(repo);
@@ -51,10 +50,11 @@ export function registerOtherTools(
   server.tool(
     "list_repo_branches",
     "List branches for a repository.",
-    { repository_id: z.string().min(1).describe("Repository id") },
-    async ({ repository_id }) => {
+    { ...ctx.orgParam, repository_id: z.string().min(1).describe("Repository id") },
+    async ({ repository_id, ...args }) => {
       try {
-        const branches = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const branches = await client.get(
           `/tenants/${tenantId}/repositories/${repository_id}/branches`,
         );
         return asToolResult(branches);
@@ -68,10 +68,11 @@ export function registerOtherTools(
   server.tool(
     "list_env_vars",
     "List environment variable keys for an application (values are masked)",
-    { application_id: z.string().min(1).describe("Application ID") },
-    async ({ application_id }) => {
+    { ...ctx.orgParam, application_id: z.string().min(1).describe("Application ID") },
+    async ({ application_id, ...args }) => {
       try {
-        const envVars = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const envVars = await client.get(
           `/tenants/${tenantId}/applications/${application_id}/env`,
         );
         return asToolResult(envVars);
@@ -85,13 +86,15 @@ export function registerOtherTools(
     "set_env_var",
     "Set or update an environment variable for an application",
     {
+      ...ctx.orgParam,
       application_id: z.string().min(1).describe("Application ID"),
       key: z.string().min(1).describe("Variable name"),
       value: z.string().describe("Variable value"),
     },
-    async ({ application_id, key, value }) => {
+    async ({ application_id, key, value, ...args }) => {
       try {
-        const result = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const result = await client.post(
           `/tenants/${tenantId}/applications/${application_id}/env`,
           { key, value },
         );
@@ -106,10 +109,11 @@ export function registerOtherTools(
   server.tool(
     "list_registry_creds",
     "List container registry credentials (passwords are masked)",
-    {},
-    async () => {
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const creds = await ctx.client.get(`/tenants/${tenantId}/registry-credentials/`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const creds = await client.get(`/tenants/${tenantId}/registry-credentials/`);
         return asToolResult(creds);
       } catch (error: unknown) {
         return asToolError(error);
@@ -120,10 +124,11 @@ export function registerOtherTools(
   server.tool(
     "get_registry_cred",
     "Get a single container registry credential by id (password masked).",
-    { credential_id: z.string().min(1).describe("Registry credential id") },
-    async ({ credential_id }) => {
+    { ...ctx.orgParam, credential_id: z.string().min(1).describe("Registry credential id") },
+    async ({ credential_id, ...args }) => {
       try {
-        const cred = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const cred = await client.get(
           `/tenants/${tenantId}/registry-credentials/${credential_id}`,
         );
         return asToolResult(cred);
@@ -137,6 +142,7 @@ export function registerOtherTools(
     "create_registry_cred",
     "Create a container registry credential.",
     {
+      ...ctx.orgParam,
       name: z.string().min(1).describe("Human-readable name (e.g. 'dockerhub-prod')"),
       registry_type: RegistryTypeSchema.describe("Registry kind"),
       registry_url: z.url().describe("Registry URL"),
@@ -146,8 +152,9 @@ export function registerOtherTools(
       username: z.string().optional().describe("Registry username, if applicable"),
       description: z.string().optional().describe("Description"),
     },
-    async ({ name, registry_type, registry_url, encrypted_credential, username, description }) => {
+    async ({ name, registry_type, registry_url, encrypted_credential, username, description, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {
           name,
           registry_type,
@@ -156,7 +163,7 @@ export function registerOtherTools(
         };
         if (username !== undefined) body["username"] = username;
         if (description !== undefined) body["description"] = description;
-        const created = await ctx.client.post(
+        const created = await client.post(
           `/tenants/${tenantId}/registry-credentials/`,
           body,
         );
@@ -171,6 +178,7 @@ export function registerOtherTools(
     "update_registry_cred",
     "Update fields of an existing container registry credential.",
     {
+      ...ctx.orgParam,
       credential_id: z.string().min(1).describe("Registry credential id"),
       name: z.string().optional().describe("New name"),
       registry_url: z.url().optional().describe("New URL"),
@@ -180,15 +188,16 @@ export function registerOtherTools(
         "New credential/password value. Sensitive — treat as such.",
       ),
     },
-    async ({ credential_id, name, registry_url, username, description, encrypted_credential }) => {
+    async ({ credential_id, name, registry_url, username, description, encrypted_credential, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {};
         if (name !== undefined) body["name"] = name;
         if (registry_url !== undefined) body["registry_url"] = registry_url;
         if (username !== undefined) body["username"] = username;
         if (description !== undefined) body["description"] = description;
         if (encrypted_credential !== undefined) body["encrypted_credential"] = encrypted_credential;
-        const updated = await ctx.client.patch(
+        const updated = await client.patch(
           `/tenants/${tenantId}/registry-credentials/${credential_id}`,
           body,
         );
@@ -203,6 +212,7 @@ export function registerOtherTools(
     "test_registry_cred",
     "Test a registry connection ad-hoc (does not require an existing credential record).",
     {
+      ...ctx.orgParam,
       registry_type: RegistryTypeSchema.describe("Registry kind"),
       registry_url: z.url().describe("Registry URL"),
       encrypted_credential: z.string().min(1).describe(
@@ -210,15 +220,16 @@ export function registerOtherTools(
       ),
       username: z.string().optional().describe("Registry username, if applicable"),
     },
-    async ({ registry_type, registry_url, encrypted_credential, username }) => {
+    async ({ registry_type, registry_url, encrypted_credential, username, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {
           registry_type,
           registry_url,
           encrypted_credential,
         };
         if (username !== undefined) body["username"] = username;
-        const result = await ctx.client.post(
+        const result = await client.post(
           `/tenants/${tenantId}/registry-credentials/test-connection`,
           body,
         );
@@ -233,20 +244,22 @@ export function registerOtherTools(
   // Audit logs
   server.tool(
     "get_audit_log",
-    "Get recent audit log entries for your organization",
+    "Get recent audit log entries for an organization",
     {
+      ...ctx.orgParam,
       limit: LimitSchema.optional().describe("Max entries (default 50)"),
       action: z.string().optional().describe("Filter by action type"),
       resource_type: z.string().optional().describe("Filter by resource type"),
     },
-    async ({ limit, action, resource_type }) => {
+    async ({ limit, action, resource_type, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const params = new URLSearchParams();
         if (limit) params.set("limit", String(limit));
         if (action) params.set("action", action);
         if (resource_type) params.set("resource_type", resource_type);
         const qs = params.toString();
-        const logs = await ctx.client.get(`/tenants/${tenantId}/audit-logs${qs ? `?${qs}` : ""}`);
+        const logs = await client.get(`/tenants/${tenantId}/audit-logs${qs ? `?${qs}` : ""}`);
         return asToolResult(logs);
       } catch (error: unknown) {
         return asToolError(error);
@@ -258,10 +271,11 @@ export function registerOtherTools(
   server.tool(
     "get_dashboard",
     "Get a summary dashboard with counts and health overview",
-    {},
-    async () => {
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const dashboard = await ctx.client.get(`/tenants/${tenantId}/dashboard/stats`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const dashboard = await client.get(`/tenants/${tenantId}/dashboard/stats`);
         return asToolResult(dashboard);
       } catch (error: unknown) {
         return asToolError(error);

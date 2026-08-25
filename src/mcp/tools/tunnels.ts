@@ -15,23 +15,22 @@ export function registerTunnelTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   server.tool(
     "list_tunnel_sessions",
     "List tunnel sessions for the active organization. Filter by server or active-only.",
     {
+      ...ctx.orgParam,
       server_id: z.string().optional().describe("Filter by server id"),
       active: z.boolean().optional().describe("Only return sessions that are still open"),
     },
-    async ({ server_id, active }) => {
+    async ({ server_id, active, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const q = new URLSearchParams();
         if (server_id) q.set("server_id", server_id);
         if (active === true) q.set("active", "true");
         const qs = q.toString();
-        const sessions = await ctx.client.get(
+        const sessions = await client.get(
           `/tenants/${tenantId}/tunnels/${qs ? `?${qs}` : ""}`,
         );
         return asToolResult(sessions);
@@ -44,10 +43,11 @@ export function registerTunnelTools(
   server.tool(
     "get_tunnel_session",
     "Get a single tunnel session by id.",
-    { tunnel_id: z.string().min(1).describe("Tunnel session id") },
-    async ({ tunnel_id }) => {
+    { ...ctx.orgParam, tunnel_id: z.string().min(1).describe("Tunnel session id") },
+    async ({ tunnel_id, ...args }) => {
       try {
-        const session = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const session = await client.get(
           `/tenants/${tenantId}/tunnels/${tunnel_id}`,
         );
         return asToolResult(session);

@@ -12,15 +12,11 @@ export function registerScheduledOperationTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
-  const base = `/tenants/${tenantId}/scheduled-operations`;
-
   server.tool(
     "list_scheduled_operations",
-    "List scheduled operations for your organization",
+    "List scheduled operations for an organization",
     {
+      ...ctx.orgParam,
       status: z
         .enum(["ACTIVE", "PAUSED"])
         .optional()
@@ -30,13 +26,15 @@ export function registerScheduledOperationTools(
         .optional()
         .describe("Filter by operation type"),
     },
-    async ({ status, operation_type }) => {
+    async ({ status, operation_type, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
         const params = new URLSearchParams();
         if (status) params.set("status", status);
         if (operation_type) params.set("operation_type", operation_type);
         const qs = params.toString();
-        const ops = await ctx.client.get(`${base}/${qs ? `?${qs}` : ""}`);
+        const ops = await client.get(`${base}/${qs ? `?${qs}` : ""}`);
         return asToolResult(ops);
       } catch (error: unknown) {
         return asToolError(error);
@@ -48,11 +46,14 @@ export function registerScheduledOperationTools(
     "get_scheduled_operation",
     "Get details of a scheduled operation including its current state",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
     },
-    async ({ operation_id }) => {
+    async ({ operation_id, ...args }) => {
       try {
-        const op = await ctx.client.get(`${base}/${operation_id}`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const op = await client.get(`${base}/${operation_id}`);
         return asToolResult(op);
       } catch (error: unknown) {
         return asToolError(error);
@@ -64,6 +65,7 @@ export function registerScheduledOperationTools(
     "list_operation_runs",
     "List run history for a scheduled operation",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
       limit: z
         .number()
@@ -72,12 +74,14 @@ export function registerScheduledOperationTools(
         .optional()
         .describe("Max number of runs to return"),
     },
-    async ({ operation_id, limit }) => {
+    async ({ operation_id, limit, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
         const params = new URLSearchParams();
         if (limit) params.set("limit", String(limit));
         const qs = params.toString();
-        const runs = await ctx.client.get(`${base}/${operation_id}/runs${qs ? `?${qs}` : ""}`);
+        const runs = await client.get(`${base}/${operation_id}/runs${qs ? `?${qs}` : ""}`);
         return asToolResult(runs);
       } catch (error: unknown) {
         return asToolError(error);
@@ -89,12 +93,15 @@ export function registerScheduledOperationTools(
     "get_operation_run",
     "Get details of a single scheduled operation run",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
       run_id: z.string().min(1).describe("Run ID"),
     },
-    async ({ operation_id, run_id }) => {
+    async ({ operation_id, run_id, ...args }) => {
       try {
-        const run = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const run = await client.get(
           `${base}/${operation_id}/runs/${run_id}`,
         );
         return asToolResult(run);
@@ -108,6 +115,7 @@ export function registerScheduledOperationTools(
     "create_scheduled_operation",
     "Create a new scheduled operation (deploy, command, restart, or reboot)",
     {
+      ...ctx.orgParam,
       name: z.string().min(1).describe("Operation name"),
       description: z.string().optional().describe("Operation description"),
       operation_type: z
@@ -163,6 +171,8 @@ export function registerScheduledOperationTools(
     },
     async (args) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
         const body: Record<string, unknown> = {
           name: args.name,
           operation_type: args.operation_type,
@@ -183,7 +193,7 @@ export function registerScheduledOperationTools(
           body["max_retries"] = args.max_retries;
         if (args.timeout_seconds !== undefined)
           body["timeout_seconds"] = args.timeout_seconds;
-        const op = await ctx.client.post(`${base}/`, body);
+        const op = await client.post(`${base}/`, body);
         return asToolResult(op);
       } catch (error: unknown) {
         return asToolError(error);
@@ -195,6 +205,7 @@ export function registerScheduledOperationTools(
     "update_scheduled_operation",
     "Update configuration of a scheduled operation",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
       name: z.string().optional().describe("New name"),
       description: z.string().optional().describe("New description"),
@@ -227,13 +238,15 @@ export function registerScheduledOperationTools(
         .optional()
         .describe("New timeout"),
     },
-    async ({ operation_id, ...fields }) => {
+    async ({ operation_id, organization, ...fields }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
         const body: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(fields)) {
           if (value !== undefined) body[key] = value;
         }
-        const op = await ctx.client.patch(`${base}/${operation_id}`, body);
+        const op = await client.patch(`${base}/${operation_id}`, body);
         return asToolResult(op);
       } catch (error: unknown) {
         return asToolError(error);
@@ -245,11 +258,14 @@ export function registerScheduledOperationTools(
     "delete_scheduled_operation",
     "Delete a scheduled operation (soft delete)",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
     },
-    async ({ operation_id }) => {
+    async ({ operation_id, ...args }) => {
       try {
-        const result = await ctx.client.del(`${base}/${operation_id}`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const result = await client.del(`${base}/${operation_id}`);
         return asToolResult(result ?? { deleted: true });
       } catch (error: unknown) {
         return asToolError(error);
@@ -261,11 +277,14 @@ export function registerScheduledOperationTools(
     "pause_scheduled_operation",
     "Pause a scheduled operation (stops future runs)",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
     },
-    async ({ operation_id }) => {
+    async ({ operation_id, ...args }) => {
       try {
-        const op = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const op = await client.post(
           `${base}/${operation_id}/pause`,
           {},
         );
@@ -280,11 +299,14 @@ export function registerScheduledOperationTools(
     "resume_scheduled_operation",
     "Resume a paused scheduled operation",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
     },
-    async ({ operation_id }) => {
+    async ({ operation_id, ...args }) => {
       try {
-        const op = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const op = await client.post(
           `${base}/${operation_id}/resume`,
           {},
         );
@@ -299,11 +321,14 @@ export function registerScheduledOperationTools(
     "trigger_scheduled_operation",
     "Manually trigger a scheduled operation to run now",
     {
+      ...ctx.orgParam,
       operation_id: z.string().min(1).describe("Scheduled operation ID"),
     },
-    async ({ operation_id }) => {
+    async ({ operation_id, ...args }) => {
       try {
-        const run = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const base = `/tenants/${tenantId}/scheduled-operations`;
+        const run = await client.post(
           `${base}/${operation_id}/trigger`,
           {},
         );

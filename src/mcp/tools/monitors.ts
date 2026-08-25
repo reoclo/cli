@@ -12,16 +12,14 @@ export function registerMonitorTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   server.tool(
     "list_monitors",
-    "List all uptime monitors for your organization",
-    {},
-    async () => {
+    "List all uptime monitors for an organization",
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const monitors = await ctx.client.get(`/tenants/${tenantId}/monitors/`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const monitors = await client.get(`/tenants/${tenantId}/monitors/`);
         return asToolResult(monitors);
       } catch (error: unknown) {
         return asToolError(error);
@@ -32,10 +30,11 @@ export function registerMonitorTools(
   server.tool(
     "get_monitor",
     "Get details and recent checks for a monitor",
-    { monitor_id: z.string().min(1).describe("Monitor ID") },
-    async ({ monitor_id }) => {
+    { ...ctx.orgParam, monitor_id: z.string().min(1).describe("Monitor ID") },
+    async ({ monitor_id, ...args }) => {
       try {
-        const monitor = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const monitor = await client.get(
           `/tenants/${tenantId}/monitors/${monitor_id}`,
         );
         return asToolResult(monitor);
@@ -49,6 +48,7 @@ export function registerMonitorTools(
     "create_monitor",
     "Create a new uptime monitor",
     {
+      ...ctx.orgParam,
       name: z.string().min(1).describe("Monitor display name"),
       url: z.url().describe("URL to monitor"),
       interval: z.number().int().positive().optional().describe("Check interval in seconds (default 60)"),
@@ -72,8 +72,10 @@ export function registerMonitorTools(
       expected_status_min,
       expected_status_max,
       response_must_contain,
+      ...args
     }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = { name, url };
         // API field is check_interval_seconds; sending `interval` was a no-op.
         if (interval !== undefined) body.check_interval_seconds = interval;
@@ -83,7 +85,7 @@ export function registerMonitorTools(
         if (expected_status_min !== undefined) body.expected_status_min = expected_status_min;
         if (expected_status_max !== undefined) body.expected_status_max = expected_status_max;
         if (response_must_contain !== undefined) body.response_must_contain = response_must_contain;
-        const monitor = await ctx.client.post(`/tenants/${tenantId}/monitors`, body);
+        const monitor = await client.post(`/tenants/${tenantId}/monitors`, body);
         return asToolResult(monitor);
       } catch (error: unknown) {
         return asToolError(error);
@@ -95,6 +97,7 @@ export function registerMonitorTools(
     "update_monitor",
     "Update an existing monitor's configuration",
     {
+      ...ctx.orgParam,
       monitor_id: z.string().min(1).describe("Monitor ID"),
       name: z.string().optional().describe("New display name"),
       url: z.url().optional().describe("New URL to monitor"),
@@ -120,8 +123,10 @@ export function registerMonitorTools(
       expected_status_min,
       expected_status_max,
       response_must_contain,
+      ...args
     }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {};
         if (name !== undefined) body.name = name;
         if (url !== undefined) body.url = url;
@@ -133,7 +138,7 @@ export function registerMonitorTools(
         if (expected_status_min !== undefined) body.expected_status_min = expected_status_min;
         if (expected_status_max !== undefined) body.expected_status_max = expected_status_max;
         if (response_must_contain !== undefined) body.response_must_contain = response_must_contain;
-        const updated = await ctx.client.patch(
+        const updated = await client.patch(
           `/tenants/${tenantId}/monitors/${monitor_id}`,
           body,
         );
