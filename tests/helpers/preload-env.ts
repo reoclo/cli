@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 // Test preload — runs before any test module is imported (registered in
 // bunfig.toml `[test] preload`).
 //
@@ -24,3 +28,15 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+// Same class of leak, different mechanism: a `.reoclo` project binding sitting
+// ABOVE the checkout. Discovery walks from cwd to the filesystem root, so
+// developing the CLI from inside the monorepo (whose root carries a `.reoclo`
+// selecting an org and profile) made bootstrap() resolve a profile the tests'
+// mocked config store has never heard of, and 12 tests failed before the code
+// under test ran. Clearing env cannot fix that, because the walk never consults
+// env. Pinning the start dir at an empty scratch directory gives the suite a
+// tree with no binding anywhere above it.
+//
+// Set after the strip loop above, which would otherwise delete it.
+process.env.REOCLO_PROJECT_DIR = mkdtempSync(join(tmpdir(), "reoclo-noproject-"));
