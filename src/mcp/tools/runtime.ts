@@ -15,9 +15,6 @@ export function registerRuntimeTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   // ---------------------------------------------------------------------------
   // list_tenant_containers — fleet-wide read (cache-backed)
   // ---------------------------------------------------------------------------
@@ -25,6 +22,7 @@ export function registerRuntimeTools(
     "list_tenant_containers",
     "List containers across the organization fleet (cache-backed; pass refresh=true to force a live fan-out before reading).",
     {
+      ...ctx.orgParam,
       server_id: z.string().uuid().optional().describe("Filter to a single server"),
       application_id: z.string().uuid().optional().describe("Filter to a single application"),
       status: z
@@ -38,10 +36,11 @@ export function registerRuntimeTools(
         .optional()
         .describe("If true, trigger a synchronous snapshot refresh before listing."),
     },
-    async ({ server_id, application_id, status, limit, cursor, refresh }) => {
+    async ({ server_id, application_id, status, limit, cursor, refresh, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         if (refresh) {
-          await ctx.client.post(`/tenants/${tenantId}/runtime/refresh`, undefined);
+          await client.post(`/tenants/${tenantId}/runtime/refresh`, undefined);
         }
         const params = new URLSearchParams();
         if (server_id) params.set("server_id", server_id);
@@ -50,7 +49,7 @@ export function registerRuntimeTools(
         if (limit !== undefined) params.set("limit", String(limit));
         if (cursor) params.set("cursor", cursor);
         const qs = params.toString();
-        const data = await ctx.client.get(
+        const data = await client.get(
           `/tenants/${tenantId}/runtime/containers${qs ? `?${qs}` : ""}`,
         );
         return asToolResult(data);
@@ -69,6 +68,7 @@ export function registerRuntimeTools(
       "changes back to the application record (requires app:env:write / " +
       "app:label:write capabilities and a non-orphan container).",
     {
+      ...ctx.orgParam,
       server_id: z.string().uuid().describe("Server ID where the container lives"),
       container_name: z.string().min(1).describe("Container or service name"),
       env: z
@@ -102,8 +102,9 @@ export function registerRuntimeTools(
         .optional()
         .describe("Swarm services only — replica count"),
     },
-    async ({ server_id, container_name, env, labels, ports, persist, replicas }) => {
+    async ({ server_id, container_name, env, labels, ports, persist, replicas, ...args }) => {
       try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {};
         if (env !== undefined) body.env = env;
         if (labels !== undefined) body.labels = labels;
@@ -111,7 +112,7 @@ export function registerRuntimeTools(
         if (persist !== undefined) body.persist = persist;
         if (replicas !== undefined) body.replicas = replicas;
 
-        const data = await ctx.client.post(
+        const data = await client.post(
           `/tenants/${tenantId}/runtime/servers/${server_id}/containers/${encodeURIComponent(
             container_name,
           )}/recreate`,
@@ -133,13 +134,15 @@ export function registerRuntimeTools(
       "return a 409 error pointing to the recreate path — convert the container " +
       "to a Swarm service first if you need scaling.",
     {
+      ...ctx.orgParam,
       server_id: z.string().uuid().describe("Server ID"),
       container_name: z.string().min(1).describe("Service name"),
       replicas: z.number().int().min(0).max(200).describe("Target replica count"),
     },
-    async ({ server_id, container_name, replicas }) => {
+    async ({ server_id, container_name, replicas, ...args }) => {
       try {
-        const data = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const data = await client.post(
           `/tenants/${tenantId}/runtime/servers/${server_id}/containers/${encodeURIComponent(
             container_name,
           )}/scale`,
@@ -162,15 +165,17 @@ export function registerRuntimeTools(
       "reoclo.application_id is the canonical way to claim a manually-deployed " +
       "container into an application — requires app:label:write capability.",
     {
+      ...ctx.orgParam,
       server_id: z.string().uuid().describe("Server ID"),
       container_name: z.string().min(1).describe("Container or service name"),
       labels: z
         .record(z.string(), z.string().nullable())
         .describe("Label patch (null value removes the key). Must not be empty."),
     },
-    async ({ server_id, container_name, labels }) => {
+    async ({ server_id, container_name, labels, ...args }) => {
       try {
-        const data = await ctx.client.patch(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const data = await client.patch(
           `/tenants/${tenantId}/runtime/servers/${server_id}/containers/${encodeURIComponent(
             container_name,
           )}/labels`,

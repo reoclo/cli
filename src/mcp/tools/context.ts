@@ -11,7 +11,15 @@
 import type { z } from "zod";
 import type { HttpClient } from "../../client/http";
 
-export type OrgParamShape = Record<string, z.ZodType>;
+// A plain `Record<string, z.ZodType>` here reads as more generic than the
+// interface actually needs, but TypeScript cannot preserve an index
+// signature through an object spread: `{ ...ctx.orgParam, field: ... }`
+// would infer a schema type that silently drops `organization`, and every
+// call to `ctx.resolveOrg(args.organization)` downstream would fail to
+// typecheck. Every host that populates `orgParam` uses exactly this one
+// named, optional key, so the literal shape below is both accurate and
+// spreadable.
+export type OrgParamShape = { organization?: z.ZodType };
 
 export interface OrgScope {
   tenantId: string;

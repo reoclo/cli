@@ -13,16 +13,14 @@ export function registerDomainTools(
   server: McpServer,
   ctx: McpRegistrationContext,
 ): void {
-  const tenantId = ctx.tenantId;
-  if (!tenantId) return;
-
   server.tool(
     "list_domains",
-    "List all domains for your organization",
-    {},
-    async () => {
+    "List all domains for an organization",
+    { ...ctx.orgParam },
+    async (args) => {
       try {
-        const domains = await ctx.client.get(`/tenants/${tenantId}/domains/`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const domains = await client.get(`/tenants/${tenantId}/domains/`);
         return asToolResult(domains);
       } catch (error: unknown) {
         return asToolError(error);
@@ -33,10 +31,11 @@ export function registerDomainTools(
   server.tool(
     "get_domain",
     "Get details for a specific domain",
-    { domain_id: z.string().min(1).describe("Domain ID") },
-    async ({ domain_id }) => {
+    { ...ctx.orgParam, domain_id: z.string().min(1).describe("Domain ID") },
+    async ({ domain_id, ...args }) => {
       try {
-        const domain = await ctx.client.get(`/tenants/${tenantId}/domains/${domain_id}`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const domain = await client.get(`/tenants/${tenantId}/domains/${domain_id}`);
         return asToolResult(domain);
       } catch (error: unknown) {
         return asToolError(error);
@@ -47,10 +46,11 @@ export function registerDomainTools(
   server.tool(
     "get_dns_overview",
     "Get DNS record overview for a domain",
-    { domain_id: z.string().min(1).describe("Domain ID") },
-    async ({ domain_id }) => {
+    { ...ctx.orgParam, domain_id: z.string().min(1).describe("Domain ID") },
+    async ({ domain_id, ...args }) => {
       try {
-        const dns = await ctx.client.get(`/tenants/${tenantId}/domains/${domain_id}/dns`);
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const dns = await client.get(`/tenants/${tenantId}/domains/${domain_id}/dns`);
         return asToolResult(dns);
       } catch (error: unknown) {
         return asToolError(error);
@@ -61,10 +61,11 @@ export function registerDomainTools(
   server.tool(
     "check_domain_health",
     "Run DNS and SSL health checks for a domain",
-    { domain_id: z.string().min(1).describe("Domain ID") },
-    async ({ domain_id }) => {
+    { ...ctx.orgParam, domain_id: z.string().min(1).describe("Domain ID") },
+    async ({ domain_id, ...args }) => {
       try {
-        const health = await ctx.client.get(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const health = await client.get(
           `/tenants/${tenantId}/domains/${domain_id}/health`,
         );
         return asToolResult(health);
@@ -76,11 +77,12 @@ export function registerDomainTools(
 
   server.tool(
     "add_domain",
-    "Register a new domain for your organization",
-    { domain_name: z.string().min(1).describe("Fully qualified domain name") },
-    async ({ domain_name }) => {
+    "Register a new domain for an organization",
+    { ...ctx.orgParam, domain_name: z.string().min(1).describe("Fully qualified domain name") },
+    async ({ domain_name, ...args }) => {
       try {
-        const domain = await ctx.client.post(`/tenants/${tenantId}/domains`, { domain_name });
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const domain = await client.post(`/tenants/${tenantId}/domains`, { domain_name });
         return asToolResult(domain);
       } catch (error: unknown) {
         return asToolError(error);
@@ -91,10 +93,11 @@ export function registerDomainTools(
   server.tool(
     "verify_domain",
     "Trigger DNS TXT verification for a domain",
-    { domain_id: z.string().min(1).describe("Domain ID") },
-    async ({ domain_id }) => {
+    { ...ctx.orgParam, domain_id: z.string().min(1).describe("Domain ID") },
+    async ({ domain_id, ...args }) => {
       try {
-        const result = await ctx.client.post(
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const result = await client.post(
           `/tenants/${tenantId}/domains/${domain_id}/verify`,
           {},
         );
