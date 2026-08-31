@@ -84,15 +84,17 @@ export function registerDeployments(program: Command): void {
     g
       .command("get <id>")
       .description("show full deployment details (including build stages)")
-      .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
-      .action(async (id: string, opts: { app: string }) => {
+      .option("--app <idOrSlug>", "(optional) application the deployment belongs to")
+      .action(async (id: string, opts: { app?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
-        const appId = await resolveApp(ctx.client, tid, opts.app);
-        const dep = await ctx.client.get<DeploymentWithStages>(
-          `/tenants/${tid}/applications/${appId}/deployments/${id}`,
-        );
+        // The deployment id is unique within the tenant, so --app is not
+        // needed (REO-350). When given, the app-scoped route keeps working.
+        const path = opts.app
+          ? `/tenants/${tid}/applications/${await resolveApp(ctx.client, tid, opts.app)}/deployments/${id}`
+          : `/tenants/${tid}/deployments/${id}`;
+        const dep = await ctx.client.get<DeploymentWithStages>(path);
         printObject(dep as unknown as Record<string, unknown>, fmt);
       }),
     { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
@@ -106,8 +108,8 @@ export function registerDeployments(program: Command): void {
       )
       .option("--build", "show build stage logs (concatenated by stage)")
       .option("--runtime", "show runtime logs (not yet available)")
-      .requiredOption("--app <idOrSlug>", "application the deployment belongs to")
-      .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app: string }) => {
+      .option("--app <idOrSlug>", "(optional) application the deployment belongs to")
+      .action(async (id: string, opts: { build?: boolean; runtime?: boolean; app?: string }) => {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
 
@@ -119,10 +121,10 @@ export function registerDeployments(program: Command): void {
         }
 
         // Default: build stage logs (also explicit --build)
-        const appId = await resolveApp(ctx.client, tid, opts.app);
-        const dep = await ctx.client.get<DeploymentWithStages>(
-          `/tenants/${tid}/applications/${appId}/deployments/${id}`,
-        );
+        const path = opts.app
+          ? `/tenants/${tid}/applications/${await resolveApp(ctx.client, tid, opts.app)}/deployments/${id}`
+          : `/tenants/${tid}/deployments/${id}`;
+        const dep = await ctx.client.get<DeploymentWithStages>(path);
         const stages = dep.stages ?? [];
         if (stages.length === 0) {
           process.stderr.write("no build stages found for this deployment\n");

@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { resolveApp } from "../client/resolve";
 import { requireCapability } from "../client/command-meta";
 import { EXIT } from "../client/exit-codes";
 import type { KeyType } from "../client/routing";
@@ -38,6 +39,30 @@ import { collectCiMeta } from "./run";
 /** Only an interactive OAuth session takes the per-secret reveal path. */
 export function usesMachineLane(tokenType: KeyType): boolean {
   return tokenType !== "tenant";
+}
+
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+export interface KeySelection {
+  key: string;
+  env_name: string | null;
+}
+
+/** Parse repeatable `--key KEY[=NEW_NAME]` specs (REO-349). Empty input
+ *  selects every key in the project. */
+export function parseKeySpecs(specs: string[]): KeySelection[] {
+  const out: KeySelection[] = [];
+  for (const spec of specs) {
+    const eq = spec.indexOf("=");
+    const key = (eq === -1 ? spec : spec.slice(0, eq)).trim();
+    const envName = eq === -1 ? null : spec.slice(eq + 1).trim();
+    if (!key) throw new Error(`--key needs a secret key, got '${spec}'`);
+    if (envName !== null && !ENV_NAME_RE.test(envName)) {
+      throw new Error(`rename '${envName}' must match ^[A-Z_][A-Z0-9_]*$`);
+    }
+    out.push({ key, env_name: envName === "" ? null : envName });
+  }
+  return out;
 }
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
@@ -302,4 +327,151 @@ Examples:
       }),
     "secret:reveal",
   );
+
+  interface BindingTarget {
+    base: string;
+    label: string;
+  }
+
+  async function bindingTarget(
+    ctx: Awaited<ReturnType<typeof bootstrap>>,
+    tid: string,
+    opts: { app?: string; group?: string },
+  ): Promise<BindingTarget> {
+    if (opts.app && opts.group) {
+      const e = new Error("pass --app or --group, not both") as Error & { exitCode: number };
+      e.exitCode = EXIT.MISUSE;
+      throw e;
+    }
+    if (opts.app) {
+      const appId = await resolveApp(ctx.client, tid, opts.app);
+      return {
+        base: `/tenants/${tid}/applications/${appId}/secret-bindings`,
+        label: opts.app,
+      };
+    }
+    if (opts.group) {
+      const groups = await ctx.client.get<Array<{ id: string; slug: string }>>(
+        `/tenants/${tid}/application-groups/`,
+      );
+      const group = groups.find((g) => g.id === opts.group || g.slug === opts.group);
+      if (!group) {
+        const e = new Error(`group '${opts.group}' not found`) as Error & { exitCode: number };
+        e.exitCode = 5;
+        throw e;
+      }
+      return {
+        base: `/tenants/${tid}/application-groups/${group.id}/secret-bindings`,
+        label: group.slug,
+      };
+    }
+    const e = new Error("pass --app <app> or --group <stack>") as Error & { exitCode: number };
+    e.exitCode = EXIT.MISUSE;
+    throw e;
+  }
+
+  interface BindingRead {
+    binding_id: string;
+    project_id: string;
+    project_name?: string | null;
+    prefix?: string | null;
+    scope: string;
+    keys?: KeySelection[];
+    [k: string]: unknown;
+  }
+
+  const bindCmd = g
+    .command("bind <project>")
+    .description("link a secret project to an app or stack (REO-349)")
+    .option("--app <idOrSlug>", "bind to this application")
+    .option("--group <idOrSlug>", "bind to this stack (every member receives it)")
+    .option("--prefix <PREFIX_>", "env name prefix for injected keys")
+    .option("--scope <scope>", "production | preview | both (default production)", "production")
+    .option(
+      "--key <KEY[=NEW_NAME]>",
+      "select a key (repeatable); omit to inject every key in the project",
+      (value: string, prev: string[]) => [...prev, value],
+      [] as string[],
+    )
+    .action(
+      async (
+        projectRef: string,
+        opts: { app?: string; group?: string; prefix?: string; scope: string; key: string[] },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const target = await bindingTarget(ctx, tid, opts);
+        const pid = resolveProjectId(await listProjects(ctx.client, tid), projectRef);
+        const keys = parseKeySpecs(opts.key);
+        const created = await ctx.client.post<BindingRead>(`${target.base}/`, {
+          project_id: pid,
+          prefix: opts.prefix ?? null,
+          scope: opts.scope,
+          keys,
+        });
+        printObject(created, fmt);
+        if (fmt === "text") console.log("Applies on the next deploy.");
+      },
+    );
+  requireCapability(bindCmd, "app:env:write");
+
+  g.command("bindings")
+    .description("list secret-project bindings for an app or stack")
+    .option("--app <idOrSlug>", "application")
+    .option("--group <idOrSlug>", "stack")
+    .action(async (opts: { app?: string; group?: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const target = await bindingTarget(ctx, tid, opts);
+      const rows = await ctx.client.get<BindingRead[]>(`${target.base}/`);
+      printList(
+        rows.map((b) => ({
+          binding: b.binding_id.slice(0, 8),
+          project: b.project_name ?? b.project_id,
+          prefix: b.prefix ?? "",
+          scope: b.scope,
+          keys:
+            (b.keys?.length ?? 0) > 0
+              ? (b.keys ?? [])
+                  .map((k) => (k.env_name ? `${k.key}=${k.env_name}` : k.key))
+                  .join(",")
+              : "all",
+        })),
+        [
+          { key: "binding", label: "BINDING" },
+          { key: "project", label: "PROJECT" },
+          { key: "prefix", label: "PREFIX" },
+          { key: "scope", label: "SCOPE" },
+          { key: "keys", label: "KEYS" },
+        ],
+        fmt,
+      );
+    });
+
+  const unbindCmd = g
+    .command("unbind <bindingId>")
+    .description("remove a secret-project binding from an app or stack")
+    .option("--app <idOrSlug>", "application")
+    .option("--group <idOrSlug>", "stack")
+    .action(async (bindingId: string, opts: { app?: string; group?: string }) => {
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const target = await bindingTarget(ctx, tid, opts);
+      const rows = await ctx.client.get<BindingRead[]>(`${target.base}/`);
+      const match = rows.find(
+        (b) => b.binding_id === bindingId || b.binding_id.startsWith(bindingId),
+      );
+      if (!match) {
+        const e = new Error(`binding '${bindingId}' not found on ${target.label}`) as Error & {
+          exitCode: number;
+        };
+        e.exitCode = 5;
+        throw e;
+      }
+      await ctx.client.del(`${target.base}/${match.binding_id}`);
+      console.log(`✓ unbound ${match.project_name ?? match.project_id}`);
+    });
+  requireCapability(unbindCmd, "app:env:write");
 }

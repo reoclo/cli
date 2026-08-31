@@ -116,3 +116,35 @@ describe("terminal statuses", () => {
     expect(TERMINAL_GROUP_STATUSES.has("pending")).toBe(false);
   });
 });
+
+import { TERMINAL_TASK_RUN_STATUSES, taskRunSummary, type GroupTaskRunRead } from "../../../src/commands/groups";
+
+describe("task runs (REO-348 CLI)", () => {
+  test("terminal statuses are exactly succeeded and failed", () => {
+    expect(TERMINAL_TASK_RUN_STATUSES.has("succeeded")).toBe(true);
+    expect(TERMINAL_TASK_RUN_STATUSES.has("failed")).toBe(true);
+    expect(TERMINAL_TASK_RUN_STATUSES.has("running")).toBe(false);
+    expect(TERMINAL_TASK_RUN_STATUSES.has("pending")).toBe(false);
+  });
+
+  test("taskRunSummary renders the row shape", () => {
+    const run: GroupTaskRunRead = {
+      id: "run-12345678",
+      compose_service: "minio-init",
+      status: "succeeded",
+      exit_code: 0,
+      created_at: "2026-09-01T10:00:00Z",
+      duration_seconds: 4,
+      error_message: null,
+    };
+    expect(taskRunSummary(run)).toEqual({
+      id: "run-1234",
+      service: "minio-init",
+      status: "succeeded",
+      exit: 0,
+      started: "2026-09-01 10:00:00",
+      duration: "4.0s",
+      error: "",
+    });
+  });
+});

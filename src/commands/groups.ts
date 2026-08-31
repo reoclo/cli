@@ -67,6 +67,37 @@ interface PaginatedGroupDeployments {
   total: number;
 }
 
+export interface GroupTaskRunRead {
+  id: string;
+  compose_service?: string;
+  status: string;
+  exit_code?: number | null;
+  created_at?: string;
+  duration_seconds?: number | null;
+  error_message?: string | null;
+  log_tail?: string[];
+  [k: string]: unknown;
+}
+
+interface PaginatedGroupTaskRuns {
+  items: GroupTaskRunRead[];
+  total: number;
+}
+
+export const TERMINAL_TASK_RUN_STATUSES = new Set(["succeeded", "failed"]);
+
+export function taskRunSummary(run: GroupTaskRunRead): Record<string, unknown> {
+  return {
+    id: run.id.slice(0, 8),
+    service: run.compose_service ?? "",
+    status: run.status,
+    exit: run.exit_code ?? "",
+    started: (run.created_at ?? "").replace("T", " ").slice(0, 19),
+    duration: fmtDurationS(run.duration_seconds),
+    error: run.error_message ?? "",
+  };
+}
+
 export interface MemberApp {
   id: string;
   slug?: string;
@@ -175,6 +206,7 @@ function deploymentSummary(d: GroupDeploymentRead): Record<string, unknown> {
 export function registerGroups(program: Command): void {
   const g = program
     .command("groups")
+    .alias("stacks")
     .description("definition groups (stacks): coordinated compose deployments");
 
   g.command("ls")
@@ -189,6 +221,7 @@ export function registerGroups(program: Command): void {
         name: r.name,
         kind: r.kind,
         apps: r.application_count ?? "",
+        ci: (r as { require_ci?: boolean }).require_ci ? "on" : "off",
         "last deploy": r.latest_deployment
           ? `#${r.latest_deployment.deployment_number} ${r.latest_deployment.status}`
           : "",
@@ -200,6 +233,7 @@ export function registerGroups(program: Command): void {
           { key: "name", label: "NAME" },
           { key: "kind", label: "KIND" },
           { key: "apps", label: "APPS" },
+          { key: "ci", label: "CI" },
           { key: "last deploy", label: "LAST DEPLOY" },
         ],
         fmt,
@@ -416,4 +450,98 @@ export function registerGroups(program: Command): void {
       printObject(result, fmt);
     });
   requireCapability(redeployCmd, "app:deploy");
+
+  const runCmd = g
+    .command("run <group> <service>")
+    .description("run a one-shot task member (compose run --rm) with the stack's env")
+    .option("--wait", "poll until the run finishes and print its outcome")
+    .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
+    .action(async (ref: string, service: string, opts: { wait?: boolean; waitTimeout: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      const apps = await ctx.client.get<{ items: MemberApp[] }>(
+        `/tenants/${tid}/applications/?limit=200`,
+      );
+      const member = memberForService(apps.items ?? [], group.id, service);
+      if (!member) {
+        const e = new Error(
+          `service '${service}' not found in group '${group.slug}'`,
+        ) as Error & { exitCode: number };
+        e.exitCode = 5;
+        throw e;
+      }
+      const run = await ctx.client.post<GroupTaskRunRead>(
+        `/tenants/${tid}/application-groups/${group.id}/services/${member.id}/run`,
+      );
+      if (!opts.wait) {
+        printObject(run, fmt);
+        if (fmt === "text") {
+          console.log(`run started; watch it with: reoclo groups task-runs ${group.slug}`);
+        }
+        return;
+      }
+
+      const timeoutMs = Number(opts.waitTimeout) * 1000;
+      const startedAt = Date.now();
+      const base = `/tenants/${tid}/application-groups/${group.id}/task-runs`;
+      for (;;) {
+        if (Date.now() - startedAt > timeoutMs) {
+          const e = new Error(
+            `timed out after ${opts.waitTimeout}s waiting for task run ${run.id}`,
+          ) as Error & { exitCode: number };
+          e.exitCode = 12;
+          throw e;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+        const res = await ctx.client.get<PaginatedGroupTaskRuns>(
+          `${base}?application_id=${member.id}&limit=5`,
+        );
+        const current = (res.items ?? []).find((r) => r.id === run.id);
+        if (!current || !TERMINAL_TASK_RUN_STATUSES.has(current.status)) continue;
+        if (fmt === "text") {
+          console.log(`task ${service}: ${current.status} (exit ${current.exit_code ?? "?"})`);
+          for (const line of current.log_tail ?? []) console.log(line);
+        } else {
+          printObject(current, fmt);
+        }
+        if (current.status !== "succeeded") {
+          const e = new Error(
+            current.error_message ?? `task run finished ${current.status}`,
+          ) as Error & { exitCode: number };
+          e.exitCode = 1;
+          throw e;
+        }
+        return;
+      }
+    });
+  requireCapability(runCmd, "app:deploy");
+
+  g.command("task-runs <group>")
+    .description("list one-shot task runs (newest first)")
+    .option("--limit <n>", "max rows (default 20)", "20")
+    .action(async (ref: string, opts: { limit: string }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      const limit = parseLimit(opts.limit, 100);
+      const res = await ctx.client.get<PaginatedGroupTaskRuns>(
+        `/tenants/${tid}/application-groups/${group.id}/task-runs?limit=${limit}`,
+      );
+      printList(
+        (res.items ?? []).map(taskRunSummary),
+        [
+          { key: "id", label: "ID" },
+          { key: "service", label: "SERVICE" },
+          { key: "status", label: "STATUS" },
+          { key: "exit", label: "EXIT" },
+          { key: "started", label: "STARTED" },
+          { key: "duration", label: "DURATION" },
+          { key: "error", label: "ERROR" },
+        ],
+        fmt,
+      );
+    });
 }
