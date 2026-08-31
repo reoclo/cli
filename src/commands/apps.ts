@@ -50,6 +50,7 @@ export function registerApps(program: Command): void {
       const rows = appsRes.items.map((a) => ({
         ...a,
         server_slug: serverSlugById.get(a.server_id ?? "") ?? (a.server_id ?? ""),
+        ci: (a as { require_ci?: boolean }).require_ci ? "on" : "off",
       }));
       printList(
         rows as unknown as Array<Record<string, unknown>>,
@@ -57,6 +58,7 @@ export function registerApps(program: Command): void {
           { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },
           { key: "server_slug", label: "SERVER" },
+          { key: "ci", label: "CI" },
           { key: "current_deployment_id", label: "DEPLOYMENT" },
         ],
         fmt,

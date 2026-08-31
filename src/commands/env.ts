@@ -71,6 +71,7 @@ export function registerEnv(program: Command): void {
 
       await ctx.client.patch<EnvVarRead[]>(`/tenants/${tid}/applications/${appId}/env/`, { vars });
       for (const v of vars) console.log(`✓ set ${v.key}`);
+      console.log("Applies on the next deploy.");
     });
 
   withCompletion(
