@@ -5,7 +5,6 @@ import { registerOrg } from "./commands/org";
 import { registerProfile } from "./commands/profile";
 import { registerKeyring } from "./commands/keyring";
 import { registerLogin } from "./commands/login";
-import { registerConnectOmegaMcp } from "./commands/connect-omega-mcp";
 import { registerLogout } from "./commands/logout";
 import { registerWhoami } from "./commands/whoami";
 import { registerServers } from "./commands/servers";
@@ -94,7 +93,6 @@ if (import.meta.main) {
   registerProfile(program);
   registerKeyring(program);
   registerLogin(program);
-  registerConnectOmegaMcp(program);
   registerLogout(program);
   registerWhoami(program);
   registerServers(program);
@@ -180,7 +178,6 @@ if (import.meta.main) {
   // Skip preAction for commands that don't need authentication or run before login.
   const PASSTHROUGH_COMMANDS = new Set([
     "login",
-    "connect-omega-mcp",  // hidden command — IS the auth flow, so skip preAction
     "logout",
     "version",
     "help",
