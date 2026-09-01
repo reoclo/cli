@@ -190,15 +190,25 @@ export function registerGroupTools(server: McpServer, ctx: McpRegistrationContex
     },
   );
 
+  const forceRecreateParam = {
+    force_recreate: z
+      .boolean()
+      .optional()
+      .describe("Recreate containers even when the image and configuration did not change"),
+  };
+
   server.tool(
     "deploy_application_group",
     "Deploy all services of a group as one coordinated group deployment",
-    { ...ctx.orgParam, ...groupParam },
-    async ({ group, ...args }) => {
+    { ...ctx.orgParam, ...groupParam, ...forceRecreateParam },
+    async ({ group, force_recreate, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const groupId = await resolveGroupId(client, tenantId, group);
-        const result = await client.post(`${groupsPath(tenantId)}${groupId}/deploy`);
+        const result = await client.post(
+          `${groupsPath(tenantId)}${groupId}/deploy`,
+          force_recreate ? { force_recreate: true } : undefined,
+        );
         return asToolResult(result);
       } catch (error: unknown) {
         return asToolError(error);
@@ -209,14 +219,15 @@ export function registerGroupTools(server: McpServer, ctx: McpRegistrationContex
   server.tool(
     "redeploy_group_service",
     "Redeploy one service of a group (a scoped group deployment)",
-    { ...ctx.orgParam, ...groupParam, ...serviceParam },
-    async ({ group, service, ...args }) => {
+    { ...ctx.orgParam, ...groupParam, ...serviceParam, ...forceRecreateParam },
+    async ({ group, service, force_recreate, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const groupId = await resolveGroupId(client, tenantId, group);
         const appId = await resolveMember(client, tenantId, groupId, service);
         const result = await client.post(
           `${groupsPath(tenantId)}${groupId}/services/${appId}/redeploy`,
+          force_recreate ? { force_recreate: true } : undefined,
         );
         return asToolResult(result);
       } catch (error: unknown) {

@@ -94,14 +94,19 @@ export function registerApps(program: Command): void {
   deployCmd
     .description("trigger a deployment for an application")
     .option("--ref <git-ref>", "branch, tag, or SHA to deploy")
+    .option(
+      "--force-recreate",
+      "recreate containers even when the image and configuration did not change (compose deploys)",
+    )
     .option("--wait", "wait for the deployment to finish (poll status every 3s)")
-    .action(async (idOrSlug: string, opts: { ref?: string; wait?: boolean }) => {
+    .action(async (idOrSlug: string, opts: { ref?: string; forceRecreate?: boolean; wait?: boolean }) => {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
       const body: Record<string, unknown> = {};
       if (opts.ref) body["commit_ref"] = opts.ref;
+      if (opts.forceRecreate) body["force_recreate"] = true;
 
       interface DeployResponse {
         id: string;
