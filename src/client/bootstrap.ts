@@ -275,8 +275,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // is Reoclo's own SaaS endpoint.
   //
   // `REOCLO_API_URL` / `REOCLO_STREAMS_URL` remain the only other override. No
-  // CLI flag can do it, because `--api` is command-local to `login` and
-  // `connect-omega-mcp`, and an automation key/machine token can run neither.
+  // CLI flag can do it, because `--api` is command-local to `login`,
+  // and an automation key/machine token cannot run it.
   const profileWasNamed = Boolean(
     opts.profile ?? globalProfileOverride ?? process.env.REOCLO_PROFILE,
   );
