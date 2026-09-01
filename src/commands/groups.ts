@@ -358,9 +358,13 @@ export function registerGroups(program: Command): void {
   const deployCmd = g
     .command("deploy <group>")
     .description("trigger a coordinated deployment of every managed member (Deploy All)")
+    .option(
+      "--force-recreate",
+      "recreate containers even when the image and configuration did not change",
+    )
     .option("--wait", "poll until the group deployment reaches a terminal status")
     .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
-    .action(async (ref: string, opts: { wait?: boolean; waitTimeout: string }) => {
+    .action(async (ref: string, opts: { forceRecreate?: boolean; wait?: boolean; waitTimeout: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
@@ -370,7 +374,10 @@ export function registerGroups(program: Command): void {
         triggered: number;
         skipped: number;
         group_deployment_id?: string | null;
-      }>(`/tenants/${tid}/application-groups/${group.id}/deploy`);
+      }>(
+        `/tenants/${tid}/application-groups/${group.id}/deploy`,
+        opts.forceRecreate ? { force_recreate: true } : undefined,
+      );
       printObject(result, fmt);
 
       const gdId = result.group_deployment_id;
@@ -423,7 +430,11 @@ export function registerGroups(program: Command): void {
   const redeployCmd = g
     .command("redeploy <group> <service>")
     .description("redeploy one compose service of the group")
-    .action(async (ref: string, service: string) => {
+    .option(
+      "--force-recreate",
+      "recreate the service's containers even when the image and configuration did not change",
+    )
+    .action(async (ref: string, service: string, opts: { forceRecreate?: boolean }) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
@@ -446,6 +457,7 @@ export function registerGroups(program: Command): void {
       }
       const result = await ctx.client.post<Record<string, unknown>>(
         `/tenants/${tid}/application-groups/${group.id}/services/${member.id}/redeploy`,
+        opts.forceRecreate ? { force_recreate: true } : undefined,
       );
       printObject(result, fmt);
     });

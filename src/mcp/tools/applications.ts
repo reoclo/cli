@@ -91,13 +91,22 @@ export function registerApplicationTools(
       ...ctx.orgParam,
       application_id: z.string().min(1).describe("Application ID"),
       commit_ref: z.string().optional().describe("Git commit or branch (defaults to main)"),
+      force_recreate: z
+        .boolean()
+        .optional()
+        .describe(
+          "Recreate containers even when the image and configuration did not change (compose deploys)",
+        ),
     },
-    async ({ application_id, commit_ref, ...args }) => {
+    async ({ application_id, commit_ref, force_recreate, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const deployment = await client.post(
           `/tenants/${tenantId}/applications/${application_id}/deploy`,
-          { ...(commit_ref ? { commit_ref } : {}) },
+          {
+            ...(commit_ref ? { commit_ref } : {}),
+            ...(force_recreate ? { force_recreate: true } : {}),
+          },
         );
         return asToolResult(deployment);
       } catch (error: unknown) {
