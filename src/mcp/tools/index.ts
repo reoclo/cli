@@ -16,6 +16,7 @@ import { registerScheduledOperationTools } from "./scheduled-operations";
 import { registerServerTools } from "./servers";
 import { registerStatusPageTools } from "./status-pages";
 import { registerTunnelTools } from "./tunnels";
+import { registerVolumeTools } from "./volumes";
 
 export type { McpRegistrationContext } from "./context";
 
@@ -32,6 +33,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerTunnelTools(server, ctx);
   registerOtherTools(server, ctx);
   registerRuntimeTools(server, ctx);
+  registerVolumeTools(server, ctx);
   registerAuthTools(server, ctx);
   registerScheduledOperationTools(server, ctx);
 }

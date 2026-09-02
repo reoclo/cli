@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { registerContainers, filterByName } from "../../../src/commands/containers";
+import {
+  registerContainers,
+  filterByName,
+  deleteContainerPath,
+} from "../../../src/commands/containers";
 import { getRequiredCapability } from "../../../src/client/command-meta";
 import { filterCommandsByCapability } from "../../../src/client/help-filter";
 
@@ -92,6 +96,39 @@ describe("reoclo containers", () => {
     expect(names).toContain("--search");
     expect(names).toContain("--follow");
     expect(names).toContain("--tail");
+  });
+
+  test("registers delete with the container:delete capability", () => {
+    const g = containersCmd();
+    const del = g.commands.find((c) => c.name() === "delete")!;
+    expect(del, "delete registered").toBeDefined();
+    expect(getRequiredCapability(del)).toBe("container:delete");
+  });
+
+  test("delete exposes --volumes and --yes", () => {
+    const g = containersCmd();
+    const del = g.commands.find((c) => c.name() === "delete")!;
+    const names = optNames(del);
+    expect(names).toContain("--volumes");
+    expect(names).toContain("--yes");
+  });
+});
+
+describe("deleteContainerPath", () => {
+  test("omits remove_volumes when the flag is not set", () => {
+    expect(deleteContainerPath("T1", "S1", "web-1", false)).toBe(
+      "/tenants/T1/runtime/servers/S1/containers/web-1",
+    );
+  });
+
+  test("appends ?remove_volumes=true when the flag is set", () => {
+    expect(deleteContainerPath("T1", "S1", "web-1", true)).toBe(
+      "/tenants/T1/runtime/servers/S1/containers/web-1?remove_volumes=true",
+    );
+  });
+
+  test("never emits an explicit remove_volumes=false", () => {
+    expect(deleteContainerPath("T1", "S1", "web-1", false)).not.toContain("remove_volumes");
   });
 });
 
