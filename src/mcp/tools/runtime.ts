@@ -1,8 +1,10 @@
 /**
- * Runtime container management tools — recreate, scale, label-edit, fleet list.
- * Wraps the Plan 2A backend endpoints. All tools require the tenant flag
- * `TENANT_RUNTIME_CONTROL_ENABLED=true` server-side; without it the calls
- * return 404 and the user gets a clear error.
+ * Runtime container management tools — recreate, scale, label-edit, delete,
+ * fleet list. Wraps the Plan 2A backend endpoints. All tools require the
+ * `tenant_runtime_control` platform flag, which is enabled globally by
+ * default (the per-tenant override was removed server-side); if an admin has
+ * disabled it platform-wide, the calls return 404 and the user gets a clear
+ * error.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -180,6 +182,41 @@ export function registerRuntimeTools(
             container_name,
           )}/labels`,
           { labels },
+        );
+        return asToolResult(data);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // delete_container — delete a container or Swarm service
+  // ---------------------------------------------------------------------------
+  server.tool(
+    "delete_container",
+    "Delete a container or Swarm service. Never forced: a running plain " +
+      "container returns 409 (stop it first). Protected platform containers " +
+      "(reoclo-caddy, reoclo-runner*) and managed application containers " +
+      "return 403. remove_volumes also deletes the container's anonymous " +
+      "volumes (data loss).",
+    {
+      ...ctx.orgParam,
+      server_id: z.string().uuid().describe("Server ID"),
+      container_name: z.string().min(1).describe("Container or service name"),
+      remove_volumes: z
+        .boolean()
+        .optional()
+        .describe("Also remove the container's anonymous volumes (data loss)"),
+    },
+    async ({ server_id, container_name, remove_volumes, ...args }) => {
+      try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const qs = remove_volumes ? "?remove_volumes=true" : "";
+        const data = await client.del(
+          `/tenants/${tenantId}/runtime/servers/${server_id}/containers/${encodeURIComponent(
+            container_name,
+          )}${qs}`,
         );
         return asToolResult(data);
       } catch (error: unknown) {

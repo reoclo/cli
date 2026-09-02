@@ -9,6 +9,7 @@ import { registerLogout } from "./commands/logout";
 import { registerWhoami } from "./commands/whoami";
 import { registerServers } from "./commands/servers";
 import { registerContainers } from "./commands/containers";
+import { registerVolumes } from "./commands/volumes";
 import { registerApps } from "./commands/apps";
 import { registerDeployments } from "./commands/deployments";
 import { registerLogs } from "./commands/logs";
@@ -97,6 +98,7 @@ if (import.meta.main) {
   registerWhoami(program);
   registerServers(program);
   registerContainers(program);
+  registerVolumes(program);
   registerApps(program);
   registerDeployments(program);
   registerLogs(program);

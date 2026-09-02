@@ -7,6 +7,7 @@ import { requireCapability, withCompletion } from "../client/command-meta";
 import { resolveServer } from "../client/resolve";
 import { maskInspectResponse } from "../lib/mask-secrets";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
+import { promptYesNo } from "../ui/prompt";
 
 const CONTAINER_STATES = ["created", "restarting", "running", "paused", "exited", "dead"];
 
@@ -36,6 +37,18 @@ function collectKV(value: string, prev: Record<string, string>): Record<string, 
 /** Accumulate a repeatable string flag into an array. */
 function collectArr(value: string, prev: string[]): string[] {
   return [...prev, value];
+}
+
+/** Build the runtime DELETE path for a container, appending `remove_volumes=true`
+ *  only when the caller asked for it (never an explicit `=false`). */
+export function deleteContainerPath(
+  tid: string,
+  sid: string,
+  name: string,
+  removeVolumes: boolean,
+): string {
+  const qs = removeVolumes ? "?remove_volumes=true" : "";
+  return `/tenants/${tid}/runtime/servers/${sid}/containers/${name}${qs}`;
 }
 
 /**
@@ -82,6 +95,8 @@ Examples:
   $ reoclo containers restart my-server my-app
   $ reoclo containers scale my-server my-app 3
   $ reoclo containers recreate my-server my-app --env DEBUG=1
+  $ reoclo containers delete my-server my-app
+  $ reoclo containers delete my-server my-app --volumes --yes
 `,
     );
 
@@ -411,4 +426,45 @@ regex filtering, and live follow.
     });
   withCompletion(restartCmd, { args: [{ slot: 0, resource: "servers" }] });
   requireCapability(restartCmd, "container:write");
+
+  const deleteCmd = g
+    .command("delete <server> <name>")
+    .description("delete a container or Swarm service")
+    .addHelpText(
+      "after",
+      `
+Never forced: a running plain container is refused (stop it first). Protected
+platform containers (reoclo-caddy, reoclo-runner*) and managed application
+containers cannot be deleted here.
+`,
+    )
+    .option("--volumes", "also remove anonymous volumes (data loss)")
+    .option("--yes", "skip confirmation prompt")
+    .action(async (server: string, name: string, opts: { volumes?: boolean; yes?: boolean }) => {
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const sid = await resolveServer(ctx.client, tid, server);
+
+      if (!opts.yes) {
+        const volNote = opts.volumes
+          ? " This also removes its anonymous volumes (data loss)."
+          : "";
+        const ok = await promptYesNo(
+          `Delete container '${name}' on '${server}'?${volNote} [y/N] `,
+        );
+        if (!ok) {
+          process.stderr.write("aborted (pass --yes to skip this prompt)\n");
+          const err = new Error("delete aborted") as Error & { exitCode: number };
+          err.exitCode = 1;
+          throw err;
+        }
+      }
+
+      const res = await ctx.client.del<Record<string, unknown>>(
+        deleteContainerPath(tid, sid, name, opts.volumes === true),
+      );
+      printMutation(program, res, `✓ container deleted: ${name}`);
+    });
+  withCompletion(deleteCmd, { args: [{ slot: 0, resource: "servers" }] });
+  requireCapability(deleteCmd, "container:delete");
 }
