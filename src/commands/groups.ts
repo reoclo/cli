@@ -106,15 +106,26 @@ export interface MemberApp {
   [k: string]: unknown;
 }
 
-export const TERMINAL_GROUP_STATUSES = new Set([
-  "succeeded",
-  "failed",
-  "partial",
-  "cancelled",
-]);
+export const TERMINAL_GROUP_STATUSES = new Set(["succeeded", "failed", "partial", "cancelled"]);
 
 export function matchGroup(groups: GroupRead[], ref: string): GroupRead | undefined {
   return groups.find((g) => g.id === ref || g.slug === ref);
+}
+
+export interface DetailMember {
+  slug?: string;
+  compose_service?: string | null;
+  status?: string;
+  managed_by_group?: boolean;
+  orphaned_from_definition?: boolean;
+  [k: string]: unknown;
+}
+
+/** Members whose compose service left the definition (REO-376). Mirrors the
+ *  prune endpoint's own selection (managed members only), so the dry-run
+ *  listing never promises a removal the server will skip. */
+export function orphanedMembers<T extends DetailMember>(apps: T[]): T[] {
+  return apps.filter((a) => a.orphaned_from_definition === true && a.managed_by_group === true);
 }
 
 export function matchGroupDeployment(
@@ -250,6 +261,58 @@ export function registerGroups(program: Command): void {
       printObject(group, fmt);
     });
 
+  // No requireCapability: the endpoint needs the applications:delete
+  // permission, which no capability verb maps to — a local app:deploy gate
+  // would pass keys the server rejects and block roles the server allows.
+  g.command("prune <group>")
+    .description("remove members whose service left the compose definition (REO-376)")
+    .option("--yes", "confirm removal; without it, prune only lists the orphans")
+    .action(async (ref: string, opts: { yes?: boolean }) => {
+      const fmt = resolveFormat(globalOutput(program));
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      if (opts.yes) {
+        // The server selects the orphans authoritatively; no client preview.
+        const result = await ctx.client.post<{ removed: string[] }>(
+          `/tenants/${tid}/application-groups/${group.id}/prune`,
+        );
+        if (fmt !== "text") {
+          printObject(result, fmt);
+        } else if (result.removed.length === 0) {
+          console.log("No orphaned members to prune.");
+        } else {
+          for (const slug of result.removed) console.log(`✓ removed ${slug}`);
+        }
+        return;
+      }
+      const detail = await ctx.client.get<GroupRead & { applications?: DetailMember[] }>(
+        `/tenants/${tid}/application-groups/${group.id}`,
+      );
+      const orphans = orphanedMembers(detail.applications ?? []);
+      if (orphans.length === 0) {
+        if (fmt !== "text") printObject({ orphaned: [] }, fmt);
+        else console.log("No orphaned members to prune.");
+        return;
+      }
+      printList(
+        orphans.map((o) => ({
+          slug: o.slug ?? "",
+          service: o.compose_service ?? "",
+          status: o.status ?? "",
+        })),
+        [
+          { key: "slug", label: "SLUG" },
+          { key: "service", label: "SERVICE" },
+          { key: "status", label: "STATUS" },
+        ],
+        fmt,
+      );
+      if (fmt === "text") {
+        console.log(`Re-run with --yes to remove ${orphans.length} orphaned member(s).`);
+      }
+    });
+
   g.command("deployments <group>")
     .description("list group deployments (newest first)")
     .option("--limit <n>", "max rows (default 20)", "20")
@@ -364,67 +427,72 @@ export function registerGroups(program: Command): void {
     )
     .option("--wait", "poll until the group deployment reaches a terminal status")
     .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
-    .action(async (ref: string, opts: { forceRecreate?: boolean; wait?: boolean; waitTimeout: string }) => {
-      const fmt = resolveFormat(globalOutput(program));
-      const ctx = await bootstrap();
-      const tid = await requireTenantId(ctx);
-      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
-      const result = await ctx.client.post<{
-        total: number;
-        triggered: number;
-        skipped: number;
-        group_deployment_id?: string | null;
-      }>(
-        `/tenants/${tid}/application-groups/${group.id}/deploy`,
-        opts.forceRecreate ? { force_recreate: true } : undefined,
-      );
-      printObject(result, fmt);
+    .action(
+      async (
+        ref: string,
+        opts: { forceRecreate?: boolean; wait?: boolean; waitTimeout: string },
+      ) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+        const result = await ctx.client.post<{
+          total: number;
+          triggered: number;
+          skipped: number;
+          group_deployment_id?: string | null;
+        }>(
+          `/tenants/${tid}/application-groups/${group.id}/deploy`,
+          opts.forceRecreate ? { force_recreate: true } : undefined,
+        );
+        printObject(result, fmt);
 
-      const gdId = result.group_deployment_id;
-      if (!opts.wait || !gdId) return;
+        const gdId = result.group_deployment_id;
+        if (!opts.wait || !gdId) return;
 
-      const timeoutMs = Number(opts.waitTimeout) * 1000;
-      const startedAt = Date.now();
-      const seen = new Map<string, string>();
-      const base = `/tenants/${tid}/application-groups/${group.id}/deployments/${gdId}`;
-      for (;;) {
-        if (Date.now() - startedAt > timeoutMs) {
-          const e = new Error(
-            `timed out after ${opts.waitTimeout}s waiting for group deployment ${gdId}`,
-          ) as Error & { exitCode: number };
-          e.exitCode = 12;
-          throw e;
-        }
-        await new Promise((r) => setTimeout(r, 5000));
-        const d = await ctx.client.get<GroupDeploymentRead>(base);
-        for (const s of d.stages ?? []) {
-          const name = s.name ?? "";
-          const status = s.status ?? "";
-          if (name && seen.get(name) !== status) {
-            seen.set(name, status);
-            if (fmt === "text") {
-              const dur = s.duration_ms ? ` (${fmtDurationMs(s.duration_ms)})` : "";
-              console.log(`stage ${name}: ${status}${dur}`);
-            }
-          }
-        }
-        if (TERMINAL_GROUP_STATUSES.has(d.status)) {
-          if (fmt === "text") {
-            console.log(`deployment #${d.deployment_number}: ${d.status}`);
-          } else {
-            printObject(d, fmt);
-          }
-          if (d.status !== "succeeded") {
+        const timeoutMs = Number(opts.waitTimeout) * 1000;
+        const startedAt = Date.now();
+        const seen = new Map<string, string>();
+        const base = `/tenants/${tid}/application-groups/${group.id}/deployments/${gdId}`;
+        for (;;) {
+          if (Date.now() - startedAt > timeoutMs) {
             const e = new Error(
-              d.error_message ?? `group deployment finished ${d.status}`,
+              `timed out after ${opts.waitTimeout}s waiting for group deployment ${gdId}`,
             ) as Error & { exitCode: number };
-            e.exitCode = 1;
+            e.exitCode = 12;
             throw e;
           }
-          return;
+          await new Promise((r) => setTimeout(r, 5000));
+          const d = await ctx.client.get<GroupDeploymentRead>(base);
+          for (const s of d.stages ?? []) {
+            const name = s.name ?? "";
+            const status = s.status ?? "";
+            if (name && seen.get(name) !== status) {
+              seen.set(name, status);
+              if (fmt === "text") {
+                const dur = s.duration_ms ? ` (${fmtDurationMs(s.duration_ms)})` : "";
+                console.log(`stage ${name}: ${status}${dur}`);
+              }
+            }
+          }
+          if (TERMINAL_GROUP_STATUSES.has(d.status)) {
+            if (fmt === "text") {
+              console.log(`deployment #${d.deployment_number}: ${d.status}`);
+            } else {
+              printObject(d, fmt);
+            }
+            if (d.status !== "succeeded") {
+              const e = new Error(
+                d.error_message ?? `group deployment finished ${d.status}`,
+              ) as Error & { exitCode: number };
+              e.exitCode = 1;
+              throw e;
+            }
+            return;
+          }
         }
-      }
-    });
+      },
+    );
   requireCapability(deployCmd, "app:deploy");
 
   const redeployCmd = g
@@ -478,9 +546,9 @@ export function registerGroups(program: Command): void {
       );
       const member = memberForService(apps.items ?? [], group.id, service);
       if (!member) {
-        const e = new Error(
-          `service '${service}' not found in group '${group.slug}'`,
-        ) as Error & { exitCode: number };
+        const e = new Error(`service '${service}' not found in group '${group.slug}'`) as Error & {
+          exitCode: number;
+        };
         e.exitCode = 5;
         throw e;
       }
