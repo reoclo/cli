@@ -20,11 +20,7 @@ import { globalOutput, printList, printObject, resolveFormat } from "../ui/outpu
 import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
 import { onepasswordSource } from "../secrets/sources/onepassword";
 import { runCommand } from "../secrets/sources/exec";
-import {
-  runImport,
-  importReportJson,
-  importReportText,
-} from "../secrets/import";
+import { runImport, importReportJson, importReportText } from "../secrets/import";
 import type { SecretSource } from "../secrets/types";
 import {
   assertInputExists,
@@ -63,6 +59,45 @@ export function parseKeySpecs(specs: string[]): KeySelection[] {
     out.push({ key, env_name: envName === "" ? null : envName });
   }
   return out;
+}
+
+/** Merge --add-key/--remove-key edits into a binding's key selection
+ *  (REO-377). An empty selection means "every key in the project", so edits
+ *  that would silently narrow or widen that meaning are refused. */
+export function mergeBindingKeys(
+  existing: KeySelection[],
+  add: KeySelection[],
+  removeKeys: string[],
+): KeySelection[] {
+  if (existing.length === 0) {
+    if (add.length > 0) {
+      throw new Error("binding already injects every key in the project; --add-key is not needed");
+    }
+    throw new Error(
+      "binding injects every key in the project; re-bind with --key to pin an explicit list first",
+    );
+  }
+  const out = [...existing];
+  for (const sel of add) {
+    const current = out.find((k) => k.key === sel.key);
+    if (current) {
+      current.env_name = sel.env_name;
+    } else {
+      out.push(sel);
+    }
+  }
+  const remaining = out.filter((k) => !removeKeys.includes(k.key));
+  for (const key of removeKeys) {
+    if (!out.some((k) => k.key === key)) {
+      throw new Error(`key '${key}' is not selected on this binding`);
+    }
+  }
+  if (remaining.length === 0) {
+    throw new Error(
+      "removing every key would switch the binding to inject all keys; unbind instead",
+    );
+  }
+  return remaining;
 }
 
 export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string): string {
@@ -196,26 +231,24 @@ export function registerSecrets(program: Command): void {
       .requiredOption("--project <name>", "project name or id")
       .option("--value <value>", "secret value (else --from-file or stdin)")
       .option("--from-file <path>", "read value from a file")
-      .action(
-        async (key: string, opts: { project: string; value?: string; fromFile?: string }) => {
-          const ctx = await bootstrap();
-          const tid = await requireTenantId(ctx);
-          const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
-          // Pass stdin as a lazy reader so it is consumed only when neither
-          // --value nor --from-file was given; otherwise `--from-file /dev/stdin`
-          // reads an already-exhausted pipe (REO-97 §4a).
-          const value = await readSecretValue(opts, () =>
-            process.stdin.isTTY ? Promise.resolve(null) : Bun.stdin.text(),
-          );
-          const existing = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
-          if (existing) {
-            await patchSecret(ctx.client, tid, existing.id, value);
-          } else {
-            await setSecret(ctx.client, tid, pid, key, value);
-          }
-          process.stderr.write(`✓ set ${key}\n`);
-        },
-      ),
+      .action(async (key: string, opts: { project: string; value?: string; fromFile?: string }) => {
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
+        // Pass stdin as a lazy reader so it is consumed only when neither
+        // --value nor --from-file was given; otherwise `--from-file /dev/stdin`
+        // reads an already-exhausted pipe (REO-97 §4a).
+        const value = await readSecretValue(opts, () =>
+          process.stdin.isTTY ? Promise.resolve(null) : Bun.stdin.text(),
+        );
+        const existing = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
+        if (existing) {
+          await patchSecret(ctx.client, tid, existing.id, value);
+        } else {
+          await setSecret(ctx.client, tid, pid, key, value);
+        }
+        process.stderr.write(`✓ set ${key}\n`);
+      }),
     "secret:write",
   );
 
@@ -302,7 +335,11 @@ Examples:
         const { refs } = collectRefs(lines);
 
         if (opts.output) {
-          assertOutputWritable(await Bun.file(opts.output).exists(), opts.force ?? false, opts.output);
+          assertOutputWritable(
+            await Bun.file(opts.output).exists(),
+            opts.force ?? false,
+            opts.output,
+          );
         }
 
         const ctx = await bootstrap();
@@ -393,16 +430,79 @@ Examples:
       (value: string, prev: string[]) => [...prev, value],
       [] as string[],
     )
+    .option(
+      "--add-key <KEY[=NEW_NAME]>",
+      "add or rename a key on the existing binding (repeatable, REO-377)",
+      (value: string, prev: string[]) => [...prev, value],
+      [] as string[],
+    )
+    .option(
+      "--remove-key <KEY>",
+      "remove a key from the existing binding (repeatable)",
+      (value: string, prev: string[]) => [...prev, value],
+      [] as string[],
+    )
     .action(
       async (
         projectRef: string,
-        opts: { app?: string; group?: string; prefix?: string; scope: string; key: string[] },
+        opts: {
+          app?: string;
+          group?: string;
+          prefix?: string;
+          scope: string;
+          key: string[];
+          addKey: string[];
+          removeKey: string[];
+        },
       ) => {
         const fmt = resolveFormat(globalOutput(program));
+        const editing = opts.addKey.length > 0 || opts.removeKey.length > 0;
+        if (editing && opts.key.length > 0) {
+          const e = new Error(
+            "--key replaces the whole selection on a new binding; use --add-key/--remove-key alone to edit an existing one",
+          ) as Error & { exitCode: number };
+          e.exitCode = EXIT.MISUSE;
+          throw e;
+        }
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const target = await bindingTarget(ctx, tid, opts);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), projectRef);
+        if (editing) {
+          // Edit the existing binding in place — unbind+rebind briefly leaves
+          // the app with no binding at all (REO-377).
+          const rows = await ctx.client.get<BindingRead[]>(`${target.base}/`);
+          const existing = rows.find((b) => b.project_id === pid);
+          const addKeys = parseKeySpecs(opts.addKey);
+          if (!existing) {
+            if (opts.removeKey.length > 0) {
+              const e = new Error(
+                `project is not bound to ${target.label}; nothing to remove keys from`,
+              ) as Error & { exitCode: number };
+              e.exitCode = 5;
+              throw e;
+            }
+            // No binding yet: --add-key degrades to creating one with exactly
+            // those keys, so scripts do not need a create/edit branch.
+            const created = await ctx.client.post<BindingRead>(`${target.base}/`, {
+              project_id: pid,
+              prefix: opts.prefix ?? null,
+              scope: opts.scope,
+              keys: addKeys,
+            });
+            printObject(created, fmt);
+            if (fmt === "text") console.log("Applies on the next deploy.");
+            return;
+          }
+          const keys = mergeBindingKeys(existing.keys ?? [], addKeys, opts.removeKey);
+          const updated = await ctx.client.patch<BindingRead>(
+            `${target.base}/${existing.binding_id}`,
+            { keys },
+          );
+          printObject(updated, fmt);
+          if (fmt === "text") console.log("Applies on the next deploy.");
+          return;
+        }
         const keys = parseKeySpecs(opts.key);
         const created = await ctx.client.post<BindingRead>(`${target.base}/`, {
           project_id: pid,
@@ -434,9 +534,7 @@ Examples:
           scope: b.scope,
           keys:
             (b.keys?.length ?? 0) > 0
-              ? (b.keys ?? [])
-                  .map((k) => (k.env_name ? `${k.key}=${k.env_name}` : k.key))
-                  .join(",")
+              ? (b.keys ?? []).map((k) => (k.env_name ? `${k.key}=${k.env_name}` : k.key)).join(",")
               : "all",
         })),
         [

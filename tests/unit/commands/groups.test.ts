@@ -4,6 +4,7 @@ import {
   fmtDurationMs,
   fmtDurationS,
   matchGroup,
+  orphanedMembers,
   matchGroupDeployment,
   memberForService,
   serviceRows,
@@ -117,7 +118,11 @@ describe("terminal statuses", () => {
   });
 });
 
-import { TERMINAL_TASK_RUN_STATUSES, taskRunSummary, type GroupTaskRunRead } from "../../../src/commands/groups";
+import {
+  TERMINAL_TASK_RUN_STATUSES,
+  taskRunSummary,
+  type GroupTaskRunRead,
+} from "../../../src/commands/groups";
 
 describe("task runs (REO-348 CLI)", () => {
   test("terminal statuses are exactly succeeded and failed", () => {
@@ -146,5 +151,18 @@ describe("task runs (REO-348 CLI)", () => {
       duration: "4.0s",
       error: "",
     });
+  });
+});
+
+describe("orphanedMembers", () => {
+  test("keeps only members flagged orphaned_from_definition", () => {
+    const apps = [
+      { slug: "stack-api" },
+      { slug: "stack-postgres", orphaned_from_definition: true },
+      { slug: "stack-web", orphaned_from_definition: false },
+    ];
+    expect(orphanedMembers(apps)).toEqual([
+      { slug: "stack-postgres", orphaned_from_definition: true },
+    ]);
   });
 });

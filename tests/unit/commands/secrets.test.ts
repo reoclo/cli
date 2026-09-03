@@ -1,6 +1,6 @@
 // tests/unit/commands/secrets.test.ts
 import { describe, expect, test } from "bun:test";
-import { resolveProjectId, readSecretValue } from "../../../src/commands/secrets";
+import { mergeBindingKeys, resolveProjectId, readSecretValue } from "../../../src/commands/secrets";
 import type { SecretProjectRead } from "../../../src/client/secrets";
 
 describe("resolveProjectId", () => {
@@ -64,5 +64,58 @@ describe("readSecretValue", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(Error);
+  });
+});
+
+describe("mergeBindingKeys", () => {
+  test("adds a key to an explicit selection", () => {
+    const out = mergeBindingKeys(
+      [{ key: "A", env_name: null }],
+      [{ key: "B", env_name: "RENAMED" }],
+      [],
+    );
+    expect(out).toEqual([
+      { key: "A", env_name: null },
+      { key: "B", env_name: "RENAMED" },
+    ]);
+  });
+
+  test("re-adding a selected key updates its rename", () => {
+    const out = mergeBindingKeys(
+      [{ key: "A", env_name: null }],
+      [{ key: "A", env_name: "NEW_NAME" }],
+      [],
+    );
+    expect(out).toEqual([{ key: "A", env_name: "NEW_NAME" }]);
+  });
+
+  test("removes a key from an explicit selection", () => {
+    const out = mergeBindingKeys(
+      [
+        { key: "A", env_name: null },
+        { key: "B", env_name: null },
+      ],
+      [],
+      ["B"],
+    );
+    expect(out).toEqual([{ key: "A", env_name: null }]);
+  });
+
+  test("removing a key that is not selected throws", () => {
+    expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["MISSING"])).toThrow(
+      /not selected/,
+    );
+  });
+
+  test("adding to an all-keys binding throws", () => {
+    expect(() => mergeBindingKeys([], [{ key: "A", env_name: null }], [])).toThrow(/every key/);
+  });
+
+  test("removing from an all-keys binding throws", () => {
+    expect(() => mergeBindingKeys([], [], ["A"])).toThrow(/--key/);
+  });
+
+  test("removing the last key throws instead of widening to all keys", () => {
+    expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["A"])).toThrow(/unbind/);
   });
 });
