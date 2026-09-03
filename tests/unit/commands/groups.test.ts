@@ -155,14 +155,22 @@ describe("task runs (REO-348 CLI)", () => {
 });
 
 describe("orphanedMembers", () => {
-  test("keeps only members flagged orphaned_from_definition", () => {
+  test("keeps only managed members flagged orphaned_from_definition", () => {
     const apps = [
-      { slug: "stack-api" },
-      { slug: "stack-postgres", orphaned_from_definition: true },
-      { slug: "stack-web", orphaned_from_definition: false },
+      { slug: "stack-api", managed_by_group: true },
+      { slug: "stack-postgres", orphaned_from_definition: true, managed_by_group: true },
+      { slug: "stack-web", orphaned_from_definition: false, managed_by_group: true },
     ];
     expect(orphanedMembers(apps)).toEqual([
-      { slug: "stack-postgres", orphaned_from_definition: true },
+      { slug: "stack-postgres", orphaned_from_definition: true, managed_by_group: true },
     ]);
+  });
+
+  test("excludes an unmanaged orphan the server will not prune", () => {
+    expect(
+      orphanedMembers([
+        { slug: "stack-old", orphaned_from_definition: true, managed_by_group: false },
+      ]),
+    ).toEqual([]);
   });
 });

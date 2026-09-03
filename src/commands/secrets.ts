@@ -77,21 +77,23 @@ export function mergeBindingKeys(
       "binding injects every key in the project; re-bind with --key to pin an explicit list first",
     );
   }
-  const out = [...existing];
-  for (const sel of add) {
-    const current = out.find((k) => k.key === sel.key);
-    if (current) {
-      current.env_name = sel.env_name;
-    } else {
-      out.push(sel);
-    }
-  }
-  const remaining = out.filter((k) => !removeKeys.includes(k.key));
   for (const key of removeKeys) {
-    if (!out.some((k) => k.key === key)) {
+    if (!existing.some((k) => k.key === key)) {
       throw new Error(`key '${key}' is not selected on this binding`);
     }
   }
+  const out = existing.map((k) => ({ ...k }));
+  for (const sel of add) {
+    const current = out.find((k) => k.key === sel.key);
+    if (!current) {
+      out.push(sel);
+    } else if (sel.env_name !== null) {
+      // A bare --add-key on a selected key is an "ensure present" and must
+      // not clear an existing rename; only an explicit =NEW_NAME updates it.
+      current.env_name = sel.env_name;
+    }
+  }
+  const remaining = out.filter((k) => !removeKeys.includes(k.key));
   if (remaining.length === 0) {
     throw new Error(
       "removing every key would switch the binding to inject all keys; unbind instead",
@@ -417,29 +419,31 @@ Examples:
     [k: string]: unknown;
   }
 
+  const collect = (value: string, prev: string[]): string[] => [...prev, value];
+
   const bindCmd = g
     .command("bind <project>")
     .description("link a secret project to an app or stack (REO-349)")
     .option("--app <idOrSlug>", "bind to this application")
     .option("--group <idOrSlug>", "bind to this stack (every member receives it)")
     .option("--prefix <PREFIX_>", "env name prefix for injected keys")
-    .option("--scope <scope>", "production | preview | both (default production)", "production")
+    .option("--scope <scope>", "production | preview | both (default production)")
     .option(
       "--key <KEY[=NEW_NAME]>",
       "select a key (repeatable); omit to inject every key in the project",
-      (value: string, prev: string[]) => [...prev, value],
+      collect,
       [] as string[],
     )
     .option(
       "--add-key <KEY[=NEW_NAME]>",
       "add or rename a key on the existing binding (repeatable, REO-377)",
-      (value: string, prev: string[]) => [...prev, value],
+      collect,
       [] as string[],
     )
     .option(
       "--remove-key <KEY>",
       "remove a key from the existing binding (repeatable)",
-      (value: string, prev: string[]) => [...prev, value],
+      collect,
       [] as string[],
     )
     .action(
@@ -449,7 +453,7 @@ Examples:
           app?: string;
           group?: string;
           prefix?: string;
-          scope: string;
+          scope?: string;
           key: string[];
           addKey: string[];
           removeKey: string[];
@@ -459,7 +463,7 @@ Examples:
         const editing = opts.addKey.length > 0 || opts.removeKey.length > 0;
         if (editing && opts.key.length > 0) {
           const e = new Error(
-            "--key replaces the whole selection on a new binding; use --add-key/--remove-key alone to edit an existing one",
+            "--key replaces the whole selection; use --add-key/--remove-key alone to edit it incrementally",
           ) as Error & { exitCode: number };
           e.exitCode = EXIT.MISUSE;
           throw e;
@@ -468,11 +472,33 @@ Examples:
         const tid = await requireTenantId(ctx);
         const target = await bindingTarget(ctx, tid, opts);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), projectRef);
+
+        const finish = (binding: BindingRead): void => {
+          printObject(binding, fmt);
+          if (fmt === "text") console.log("Applies on the next deploy.");
+        };
+        const create = async (keys: KeySelection[]): Promise<void> => {
+          finish(
+            await ctx.client.post<BindingRead>(`${target.base}/`, {
+              project_id: pid,
+              prefix: opts.prefix ?? null,
+              scope: opts.scope ?? "production",
+              keys,
+            }),
+          );
+        };
+        // Absent --prefix/--scope leave the stored values alone on an edit.
+        const patchExtras: Record<string, unknown> = {};
+        if (opts.prefix !== undefined) patchExtras.prefix = opts.prefix;
+        if (opts.scope !== undefined) patchExtras.scope = opts.scope;
+
+        const existing = (await ctx.client.get<BindingRead[]>(`${target.base}/`)).find(
+          (b) => b.project_id === pid,
+        );
+
         if (editing) {
           // Edit the existing binding in place — unbind+rebind briefly leaves
-          // the app with no binding at all (REO-377).
-          const rows = await ctx.client.get<BindingRead[]>(`${target.base}/`);
-          const existing = rows.find((b) => b.project_id === pid);
+          // the target with no binding at all (REO-377).
           const addKeys = parseKeySpecs(opts.addKey);
           if (!existing) {
             if (opts.removeKey.length > 0) {
@@ -482,36 +508,33 @@ Examples:
               e.exitCode = 5;
               throw e;
             }
-            // No binding yet: --add-key degrades to creating one with exactly
+            // No binding yet: --add-key degrades to a create with exactly
             // those keys, so scripts do not need a create/edit branch.
-            const created = await ctx.client.post<BindingRead>(`${target.base}/`, {
-              project_id: pid,
-              prefix: opts.prefix ?? null,
-              scope: opts.scope,
-              keys: addKeys,
-            });
-            printObject(created, fmt);
-            if (fmt === "text") console.log("Applies on the next deploy.");
+            await create(addKeys);
             return;
           }
           const keys = mergeBindingKeys(existing.keys ?? [], addKeys, opts.removeKey);
-          const updated = await ctx.client.patch<BindingRead>(
-            `${target.base}/${existing.binding_id}`,
-            { keys },
+          finish(
+            await ctx.client.patch<BindingRead>(`${target.base}/${existing.binding_id}`, {
+              keys,
+              ...patchExtras,
+            }),
           );
-          printObject(updated, fmt);
-          if (fmt === "text") console.log("Applies on the next deploy.");
           return;
         }
-        const keys = parseKeySpecs(opts.key);
-        const created = await ctx.client.post<BindingRead>(`${target.base}/`, {
-          project_id: pid,
-          prefix: opts.prefix ?? null,
-          scope: opts.scope,
-          keys,
-        });
-        printObject(created, fmt);
-        if (fmt === "text") console.log("Applies on the next deploy.");
+        if (existing && opts.key.length > 0) {
+          // Re-binding with --key replaces the selection in place. This is
+          // also the way off an all-keys binding, which has no selection for
+          // --add-key/--remove-key to edit.
+          finish(
+            await ctx.client.patch<BindingRead>(`${target.base}/${existing.binding_id}`, {
+              keys: parseKeySpecs(opts.key),
+              ...patchExtras,
+            }),
+          );
+          return;
+        }
+        await create(parseKeySpecs(opts.key));
       },
     );
   requireCapability(bindCmd, "app:env:write");

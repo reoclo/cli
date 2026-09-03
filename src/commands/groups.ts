@@ -116,13 +116,16 @@ export interface DetailMember {
   slug?: string;
   compose_service?: string | null;
   status?: string;
+  managed_by_group?: boolean;
   orphaned_from_definition?: boolean;
   [k: string]: unknown;
 }
 
-/** Members whose compose service left the definition (REO-376). */
+/** Members whose compose service left the definition (REO-376). Mirrors the
+ *  prune endpoint's own selection (managed members only), so the dry-run
+ *  listing never promises a removal the server will skip. */
 export function orphanedMembers<T extends DetailMember>(apps: T[]): T[] {
-  return apps.filter((a) => a.orphaned_from_definition === true);
+  return apps.filter((a) => a.orphaned_from_definition === true && a.managed_by_group === true);
 }
 
 export function matchGroupDeployment(
@@ -258,8 +261,10 @@ export function registerGroups(program: Command): void {
       printObject(group, fmt);
     });
 
-  const pruneCmd = g
-    .command("prune <group>")
+  // No requireCapability: the endpoint needs the applications:delete
+  // permission, which no capability verb maps to — a local app:deploy gate
+  // would pass keys the server rejects and block roles the server allows.
+  g.command("prune <group>")
     .description("remove members whose service left the compose definition (REO-376)")
     .option("--yes", "confirm removal; without it, prune only lists the orphans")
     .action(async (ref: string, opts: { yes?: boolean }) => {
@@ -267,37 +272,46 @@ export function registerGroups(program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      if (opts.yes) {
+        // The server selects the orphans authoritatively; no client preview.
+        const result = await ctx.client.post<{ removed: string[] }>(
+          `/tenants/${tid}/application-groups/${group.id}/prune`,
+        );
+        if (fmt !== "text") {
+          printObject(result, fmt);
+        } else if (result.removed.length === 0) {
+          console.log("No orphaned members to prune.");
+        } else {
+          for (const slug of result.removed) console.log(`✓ removed ${slug}`);
+        }
+        return;
+      }
       const detail = await ctx.client.get<GroupRead & { applications?: DetailMember[] }>(
         `/tenants/${tid}/application-groups/${group.id}`,
       );
       const orphans = orphanedMembers(detail.applications ?? []);
       if (orphans.length === 0) {
-        console.log("No orphaned members to prune.");
+        if (fmt !== "text") printObject({ orphaned: [] }, fmt);
+        else console.log("No orphaned members to prune.");
         return;
       }
-      if (!opts.yes) {
-        printList(
-          orphans.map((o) => ({
-            slug: o.slug ?? "",
-            service: o.compose_service ?? "",
-            status: o.status ?? "",
-          })),
-          [
-            { key: "slug", label: "SLUG" },
-            { key: "service", label: "SERVICE" },
-            { key: "status", label: "STATUS" },
-          ],
-          fmt,
-        );
-        console.log(`Re-run with --yes to remove ${orphans.length} orphaned member(s).`);
-        return;
-      }
-      const result = await ctx.client.post<{ removed: string[] }>(
-        `/tenants/${tid}/application-groups/${group.id}/prune`,
+      printList(
+        orphans.map((o) => ({
+          slug: o.slug ?? "",
+          service: o.compose_service ?? "",
+          status: o.status ?? "",
+        })),
+        [
+          { key: "slug", label: "SLUG" },
+          { key: "service", label: "SERVICE" },
+          { key: "status", label: "STATUS" },
+        ],
+        fmt,
       );
-      for (const slug of result.removed) console.log(`✓ removed ${slug}`);
+      if (fmt === "text") {
+        console.log(`Re-run with --yes to remove ${orphans.length} orphaned member(s).`);
+      }
     });
-  requireCapability(pruneCmd, "app:deploy");
 
   g.command("deployments <group>")
     .description("list group deployments (newest first)")

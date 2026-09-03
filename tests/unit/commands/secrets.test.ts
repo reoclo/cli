@@ -101,6 +101,21 @@ describe("mergeBindingKeys", () => {
     expect(out).toEqual([{ key: "A", env_name: null }]);
   });
 
+  test("re-adding a selected key without a rename keeps the existing rename", () => {
+    const out = mergeBindingKeys(
+      [{ key: "A", env_name: "KEEP" }],
+      [{ key: "A", env_name: null }],
+      [],
+    );
+    expect(out).toEqual([{ key: "A", env_name: "KEEP" }]);
+  });
+
+  test("removing a key the same command adds throws when it was not already selected", () => {
+    expect(() =>
+      mergeBindingKeys([{ key: "A", env_name: null }], [{ key: "B", env_name: null }], ["B"]),
+    ).toThrow(/not selected/);
+  });
+
   test("removing a key that is not selected throws", () => {
     expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["MISSING"])).toThrow(
       /not selected/,
