@@ -1,8 +1,10 @@
-import { test, expect } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import {
   formatEnvCapabilitiesReport,
   formatSyncLine,
+  formatSyncStaleNote,
   reportEnvCapabilities,
+  syncUpdateEmitter,
   syncProfileCapabilities,
 } from "../../../src/commands/sync";
 import type { HttpClient } from "../../../src/client/http";
@@ -51,4 +53,21 @@ test("reportEnvCapabilities fetches and formats without persisting", async () =>
     fetch: () => Promise.resolve(["server:exec", "container:read"]),
   });
   expect(out).toBe(formatEnvCapabilitiesReport(["server:exec", "container:read"]));
+});
+
+describe("sync stale-binary note (REO-379)", () => {
+  test("the note says sync refreshes permissions, not commands", () => {
+    const note = formatSyncStaleNote();
+    expect(note).toContain("permissions");
+    expect(note).toContain("binary");
+  });
+
+  test("the emitter writes the update notice followed by the note", () => {
+    const lines: string[] = [];
+    const emit = syncUpdateEmitter((s) => lines.push(s));
+    emit("⚡ reoclo 0.81.0 available (you have 0.78.0) — brew upgrade reoclo/tap/reoclo");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("0.81.0 available");
+    expect(lines[1]).toBe(formatSyncStaleNote());
+  });
 });

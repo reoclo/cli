@@ -1,5 +1,10 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
-import { detectInstallMethod, resolveLatestVersion } from "../../../src/commands/upgrade";
+import {
+  delegatedUpgradeArgv,
+  detectInstallMethod,
+  managedUpgradeInstructions,
+  resolveLatestVersion,
+} from "../../../src/commands/upgrade";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -95,32 +100,26 @@ describe("detectInstallMethod — path patterns (Layer A)", () => {
   const NO_MARKERS = { fileExists: (_p: string) => false, readFile: (_p: string) => null };
 
   test("Apple Silicon brew /opt/homebrew/Cellar/ → homebrew", () => {
-    expect(
-      detectInstallMethod("/opt/homebrew/Cellar/reoclo/0.36.1/bin/reoclo", NO_MARKERS),
-    ).toBe("homebrew");
+    expect(detectInstallMethod("/opt/homebrew/Cellar/reoclo/0.36.1/bin/reoclo", NO_MARKERS)).toBe(
+      "homebrew",
+    );
   });
 
   test("Intel brew /usr/local/Cellar/ → homebrew", () => {
-    expect(
-      detectInstallMethod("/usr/local/Cellar/reoclo/0.36.1/bin/reoclo", NO_MARKERS),
-    ).toBe("homebrew");
+    expect(detectInstallMethod("/usr/local/Cellar/reoclo/0.36.1/bin/reoclo", NO_MARKERS)).toBe(
+      "homebrew",
+    );
   });
 
   test("linuxbrew → homebrew", () => {
     expect(
-      detectInstallMethod(
-        "/home/linuxbrew/.linuxbrew/Cellar/reoclo/0.36.1/bin/reoclo",
-        NO_MARKERS,
-      ),
+      detectInstallMethod("/home/linuxbrew/.linuxbrew/Cellar/reoclo/0.36.1/bin/reoclo", NO_MARKERS),
     ).toBe("homebrew");
   });
 
   test("npm global node_modules → npm", () => {
     expect(
-      detectInstallMethod(
-        "/usr/local/lib/node_modules/@reoclo/cli/dist/reoclo",
-        NO_MARKERS,
-      ),
+      detectInstallMethod("/usr/local/lib/node_modules/@reoclo/cli/dist/reoclo", NO_MARKERS),
     ).toBe("npm");
   });
 
@@ -198,13 +197,10 @@ describe("detectInstallMethod — marker files (Layer B)", () => {
   });
 
   test("package.json with name=@reoclo/cli + generic node_modules path → npm", () => {
-    const result = detectInstallMethod(
-      "/usr/local/lib/node_modules/@reoclo/cli/dist/reoclo",
-      {
-        fileExists: (p: string) => p.endsWith("/@reoclo/cli/package.json"),
-        readFile: (_p: string) => '{"name":"@reoclo/cli"}',
-      },
-    );
+    const result = detectInstallMethod("/usr/local/lib/node_modules/@reoclo/cli/dist/reoclo", {
+      fileExists: (p: string) => p.endsWith("/@reoclo/cli/package.json"),
+      readFile: (_p: string) => '{"name":"@reoclo/cli"}',
+    });
     expect(result).toBe("npm");
   });
 
@@ -222,5 +218,53 @@ describe("detectInstallMethod — marker files (Layer B)", () => {
       readFile: (_p: string) => "{ not valid json",
     });
     expect(result).toBe("raw");
+  });
+});
+
+describe("delegatedUpgradeArgv (REO-380)", () => {
+  test("homebrew delegates to brew upgrade on the tap", () => {
+    expect(delegatedUpgradeArgv("homebrew", "0.81.0")).toEqual([
+      "brew",
+      "upgrade",
+      "reoclo/tap/reoclo",
+    ]);
+  });
+
+  test("npm, pnpm and yarn delegate with a pinned version", () => {
+    expect(delegatedUpgradeArgv("npm", "0.81.0")).toEqual(["npm", "i", "-g", "@reoclo/cli@0.81.0"]);
+    expect(delegatedUpgradeArgv("pnpm", "0.81.0")).toEqual([
+      "pnpm",
+      "add",
+      "-g",
+      "@reoclo/cli@0.81.0",
+    ]);
+    expect(delegatedUpgradeArgv("yarn", "0.81.0")).toEqual([
+      "yarn",
+      "global",
+      "add",
+      "@reoclo/cli@0.81.0",
+    ]);
+  });
+
+  test("chained version managers and raw installs do not delegate", () => {
+    expect(delegatedUpgradeArgv("mise", "0.81.0")).toBeNull();
+    expect(delegatedUpgradeArgv("asdf", "0.81.0")).toBeNull();
+    expect(delegatedUpgradeArgv("raw", "0.81.0")).toBeNull();
+  });
+});
+
+describe("managedUpgradeInstructions (REO-380)", () => {
+  test("homebrew instructions name the tap", () => {
+    expect(managedUpgradeInstructions("homebrew", "0.81.0")).toEqual([
+      "Installed via Homebrew. Upgrade with:",
+      "  brew upgrade reoclo/tap/reoclo",
+    ]);
+  });
+
+  test("mise instructions keep the chained install + use", () => {
+    expect(managedUpgradeInstructions("mise", "0.81.0")).toEqual([
+      "Installed via mise. Upgrade with:",
+      "  mise install reoclo@0.81.0 && mise use -g reoclo@0.81.0",
+    ]);
   });
 });

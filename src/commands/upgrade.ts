@@ -85,14 +85,7 @@ function resolveSelfPath(): string {
 // what catches edge cases like a brew tap symlinked into a non-standard
 // prefix, or a pnpm install whose path doesn't trip our pnpm pattern.
 
-export type InstallMethod =
-  | "homebrew"
-  | "npm"
-  | "pnpm"
-  | "yarn"
-  | "mise"
-  | "asdf"
-  | "raw";
+export type InstallMethod = "homebrew" | "npm" | "pnpm" | "yarn" | "mise" | "asdf" | "raw";
 
 export interface InstallDetectionContext {
   /** stat-existence check — injectable for testing */
@@ -143,10 +136,7 @@ function probePathPatterns(selfPath: string): InstallMethod | null {
 }
 
 /** Layer B: walk up the directory tree looking for marker files. */
-function probeMarkers(
-  selfPath: string,
-  ctx: InstallDetectionContext,
-): InstallMethod | null {
+function probeMarkers(selfPath: string, ctx: InstallDetectionContext): InstallMethod | null {
   const fileExists = ctx.fileExists ?? existsSync;
   const readFile = ctx.readFile ?? defaultReadFile;
 
@@ -411,11 +401,67 @@ async function selfUpgradeRawBinary(currentPath: string, tag: string): Promise<v
   process.stdout.write(`  Previous binary kept at ${oldPath} (safe to delete after restart).\n`);
 }
 
+/** The package-manager command that performs the upgrade for us (REO-380).
+ *  Only single-argv managers delegate: mise/asdf need two chained commands
+ *  (install + use), so they keep printed instructions. The manager owns the
+ *  binary swap, which is exactly why the in-place path refuses these installs. */
+export function delegatedUpgradeArgv(method: InstallMethod, bareVersion: string): string[] | null {
+  switch (method) {
+    case "homebrew":
+      return ["brew", "upgrade", "reoclo/tap/reoclo"];
+    case "npm":
+      return ["npm", "i", "-g", `@reoclo/cli@${bareVersion}`];
+    case "pnpm":
+      return ["pnpm", "add", "-g", `@reoclo/cli@${bareVersion}`];
+    case "yarn":
+      return ["yarn", "global", "add", `@reoclo/cli@${bareVersion}`];
+    default:
+      return null;
+  }
+}
+
+const INSTALL_METHOD_LABELS: Record<Exclude<InstallMethod, "raw">, string> = {
+  homebrew: "Homebrew",
+  npm: "npm",
+  pnpm: "pnpm",
+  yarn: "yarn",
+  mise: "mise",
+  asdf: "asdf",
+};
+
+/** The printed fallback for a managed install: what to run by hand. */
+export function managedUpgradeInstructions(
+  method: Exclude<InstallMethod, "raw">,
+  bareVersion: string,
+): string[] {
+  const commands: Record<Exclude<InstallMethod, "raw">, string> = {
+    homebrew: "brew upgrade reoclo/tap/reoclo",
+    npm: `npm i -g @reoclo/cli@${bareVersion}`,
+    pnpm: `pnpm add -g @reoclo/cli@${bareVersion}`,
+    yarn: `yarn global add @reoclo/cli@${bareVersion}`,
+    mise: `mise install reoclo@${bareVersion} && mise use -g reoclo@${bareVersion}`,
+    asdf: `asdf install reoclo ${bareVersion} && asdf global reoclo ${bareVersion}`,
+  };
+  return [`Installed via ${INSTALL_METHOD_LABELS[method]}. Upgrade with:`, `  ${commands[method]}`];
+}
+
+/** Run the delegated manager command with inherited stdio. Resolves the exit
+ *  code, or null when the manager binary itself is missing (spawn ENOENT is an
+ *  async 'error' event, never a synchronous throw). */
+async function runDelegated(argv: string[]): Promise<number | null> {
+  const { spawn } = await import("node:child_process");
+  return await new Promise<number | null>((resolve) => {
+    const child = spawn(argv[0] as string, argv.slice(1), { stdio: "inherit" });
+    child.on("error", () => resolve(null));
+    child.on("exit", (code) => resolve(code ?? 1));
+  });
+}
+
 export function registerUpgrade(program: Command): void {
   withCompletion(
     program
       .command("upgrade")
-      .description("self-update the CLI (or print upgrade instructions for managed installs)")
+      .description("self-update the CLI (delegates to the package manager for managed installs)")
       .option("--channel <name>", "stable | beta | dev", "stable")
       .option("--version <ver>", "pin to a specific version (overrides --channel)")
       .option("--check", "only check, do not upgrade")
@@ -451,38 +497,32 @@ export function registerUpgrade(program: Command): void {
         const method = detectInstallMethod(self);
         const bareVersion = latest.replace(/^v/, "");
 
-        switch (method) {
-          case "homebrew":
-            process.stdout.write("Installed via Homebrew. Upgrade with:\n");
-            process.stdout.write("  brew upgrade reoclo/tap/reoclo\n");
-            return;
-          case "npm":
-            process.stdout.write("Installed via npm. Upgrade with:\n");
-            process.stdout.write(`  npm i -g @reoclo/cli@${bareVersion}\n`);
-            return;
-          case "pnpm":
-            process.stdout.write("Installed via pnpm. Upgrade with:\n");
-            process.stdout.write(`  pnpm add -g @reoclo/cli@${bareVersion}\n`);
-            return;
-          case "yarn":
-            process.stdout.write("Installed via yarn. Upgrade with:\n");
-            process.stdout.write(`  yarn global add @reoclo/cli@${bareVersion}\n`);
-            return;
-          case "mise":
-            process.stdout.write("Installed via mise. Upgrade with:\n");
+        if (method !== "raw") {
+          // A managed install must not be in-place-swapped (the manager owns
+          // the binary), but a command named `upgrade` that only prints
+          // instructions reads as broken (REO-380): run the manager's own
+          // upgrade command and keep the instructions as the fallback.
+          const argv = delegatedUpgradeArgv(method, bareVersion);
+          if (argv !== null) {
             process.stdout.write(
-              `  mise install reoclo@${bareVersion} && mise use -g reoclo@${bareVersion}\n`,
+              `Installed via ${INSTALL_METHOD_LABELS[method]}. Running: ${argv.join(" ")}\n`,
             );
-            return;
-          case "asdf":
-            process.stdout.write("Installed via asdf. Upgrade with:\n");
+            const code = await runDelegated(argv);
+            if (code === 0) return;
             process.stdout.write(
-              `  asdf install reoclo ${bareVersion} && asdf global reoclo ${bareVersion}\n`,
+              code === null
+                ? `Could not find ${argv[0]} on PATH. Upgrade manually:\n`
+                : `${argv[0]} exited with code ${code}. Upgrade manually:\n`,
             );
-            return;
-          case "raw":
-            // fall through to in-place swap
-            break;
+            for (const line of managedUpgradeInstructions(method, bareVersion)) {
+              process.stdout.write(`${line}\n`);
+            }
+            process.exit(1);
+          }
+          for (const line of managedUpgradeInstructions(method, bareVersion)) {
+            process.stdout.write(`${line}\n`);
+          }
+          return;
         }
 
         // Raw-binary install — perform the in-place swap.

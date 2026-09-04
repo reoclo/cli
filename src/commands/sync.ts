@@ -17,6 +17,14 @@ import { bootstrap, isEnvCredential } from "../client/bootstrap";
 import type { HttpClient } from "../client/http";
 import { fetchCapabilities } from "../client/capabilities";
 import { updateProfileCapabilities } from "../config/store";
+import {
+  readUpdateCache,
+  runAuthUpdateCheck,
+  updateCheckEnabledFor,
+  writeUpdateCache,
+} from "../client/update-check";
+import { detectInstallMethod, resolveLatestVersion } from "./upgrade";
+import { VERSION } from "../index";
 
 /** Human-readable result line. Pure so it can be asserted without a client. */
 export function formatSyncLine(profile: string, count: number): string {
@@ -34,7 +42,10 @@ export function formatEnvCapabilitiesReport(caps: string[]): string {
   const header =
     `${caps.length} ${noun} for this machine credential ` +
     "(enforced server-side; not cached locally):";
-  const list = [...caps].sort().map((v) => `  ${v}`).join("\n");
+  const list = [...caps]
+    .sort()
+    .map((v) => `  ${v}`)
+    .join("\n");
   return `${header}\n${list}`;
 }
 
@@ -47,6 +58,22 @@ export async function reportEnvCapabilities(
   const fetchFn = deps.fetch ?? fetchCapabilities;
   const caps = await fetchFn(client);
   return formatEnvCapabilitiesReport(caps);
+}
+
+/** Why a plain "Synced N capabilities" misleads: capabilities are permission
+ *  verbs, not features. A stale binary syncs successfully and still lacks the
+ *  new commands (REO-379), so a sync against a newer server pairs the update
+ *  notice with this explanation. */
+export function formatSyncStaleNote(): string {
+  return "Sync refreshes permissions only. New commands need the newer binary.";
+}
+
+/** Wrap a writer so the update notice always carries the stale-binary note. */
+export function syncUpdateEmitter(write: (s: string) => void): (line: string) => void {
+  return (line) => {
+    write(line);
+    write(formatSyncStaleNote());
+  };
 }
 
 /** Fetch the caller's effective capabilities and rewrite the profile cache,
@@ -86,5 +113,18 @@ export function registerSync(program: Command): void {
       }
       const count = await syncProfileCapabilities(ctx.client, ctx.profileName);
       console.log(formatSyncLine(ctx.profileName, count));
+      // The reason people run sync is "the server got new features": exactly
+      // the moment a stale binary bites (REO-379). Same foreground best-effort
+      // check as login, with the stale-binary note appended to the notice.
+      await runAuthUpdateCheck({
+        current: VERSION,
+        enabled: updateCheckEnabledFor(program.opts(), process.env, Boolean(process.stderr.isTTY)),
+        now: Date.now(),
+        fetchLatest: () => resolveLatestVersion("stable"),
+        readCache: readUpdateCache,
+        writeCache: writeUpdateCache,
+        detectMethod: () => detectInstallMethod(process.execPath),
+        emit: syncUpdateEmitter((s) => process.stderr.write(`${s}\n`)),
+      });
     });
 }
