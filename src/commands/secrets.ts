@@ -14,7 +14,9 @@ import {
   revealSecret,
   deleteSecret,
   bulkCreateSecrets,
+  updateProject,
   type SecretProjectRead,
+  type SecretProjectUpdate,
 } from "../client/secrets";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
@@ -107,7 +109,84 @@ export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string
   if (byId) return byId.id;
   const byName = projects.filter((p) => p.name === nameOrId);
   if (byName.length === 1 && byName[0]) return byName[0].id;
+  if (byName.length > 1) {
+    throw new Error(
+      `secret project name is ambiguous: ${byName.length} projects are named ${nameOrId}; pass the id instead`,
+    );
+  }
   throw new Error(`secret project not found: ${nameOrId}`);
+}
+
+export interface ProjectUpdateFlags {
+  name?: string;
+  description?: string;
+  clearDescription?: boolean;
+}
+
+function misuse(message: string): Error {
+  const err = new Error(message) as Error & { exitCode: number };
+  err.exitCode = EXIT.MISUSE;
+  return err;
+}
+
+/** Turn `secrets projects update` flags into the PATCH body. Pure, so the
+ *  flag rules are testable without a client: at least one change, a name
+ *  that is not blank, and one way to clear the description (`--clear-description`
+ *  or a blank `--description`), never two that disagree. Both fields are
+ *  trimmed here because the API stores them verbatim, and a whitespace-only
+ *  description would render as blank instead of "none". The MCP tool in
+ *  src/mcp/tools/secrets.ts applies the same rules; it cannot import this
+ *  helper because that module is vendored into the hosted MCP on its own. */
+export function buildProjectUpdate(flags: ProjectUpdateFlags): SecretProjectUpdate {
+  const description = flags.description?.trim();
+  if (description && flags.clearDescription) {
+    throw misuse("pass --description or --clear-description, not both");
+  }
+  const body: SecretProjectUpdate = {};
+  if (flags.name !== undefined) {
+    const name = flags.name.trim();
+    if (!name) throw misuse("--name must not be empty");
+    body.name = name;
+  }
+  if (flags.clearDescription || description === "") {
+    body.description = null;
+  } else if (description !== undefined) {
+    body.description = description;
+  }
+  if (Object.keys(body).length === 0) {
+    throw misuse("nothing to update: pass --name, --description, or --clear-description");
+  }
+  return body;
+}
+
+/** A rename must not collide with another project's name: the API has no
+ *  uniqueness rule, but `--project <name>` (and every other name lookup in
+ *  this CLI) needs one match, so a duplicate would make both projects
+ *  unreachable by name. Checked client-side against the list already fetched
+ *  for resolution. */
+export function assertProjectNameAvailable(
+  projects: SecretProjectRead[],
+  name: string,
+  selfId: string,
+): void {
+  const taken = projects.find((p) => p.name === name && p.id !== selfId);
+  if (taken) {
+    throw misuse(`another secret project is already named ${name} (${taken.id})`);
+  }
+}
+
+const DESCRIPTION_COLUMN_MAX = 60;
+
+/** Flatten a free-text cell for the aligned text table: collapse whitespace
+ *  (a newline would break the row) and cap the width so one long description
+ *  does not stretch every column. JSON/YAML output keeps the full value. */
+export function truncateCell(
+  text: string | null | undefined,
+  max = DESCRIPTION_COLUMN_MAX,
+): string {
+  const flat = (text ?? "").replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max - 1)}…`;
 }
 
 /** Guard for `secrets inject -o`: refuse to clobber an existing file unless
@@ -171,16 +250,42 @@ export function registerSecrets(program: Command): void {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const rows = await listProjects(ctx.client, tid);
+        const shown =
+          fmt === "text"
+            ? rows.map((r) => ({ ...r, description: truncateCell(r.description) }))
+            : rows;
         printList(
-          rows as unknown as Array<Record<string, unknown>>,
+          shown as unknown as Array<Record<string, unknown>>,
           [
             { key: "id", label: "ID" },
             { key: "name", label: "NAME" },
+            { key: "description", label: "DESCRIPTION" },
           ],
           fmt,
         );
       }),
     "secret_project:read",
+  );
+
+  requireCapability(
+    projectsGroup
+      .command("update <project>")
+      .description("rename a secret project or change its description")
+      .option("--name <name>", "new project name")
+      .option("--description <text>", "new description (empty string clears it)")
+      .option("--clear-description", "remove the description")
+      .action(async (projectRef: string, opts: ProjectUpdateFlags) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const body = buildProjectUpdate(opts);
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const projects = await listProjects(ctx.client, tid);
+        const pid = resolveProjectId(projects, projectRef);
+        if (body.name !== undefined) assertProjectNameAvailable(projects, body.name, pid);
+        const updated = await updateProject(ctx.client, tid, pid, body);
+        printObject(updated as unknown as Record<string, unknown>, fmt);
+      }),
+    "secret_project:write",
   );
 
   requireCapability(

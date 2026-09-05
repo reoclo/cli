@@ -1,6 +1,13 @@
 // tests/unit/commands/secrets.test.ts
 import { describe, expect, test } from "bun:test";
-import { mergeBindingKeys, resolveProjectId, readSecretValue } from "../../../src/commands/secrets";
+import {
+  mergeBindingKeys,
+  resolveProjectId,
+  readSecretValue,
+  buildProjectUpdate,
+  assertProjectNameAvailable,
+  truncateCell,
+} from "../../../src/commands/secrets";
 import type { SecretProjectRead } from "../../../src/client/secrets";
 
 describe("resolveProjectId", () => {
@@ -17,7 +24,17 @@ describe("resolveProjectId", () => {
   });
 
   test("throws on unknown", () => {
-    expect(() => resolveProjectId(projects, "nope")).toThrow();
+    expect(() => resolveProjectId(projects, "nope")).toThrow(/not found/);
+  });
+
+  test("says so when a name matches more than one project", () => {
+    const dupes: SecretProjectRead[] = [
+      { id: "11111111-1111-1111-1111-111111111111", name: "prod" },
+      { id: "22222222-2222-2222-2222-222222222222", name: "prod" },
+    ];
+    expect(() => resolveProjectId(dupes, "prod")).toThrow(/ambiguous.*pass the id/);
+    // The id still resolves.
+    expect(resolveProjectId(dupes, dupes[1]!.id)).toBe(dupes[1]!.id);
   });
 });
 
@@ -132,5 +149,107 @@ describe("mergeBindingKeys", () => {
 
   test("removing the last key throws instead of widening to all keys", () => {
     expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["A"])).toThrow(/unbind/);
+  });
+});
+
+describe("buildProjectUpdate", () => {
+  test("renames", () => {
+    expect(buildProjectUpdate({ name: "payments-production" })).toEqual({
+      name: "payments-production",
+    });
+  });
+
+  test("trims the name and rejects a blank one", () => {
+    expect(buildProjectUpdate({ name: "  prod  " })).toEqual({ name: "prod" });
+    expect(() => buildProjectUpdate({ name: "   " })).toThrow(/--name/);
+  });
+
+  test("sets a description", () => {
+    expect(buildProjectUpdate({ description: "Stripe + Postgres" })).toEqual({
+      description: "Stripe + Postgres",
+    });
+  });
+
+  test("clears the description via --clear-description or a blank --description", () => {
+    expect(buildProjectUpdate({ clearDescription: true })).toEqual({ description: null });
+    expect(buildProjectUpdate({ description: "" })).toEqual({ description: null });
+    expect(buildProjectUpdate({ description: "   " })).toEqual({ description: null });
+  });
+
+  test("trims the description", () => {
+    expect(buildProjectUpdate({ description: "  keep me  " })).toEqual({ description: "keep me" });
+  });
+
+  test("a blank --description alongside --clear-description is not a conflict", () => {
+    expect(buildProjectUpdate({ description: " ", clearDescription: true })).toEqual({
+      description: null,
+    });
+  });
+
+  test("refuses a description and --clear-description that disagree", () => {
+    expect(() => buildProjectUpdate({ description: "x", clearDescription: true })).toThrow(
+      /not both/,
+    );
+  });
+
+  test("refuses a no-op with the misuse exit code", () => {
+    let err: (Error & { exitCode?: number }) | undefined;
+    try {
+      buildProjectUpdate({});
+    } catch (e) {
+      err = e as Error & { exitCode?: number };
+    }
+    expect(err?.message).toMatch(/nothing to update/);
+    expect(err?.exitCode).toBe(2);
+  });
+
+  test("combines a rename with a description change", () => {
+    expect(buildProjectUpdate({ name: "prod", description: "d" })).toEqual({
+      name: "prod",
+      description: "d",
+    });
+  });
+});
+
+describe("assertProjectNameAvailable", () => {
+  const projects: SecretProjectRead[] = [
+    { id: "11111111-1111-1111-1111-111111111111", name: "prod" },
+    { id: "22222222-2222-2222-2222-222222222222", name: "staging" },
+  ];
+
+  test("allows a free name and the project's own current name", () => {
+    expect(() => assertProjectNameAvailable(projects, "prod-eu", projects[0]!.id)).not.toThrow();
+    expect(() => assertProjectNameAvailable(projects, "prod", projects[0]!.id)).not.toThrow();
+  });
+
+  test("refuses another project's name with the misuse exit code", () => {
+    let err: (Error & { exitCode?: number }) | undefined;
+    try {
+      assertProjectNameAvailable(projects, "staging", projects[0]!.id);
+    } catch (e) {
+      err = e as Error & { exitCode?: number };
+    }
+    expect(err?.message).toMatch(/already named staging/);
+    expect(err?.message).toContain(projects[1]!.id);
+    expect(err?.exitCode).toBe(2);
+  });
+});
+
+describe("truncateCell", () => {
+  test("passes short text through and renders null as empty", () => {
+    expect(truncateCell("Stripe + Postgres")).toBe("Stripe + Postgres");
+    expect(truncateCell(null)).toBe("");
+    expect(truncateCell(undefined)).toBe("");
+  });
+
+  test("collapses newlines and runs of whitespace", () => {
+    expect(truncateCell("line one\n  line two")).toBe("line one line two");
+  });
+
+  test("caps the width with an ellipsis", () => {
+    const long = "x".repeat(100);
+    const out = truncateCell(long, 10);
+    expect(out).toHaveLength(10);
+    expect(out.endsWith("…")).toBe(true);
   });
 });
