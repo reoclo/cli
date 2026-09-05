@@ -37,11 +37,22 @@ export function listProjects(c: HttpClient, tid: string): Promise<SecretProjectR
   return c.get<SecretProjectRead[]>(`/tenants/${tid}/secret-projects`);
 }
 
-export function listSecrets(
+export interface SecretProjectUpdate {
+  name?: string;
+  /** `null` clears the description. */
+  description?: string | null;
+}
+
+export function updateProject(
   c: HttpClient,
   tid: string,
   projectId: string,
-): Promise<SecretRead[]> {
+  body: SecretProjectUpdate,
+): Promise<SecretProjectRead> {
+  return c.patch<SecretProjectRead>(`/tenants/${tid}/secret-projects/${projectId}`, body);
+}
+
+export function listSecrets(c: HttpClient, tid: string, projectId: string): Promise<SecretRead[]> {
   return c.get<SecretRead[]>(`/tenants/${tid}/secret-projects/${projectId}/secrets`);
 }
 
@@ -72,10 +83,9 @@ export function bulkCreateSecrets(
   projectId: string,
   secrets: SecretCreate[],
 ): Promise<SecretRead[]> {
-  return c.post<SecretRead[]>(
-    `/tenants/${tid}/secret-projects/${projectId}/secrets/bulk`,
-    { secrets },
-  );
+  return c.post<SecretRead[]>(`/tenants/${tid}/secret-projects/${projectId}/secrets/bulk`, {
+    secrets,
+  });
 }
 
 export function revealSecret(

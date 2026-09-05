@@ -14,7 +14,9 @@ import {
   revealSecret,
   deleteSecret,
   bulkCreateSecrets,
+  updateProject,
   type SecretProjectRead,
+  type SecretProjectUpdate,
 } from "../client/secrets";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
@@ -110,6 +112,43 @@ export function resolveProjectId(projects: SecretProjectRead[], nameOrId: string
   throw new Error(`secret project not found: ${nameOrId}`);
 }
 
+export interface ProjectUpdateFlags {
+  name?: string;
+  description?: string;
+  clearDescription?: boolean;
+}
+
+function misuse(message: string): Error {
+  const err = new Error(message) as Error & { exitCode: number };
+  err.exitCode = EXIT.MISUSE;
+  return err;
+}
+
+/** Turn `secrets projects update` flags into the PATCH body. Pure, so the
+ *  flag rules are testable without a client: at least one change, a name
+ *  that is not blank, and one way to clear the description (`--clear-description`
+ *  or an empty `--description`), never two that disagree. */
+export function buildProjectUpdate(flags: ProjectUpdateFlags): SecretProjectUpdate {
+  if (flags.description !== undefined && flags.description !== "" && flags.clearDescription) {
+    throw misuse("pass --description or --clear-description, not both");
+  }
+  const body: SecretProjectUpdate = {};
+  if (flags.name !== undefined) {
+    const name = flags.name.trim();
+    if (!name) throw misuse("--name must not be empty");
+    body.name = name;
+  }
+  if (flags.clearDescription || flags.description === "") {
+    body.description = null;
+  } else if (flags.description !== undefined) {
+    body.description = flags.description;
+  }
+  if (Object.keys(body).length === 0) {
+    throw misuse("nothing to update: pass --name, --description, or --clear-description");
+  }
+  return body;
+}
+
 /** Guard for `secrets inject -o`: refuse to clobber an existing file unless
  *  --force was passed. */
 export function assertOutputWritable(exists: boolean, force: boolean, path: string): void {
@@ -176,11 +215,31 @@ export function registerSecrets(program: Command): void {
           [
             { key: "id", label: "ID" },
             { key: "name", label: "NAME" },
+            { key: "description", label: "DESCRIPTION" },
           ],
           fmt,
         );
       }),
     "secret_project:read",
+  );
+
+  requireCapability(
+    projectsGroup
+      .command("update <project>")
+      .description("rename a secret project or change its description")
+      .option("--name <name>", "new project name")
+      .option("--description <text>", "new description (empty string clears it)")
+      .option("--clear-description", "remove the description")
+      .action(async (projectRef: string, opts: ProjectUpdateFlags) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const body = buildProjectUpdate(opts);
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const pid = resolveProjectId(await listProjects(ctx.client, tid), projectRef);
+        const updated = await updateProject(ctx.client, tid, pid, body);
+        printObject(updated as unknown as Record<string, unknown>, fmt);
+      }),
+    "secret_project:write",
   );
 
   requireCapability(

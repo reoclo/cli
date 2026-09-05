@@ -13,6 +13,7 @@ import { registerMonitorTools } from "./monitors";
 import { registerOtherTools } from "./other";
 import { registerRuntimeTools } from "./runtime";
 import { registerScheduledOperationTools } from "./scheduled-operations";
+import { registerSecretProjectTools } from "./secrets";
 import { registerServerTools } from "./servers";
 import { registerStatusPageTools } from "./status-pages";
 import { registerTunnelTools } from "./tunnels";
@@ -36,4 +37,5 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerVolumeTools(server, ctx);
   registerAuthTools(server, ctx);
   registerScheduledOperationTools(server, ctx);
+  registerSecretProjectTools(server, ctx);
 }

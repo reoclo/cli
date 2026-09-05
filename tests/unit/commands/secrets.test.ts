@@ -1,6 +1,11 @@
 // tests/unit/commands/secrets.test.ts
 import { describe, expect, test } from "bun:test";
-import { mergeBindingKeys, resolveProjectId, readSecretValue } from "../../../src/commands/secrets";
+import {
+  mergeBindingKeys,
+  resolveProjectId,
+  readSecretValue,
+  buildProjectUpdate,
+} from "../../../src/commands/secrets";
 import type { SecretProjectRead } from "../../../src/client/secrets";
 
 describe("resolveProjectId", () => {
@@ -132,5 +137,53 @@ describe("mergeBindingKeys", () => {
 
   test("removing the last key throws instead of widening to all keys", () => {
     expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["A"])).toThrow(/unbind/);
+  });
+});
+
+describe("buildProjectUpdate", () => {
+  test("renames", () => {
+    expect(buildProjectUpdate({ name: "payments-production" })).toEqual({
+      name: "payments-production",
+    });
+  });
+
+  test("trims the name and rejects a blank one", () => {
+    expect(buildProjectUpdate({ name: "  prod  " })).toEqual({ name: "prod" });
+    expect(() => buildProjectUpdate({ name: "   " })).toThrow(/--name/);
+  });
+
+  test("sets a description", () => {
+    expect(buildProjectUpdate({ description: "Stripe + Postgres" })).toEqual({
+      description: "Stripe + Postgres",
+    });
+  });
+
+  test("clears the description via --clear-description or an empty --description", () => {
+    expect(buildProjectUpdate({ clearDescription: true })).toEqual({ description: null });
+    expect(buildProjectUpdate({ description: "" })).toEqual({ description: null });
+  });
+
+  test("refuses a description and --clear-description that disagree", () => {
+    expect(() => buildProjectUpdate({ description: "x", clearDescription: true })).toThrow(
+      /not both/,
+    );
+  });
+
+  test("refuses a no-op with the misuse exit code", () => {
+    let err: (Error & { exitCode?: number }) | undefined;
+    try {
+      buildProjectUpdate({});
+    } catch (e) {
+      err = e as Error & { exitCode?: number };
+    }
+    expect(err?.message).toMatch(/nothing to update/);
+    expect(err?.exitCode).toBe(2);
+  });
+
+  test("combines a rename with a description change", () => {
+    expect(buildProjectUpdate({ name: "prod", description: "d" })).toEqual({
+      name: "prod",
+      description: "d",
+    });
   });
 });
