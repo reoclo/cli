@@ -33,7 +33,20 @@ function harness(): {
   const client = {
     get: (path: string) => {
       gets.push(path);
-      return Promise.resolve([{ id: PID, name: "prod", description: null, secret_count: 3 }]);
+      // A raw SecretProjectRead: the tool must project away the fields the
+      // model has no use for.
+      return Promise.resolve([
+        {
+          id: PID,
+          tenant_id: "T-ACME",
+          name: "prod",
+          description: null,
+          created_by: "U1",
+          created_at: "2026-09-05T00:00:00Z",
+          allowed_server_ids: ["S1"],
+          secret_count: 3,
+        },
+      ]);
     },
     post: () => Promise.resolve({}),
     put: () => Promise.resolve({}),
@@ -68,13 +81,22 @@ test("registers list + update with organization in every schema, and nothing tha
   }
 });
 
-test("list_secret_projects reads the tenant's project collection", async () => {
+test("list_secret_projects reads the tenant's project collection and returns only the documented fields", async () => {
   const { registry, gets } = harness();
   const res = (await tool(registry, "list_secret_projects").cb({ organization: "acme" })) as {
     content: Array<{ text: string }>;
   };
   expect(gets).toEqual(["/tenants/T-ACME/secret-projects"]);
-  expect(res.content[0]?.text).toContain("prod");
+  const rows = JSON.parse(res.content[0]?.text ?? "[]") as Array<Record<string, unknown>>;
+  expect(rows).toEqual([
+    {
+      id: PID,
+      name: "prod",
+      description: null,
+      secret_count: 3,
+      created_at: "2026-09-05T00:00:00Z",
+    },
+  ]);
 });
 
 test("update_secret_project patches only the fields given", async () => {
@@ -102,7 +124,7 @@ test("update_secret_project patches only the fields given", async () => {
   ]);
 });
 
-test("update_secret_project maps an empty description to null (clear)", async () => {
+test("update_secret_project trims, and maps a blank description to null (clear)", async () => {
   const { registry, patches } = harness();
   await tool(registry, "update_secret_project").cb({
     organization: "acme",
@@ -110,6 +132,32 @@ test("update_secret_project maps an empty description to null (clear)", async ()
     description: "",
   });
   expect(patches[0]?.body).toEqual({ description: null });
+
+  patches.length = 0;
+  await tool(registry, "update_secret_project").cb({
+    organization: "acme",
+    project_id: PID,
+    description: "   ",
+  });
+  expect(patches[0]?.body).toEqual({ description: null });
+
+  patches.length = 0;
+  await tool(registry, "update_secret_project").cb({
+    organization: "acme",
+    project_id: PID,
+    description: "  keep me  ",
+  });
+  expect(patches[0]?.body).toEqual({ description: "keep me" });
+});
+
+test("update_secret_project trims the name on the way through the schema", async () => {
+  const { registry, patches } = harness();
+  const t = tool(registry, "update_secret_project");
+  const parsed = z
+    .object(t.schema)
+    .parse({ organization: "acme", project_id: PID, name: "  prod  " });
+  await t.cb(parsed);
+  expect(patches[0]?.body).toEqual({ name: "prod" });
 });
 
 test("update_secret_project refuses a no-op instead of sending an empty PATCH", async () => {

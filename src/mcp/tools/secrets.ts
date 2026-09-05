@@ -22,7 +22,21 @@ export function registerSecretProjectTools(server: McpServer, ctx: McpRegistrati
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const projects = await client.get(`/tenants/${tenantId}/secret-projects`);
-        return asToolResult(projects);
+        // Project to the documented fields. The raw document also carries
+        // tenant_id, created_by, and allowed_server_ids, which the model has
+        // no use for here.
+        const rows = Array.isArray(projects) ? projects : [];
+        const summary = rows.map((row) => {
+          const r = row as Record<string, unknown>;
+          return {
+            id: r["id"],
+            name: r["name"],
+            description: r["description"] ?? null,
+            secret_count: r["secret_count"],
+            created_at: r["created_at"],
+          };
+        });
+        return asToolResult(summary);
       } catch (error: unknown) {
         return asToolError(error);
       }
@@ -33,8 +47,9 @@ export function registerSecretProjectTools(server: McpServer, ctx: McpRegistrati
     "update_secret_project",
     "Rename a secret project or change its description. Pass an empty " +
       "description to clear it. Keys, values, grants, and app bindings are " +
-      "untouched; CLI callers that select the project by name must use the " +
-      "new name after a rename.",
+      "untouched. Names should stay unique: the CLI selects projects by " +
+      "name, so a duplicate makes both unreachable that way. Callers that " +
+      "select the project by name must use the new name after a rename.",
     {
       ...ctx.orgParam,
       project_id: z.string().uuid().describe("Secret project ID (from list_secret_projects)"),
@@ -47,9 +62,15 @@ export function registerSecretProjectTools(server: McpServer, ctx: McpRegistrati
     },
     async ({ project_id, name, description, ...args }) => {
       try {
+        // Same rules as `reoclo secrets projects update` (buildProjectUpdate
+        // in src/commands/secrets.ts): trim both fields, a blank description
+        // clears it, and an empty PATCH is refused before any request.
         const body: { name?: string; description?: string | null } = {};
         if (name !== undefined) body.name = name;
-        if (description !== undefined) body.description = description === "" ? null : description;
+        if (description !== undefined) {
+          const trimmed = description.trim();
+          body.description = trimmed === "" ? null : trimmed;
+        }
         if (Object.keys(body).length === 0) {
           throw new Error("nothing to update: pass name and/or description");
         }
