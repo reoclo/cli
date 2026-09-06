@@ -14,6 +14,59 @@ interface VerifyResponse {
   expires_at: string;
 }
 
+export interface PlanOp {
+  op: "keep" | "create" | "update" | "delete" | "conflict";
+  record_type: string;
+  name: string;
+  current_content: string | null;
+  current_proxied: boolean | null;
+  desired_content: string | null;
+  desired_proxied: boolean | null;
+  reason: string | null;
+}
+
+export interface DnsPlan {
+  credential_label: string;
+  zone_name: string;
+  server_name: string;
+  ops: PlanOp[];
+  plan_hash: string;
+  blocked_reason: string | null;
+}
+
+export interface PublishState {
+  status: string;
+  applied: string[];
+  last_error: string | null;
+}
+
+export function planRows(plan: DnsPlan): Array<{ action: string; type: string; name: string; current: string; new: string }> {
+  return plan.ops
+    .filter((op) => op.op !== "keep")
+    .map((op) => ({
+      action: op.op,
+      type: op.record_type,
+      name: op.name,
+      current: op.current_content ?? "-",
+      new: op.op === "delete" ? "-" : (op.desired_content ?? "-"),
+    }));
+}
+
+/** Poll until dns.publish leaves "pending"; null when it does not within `attempts`. */
+export async function pollPublish(
+  fetch: () => Promise<{ dns: { publish?: PublishState } }>,
+  opts: { attempts: number; sleepMs: number; sleep?: (ms: number) => Promise<void> },
+): Promise<PublishState | null> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 0; i < opts.attempts; i++) {
+    const domain = await fetch();
+    const publish = domain.dns.publish;
+    if (publish && publish.status !== "pending") return publish;
+    await sleep(opts.sleepMs);
+  }
+  return null;
+}
+
 async function resolveDomain(
   client: HttpClient,
   tid: string,
@@ -113,11 +166,61 @@ export function registerDomains(program: Command): void {
     g
       .command("dns <fqdnOrId>")
       .description("show DNS records and verification status")
-      .action(async (fqdnOrId: string) => {
+      .option("--fix", "preview the records Reoclo expects and write them to Cloudflare after confirmation")
+      .option("--proxied", "proxy new records through Cloudflare (orange cloud)")
+      .option("--yes", "skip the confirmation prompt")
+      .action(async (fqdnOrId: string, opts: { fix?: boolean; proxied?: boolean; yes?: boolean }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
+
+        if (opts.fix) {
+          const plan = await ctx.client.post<DnsPlan>(`/tenants/${tid}/dns/plan/${id}`, { proxied: Boolean(opts.proxied) });
+          if (fmt === "json" || fmt === "yaml") printObject(plan as unknown as Record<string, unknown>, fmt);
+          if (plan.blocked_reason) {
+            process.stderr.write(`cannot apply: ${plan.blocked_reason}\n`);
+            process.exit(1);
+          }
+          const rows = planRows(plan);
+          if (rows.length === 0) {
+            console.log("Every expected record is already correct.");
+            return;
+          }
+          if (fmt === "text") {
+            printList(
+              rows as unknown as Array<Record<string, unknown>>,
+              [
+                { key: "action", label: "ACTION" }, { key: "type", label: "TYPE" }, { key: "name", label: "NAME" },
+                { key: "current", label: "CURRENT" }, { key: "new", label: "NEW" },
+              ],
+              "text",
+            );
+          }
+          if (!opts.yes) {
+            const ok = await promptYesNo("Apply these changes on Cloudflare? [y/N]: ");
+            if (!ok) {
+              process.stderr.write("aborted (pass --yes to confirm non-interactively)\n");
+              process.exit(1);
+            }
+          }
+          await ctx.client.post(`/tenants/${tid}/dns/publish/${id}`, { plan_hash: plan.plan_hash, proxied: Boolean(opts.proxied) });
+          const outcome = await pollPublish(
+            () => ctx.client.get<{ dns: { publish?: PublishState } }>(`/tenants/${tid}/domains/${id}`),
+            { attempts: 30, sleepMs: 2000 },
+          );
+          if (outcome === null) {
+            process.stderr.write("still publishing; check `reoclo domains dns` in a moment\n");
+            process.exit(1);
+          }
+          if (outcome.status !== "succeeded") {
+            process.stderr.write(`publish failed: ${outcome.last_error ?? "unknown error"}\n`);
+            for (const line of outcome.applied) process.stderr.write(`  applied before failure: ${line}\n`);
+            process.exit(1);
+          }
+          for (const line of outcome.applied) console.log(`✓ published: ${line}`);
+          return;
+        }
 
         // The DNS endpoint is tenant-wide (`/dns/overview`) and groups
         // domains by server. We fetch the whole overview and pick the one
@@ -198,10 +301,17 @@ export function registerDomains(program: Command): void {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const { id } = await resolveDomain(ctx.client, tid, fqdnOrId);
-        const r = await ctx.client.get<Record<string, unknown>>(
-          `/tenants/${tid}/domains/${id}/health`,
+        const d = await ctx.client.get<Record<string, unknown>>(`/tenants/${tid}/domains/${id}`);
+        printObject(
+          {
+            fqdn: d["fqdn"],
+            verification: d["verification"],
+            dns: d["dns"],
+            ssl: d["ssl"],
+            registration: d["registration"],
+          },
+          fmt,
         );
-        printObject(r, fmt);
       }),
     { args: [{ slot: 0, resource: "domains" }] },
   );
