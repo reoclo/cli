@@ -5,6 +5,7 @@ import {
   resolveProjectId,
   readSecretValue,
   buildProjectUpdate,
+  buildProjectDuplicate,
   assertProjectNameAvailable,
   truncateCell,
 } from "../../../src/commands/secrets";
@@ -149,6 +150,24 @@ describe("mergeBindingKeys", () => {
 
   test("removing the last key throws instead of widening to all keys", () => {
     expect(() => mergeBindingKeys([{ key: "A", env_name: null }], [], ["A"])).toThrow(/unbind/);
+  });
+});
+
+describe("buildProjectDuplicate", () => {
+  test("defaults to server-side name and no grant copy", () => {
+    expect(buildProjectDuplicate({})).toEqual({ copy_grants: false });
+  });
+
+  test("trims the name and rejects a blank one", () => {
+    expect(buildProjectDuplicate({ name: "  staging  " })).toEqual({
+      name: "staging",
+      copy_grants: false,
+    });
+    expect(() => buildProjectDuplicate({ name: "   " })).toThrow(/--name/);
+  });
+
+  test("passes --copy-grants through", () => {
+    expect(buildProjectDuplicate({ copyGrants: true })).toEqual({ copy_grants: true });
   });
 });
 

@@ -85,4 +85,55 @@ export function registerSecretProjectTools(server: McpServer, ctx: McpRegistrati
       }
     },
   );
+
+  server.tool(
+    "duplicate_secret_project",
+    "Copy a secret project into a new project in the same organization. The " +
+      "copy happens server-side: every key keeps its value, values are " +
+      "copied encrypted and never returned here. Provider sync links " +
+      "(1Password/Bitwarden) are not carried over. Omit name to get " +
+      '"<source name> (copy)". copy_grants also copies manual access grants ' +
+      "(admin only); grants mirroring app env references are managed " +
+      "automatically and never copied.",
+    {
+      ...ctx.orgParam,
+      project_id: z.string().uuid().describe("Secret project ID (from list_secret_projects)"),
+      name: z
+        .string()
+        .trim()
+        .min(1)
+        .max(120)
+        .optional()
+        .describe('Name for the copy; omitted → "<source name> (copy)"'),
+      copy_grants: z
+        .boolean()
+        .optional()
+        .describe("Also copy manual access grants (requires the admin role)"),
+    },
+    async ({ project_id, name, copy_grants, ...args }) => {
+      try {
+        const body: { name?: string; copy_grants: boolean } = {
+          copy_grants: copy_grants === true,
+        };
+        if (name !== undefined) body.name = name;
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const created = await client.post<Record<string, unknown>>(
+          `/tenants/${tenantId}/secret-projects/${project_id}/duplicate`,
+          body,
+        );
+        // Same projection as list_secret_projects: the raw document carries
+        // tenant_id, created_by, and allowed_server_ids the model has no use
+        // for here.
+        return asToolResult({
+          id: created["id"],
+          name: created["name"],
+          description: created["description"] ?? null,
+          secret_count: created["secret_count"],
+          created_at: created["created_at"],
+        });
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
 }
