@@ -52,6 +52,21 @@ export function updateProject(
   return c.patch<SecretProjectRead>(`/tenants/${tid}/secret-projects/${projectId}`, body);
 }
 
+export interface SecretProjectDuplicate {
+  /** Omitted → the API defaults to "<source name> (copy)". */
+  name?: string;
+  copy_grants?: boolean;
+}
+
+export function duplicateProject(
+  c: HttpClient,
+  tid: string,
+  projectId: string,
+  body: SecretProjectDuplicate,
+): Promise<SecretProjectRead> {
+  return c.post<SecretProjectRead>(`/tenants/${tid}/secret-projects/${projectId}/duplicate`, body);
+}
+
 export function listSecrets(c: HttpClient, tid: string, projectId: string): Promise<SecretRead[]> {
   return c.get<SecretRead[]>(`/tenants/${tid}/secret-projects/${projectId}/secrets`);
 }

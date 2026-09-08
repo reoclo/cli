@@ -17,6 +17,7 @@ function harness(): {
   registry: Registered[];
   gets: string[];
   patches: { path: string; body: unknown }[];
+  posts: { path: string; body: unknown }[];
 } {
   const registry: Registered[] = [];
   const server = {
@@ -30,6 +31,7 @@ function harness(): {
   };
   const gets: string[] = [];
   const patches: { path: string; body: unknown }[] = [];
+  const posts: { path: string; body: unknown }[] = [];
   const client = {
     get: (path: string) => {
       gets.push(path);
@@ -48,7 +50,20 @@ function harness(): {
         },
       ]);
     },
-    post: () => Promise.resolve({}),
+    post: (path: string, body: unknown) => {
+      posts.push({ path, body });
+      // A raw duplicate response: the tool must project it like the list.
+      return Promise.resolve({
+        id: "019ff244-6f63-7ff0-b1a2-72b9e5ab8c30",
+        tenant_id: "T-ACME",
+        name: "prod (copy)",
+        description: null,
+        created_by: "U1",
+        created_at: "2026-09-08T00:00:00Z",
+        allowed_server_ids: ["S1"],
+        secret_count: 3,
+      });
+    },
     put: () => Promise.resolve({}),
     patch: (path: string, body: unknown) => {
       patches.push({ path, body });
@@ -62,7 +77,7 @@ function harness(): {
     resolveOrg: (): Promise<OrgScope> => Promise.resolve({ tenantId: "T-ACME", client }),
   };
   registerSecretProjectTools(server as never, ctx);
-  return { registry, gets, patches };
+  return { registry, gets, patches, posts };
 }
 
 function tool(registry: Registered[], name: string): Registered {
@@ -71,10 +86,10 @@ function tool(registry: Registered[], name: string): Registered {
   return found;
 }
 
-test("registers list + update with organization in every schema, and nothing that reads values", () => {
+test("registers list + update + duplicate with organization in every schema, and nothing that reads values", () => {
   const { registry } = harness();
   expect(registry.map((t) => t.name).sort()).toEqual(
-    ["list_secret_projects", "update_secret_project"].sort(),
+    ["duplicate_secret_project", "list_secret_projects", "update_secret_project"].sort(),
   );
   for (const t of registry) {
     expect(Object.keys(t.schema), `${t.name} must expose organization`).toContain("organization");
@@ -178,4 +193,39 @@ test("update_secret_project schema requires a UUID id and a non-blank name", () 
   expect(schema["project_id"]!.safeParse(PID).success).toBe(true);
   expect(schema["name"]!.safeParse("   ").success).toBe(false);
   expect(schema["name"]!.safeParse("ok").success).toBe(true);
+});
+
+test("duplicate_secret_project posts the copy request and returns only the documented fields", async () => {
+  const { registry, posts } = harness();
+  const res = (await tool(registry, "duplicate_secret_project").cb({
+    organization: "acme",
+    project_id: PID,
+    name: "prod (copy)",
+    copy_grants: true,
+  })) as { content: Array<{ text: string }> };
+  expect(posts).toEqual([
+    {
+      path: `/tenants/T-ACME/secret-projects/${PID}/duplicate`,
+      body: { name: "prod (copy)", copy_grants: true },
+    },
+  ]);
+  const row = JSON.parse(res.content[0]?.text ?? "{}") as Record<string, unknown>;
+  expect(row).toEqual({
+    id: "019ff244-6f63-7ff0-b1a2-72b9e5ab8c30",
+    name: "prod (copy)",
+    description: null,
+    secret_count: 3,
+    created_at: "2026-09-08T00:00:00Z",
+  });
+});
+
+test("duplicate_secret_project omits name so the API defaults it, and never copies grants unasked", async () => {
+  const { registry, posts } = harness();
+  await tool(registry, "duplicate_secret_project").cb({
+    organization: "acme",
+    project_id: PID,
+  });
+  expect(posts).toEqual([
+    { path: `/tenants/T-ACME/secret-projects/${PID}/duplicate`, body: { copy_grants: false } },
+  ]);
 });

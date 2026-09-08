@@ -14,7 +14,9 @@ import {
   revealSecret,
   deleteSecret,
   bulkCreateSecrets,
+  duplicateProject,
   updateProject,
+  type SecretProjectDuplicate,
   type SecretProjectRead,
   type SecretProjectUpdate,
 } from "../client/secrets";
@@ -159,6 +161,24 @@ export function buildProjectUpdate(flags: ProjectUpdateFlags): SecretProjectUpda
   return body;
 }
 
+export interface ProjectDuplicateFlags {
+  name?: string;
+  copyGrants?: boolean;
+}
+
+/** Turn `secrets projects duplicate` flags into the POST body. Name rules
+ *  mirror buildProjectUpdate; an omitted name lets the API default it to
+ *  "<source name> (copy)". */
+export function buildProjectDuplicate(flags: ProjectDuplicateFlags): SecretProjectDuplicate {
+  const body: SecretProjectDuplicate = { copy_grants: flags.copyGrants === true };
+  if (flags.name !== undefined) {
+    const name = flags.name.trim();
+    if (!name) throw misuse("--name must not be empty");
+    body.name = name;
+  }
+  return body;
+}
+
 /** A rename must not collide with another project's name: the API has no
  *  uniqueness rule, but `--project <name>` (and every other name lookup in
  *  this CLI) needs one match, so a duplicate would make both projects
@@ -284,6 +304,28 @@ export function registerSecrets(program: Command): void {
         if (body.name !== undefined) assertProjectNameAvailable(projects, body.name, pid);
         const updated = await updateProject(ctx.client, tid, pid, body);
         printObject(updated as unknown as Record<string, unknown>, fmt);
+      }),
+    "secret_project:write",
+  );
+
+  requireCapability(
+    projectsGroup
+      .command("duplicate <project>")
+      .description("copy a secret project server-side; values are copied encrypted, never shown")
+      .option("--name <name>", 'name for the copy (default: "<source name> (copy)")')
+      .option("--copy-grants", "also copy manual access grants (admin only)")
+      .action(async (projectRef: string, opts: ProjectDuplicateFlags) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const body = buildProjectDuplicate(opts);
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const projects = await listProjects(ctx.client, tid);
+        const pid = resolveProjectId(projects, projectRef);
+        // Unlike a rename there is no "self": the copy's name must be free of
+        // every existing project, the source included.
+        if (body.name !== undefined) assertProjectNameAvailable(projects, body.name, "");
+        const created = await duplicateProject(ctx.client, tid, pid, body);
+        printObject(created as unknown as Record<string, unknown>, fmt);
       }),
     "secret_project:write",
   );
