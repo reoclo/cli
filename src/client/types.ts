@@ -43,6 +43,12 @@ export interface Application {
   repository_id: string | null;
   current_deployment_id: string | null;
   created_at: string;
+  /**
+   * Read-only, server-computed. "linked" = the bound container was created by
+   * something other than Reoclo; "reoclo" = Reoclo deployed it (or there is no
+   * container yet). Optional because older API versions omit the field.
+   */
+  container_origin?: "linked" | "reoclo";
 }
 
 export interface Deployment {

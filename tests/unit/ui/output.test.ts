@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { Command } from "commander";
-import { globalOutput, printMutation, resolveFormat } from "../../../src/ui/output";
+import { globalOutput, printList, printMutation, resolveFormat } from "../../../src/ui/output";
 
 test("resolveFormat respects explicit flag", () => {
   expect(resolveFormat("json")).toBe("json");
@@ -79,5 +79,72 @@ describe("printMutation", () => {
     expect(captured).toContain("id: abc-123");
     expect(captured).toContain("name: x");
     expect(captured).not.toContain("✓ created");
+  });
+});
+
+// Mirrors the ORIGIN column added to `apps ls` (src/commands/apps.ts) for the
+// container_origin field returned by the platform API (linked vs. reoclo,
+// optional because older API versions omit it entirely).
+describe("printList ORIGIN column (apps ls container_origin)", () => {
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured: string;
+
+  const columns: Array<{ key: string; label: string }> = [
+    { key: "slug", label: "SLUG" },
+    { key: "container_origin", label: "ORIGIN" },
+  ];
+
+  const rows: Array<Record<string, unknown>> = [
+    { slug: "linked-app", container_origin: "linked" },
+    { slug: "reoclo-app", container_origin: "reoclo" },
+    { slug: "legacy-app" }, // field absent, e.g. an older API version
+  ];
+
+  beforeEach(() => {
+    captured = "";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout.write as any) = (chunk: unknown): boolean => {
+      captured += typeof chunk === "string" ? chunk : Buffer.from(chunk as Buffer).toString();
+      return true;
+    };
+  });
+
+  afterEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout.write as any) = origWrite;
+  });
+
+  test("text mode prints linked, reoclo, and a blank cell for the absent field", () => {
+    printList(rows, columns, "text");
+    const lines = captured.trim().split("\n");
+    expect(lines[0]).toContain("ORIGIN");
+    expect(lines[1]?.trim().endsWith("linked")).toBe(true);
+    expect(lines[2]?.trim().endsWith("reoclo")).toBe(true);
+    // legacy-app has no container_origin: the row still renders, with an
+    // empty ORIGIN cell rather than "undefined" or a thrown error.
+    expect(lines[3]).toContain("legacy-app");
+    expect(lines[3]).not.toContain("undefined");
+  });
+
+  test("json mode passes container_origin through untouched, and omits it when absent", () => {
+    printList(rows, columns, "json");
+    const parsed = captured
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(parsed[0]).toEqual({ slug: "linked-app", container_origin: "linked" });
+    expect(parsed[1]).toEqual({ slug: "reoclo-app", container_origin: "reoclo" });
+    expect(parsed[2]).toEqual({ slug: "legacy-app" });
+    expect(Object.prototype.hasOwnProperty.call(parsed[2], "container_origin")).toBe(false);
+  });
+
+  test("yaml mode passes container_origin through untouched, and omits it when absent", () => {
+    printList(rows, columns, "yaml");
+    expect(captured).toContain("container_origin: linked");
+    expect(captured).toContain("container_origin: reoclo");
+    // legacy-app's block must not claim any container_origin value.
+    const legacyBlock = captured.split("---\n")[3] ?? "";
+    expect(legacyBlock).toContain("slug: legacy-app");
+    expect(legacyBlock).not.toContain("container_origin");
   });
 });
