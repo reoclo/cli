@@ -60,6 +60,7 @@ export function registerApps(program: Command): void {
           { key: "server_slug", label: "SERVER" },
           { key: "ci", label: "CI" },
           { key: "current_deployment_id", label: "DEPLOYMENT" },
+          { key: "container_origin", label: "ORIGIN" },
         ],
         fmt,
       );
@@ -82,7 +83,19 @@ export function registerApps(program: Command): void {
         const tid = await requireTenantId(ctx);
         const id = await resolveApp(ctx.client, tid, idOrSlug);
         const app = await ctx.client.get<Application>(`/tenants/${tid}/applications/${id}`);
-        printObject(app as unknown as Record<string, unknown>, fmt);
+        if (fmt === "text") {
+          // Keep JSON/yaml as an untouched raw dump; for text, pull
+          // container_origin out of the generic field list and print it as
+          // its own labeled line instead (same info as the `apps ls` ORIGIN
+          // column). Omitted entirely when the API doesn't return the field.
+          const { container_origin } = app;
+          const rest: Record<string, unknown> = { ...(app as unknown as Record<string, unknown>) };
+          delete rest["container_origin"];
+          printObject(rest, fmt);
+          if (container_origin) process.stdout.write(`Origin:  ${container_origin}\n`);
+        } else {
+          printObject(app as unknown as Record<string, unknown>, fmt);
+        }
       }),
     { args: [{ slot: 0, resource: "apps" }] },
   );
