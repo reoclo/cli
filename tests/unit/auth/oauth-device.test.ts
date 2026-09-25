@@ -386,6 +386,45 @@ describe("device login on a network that resets connections (field report 2026-0
     expect(err.hint).toContain("--verbose");
   });
 
+  test("a used device code right after a failed poll says the approval response was lost", async () => {
+    // The API issues tokens for a device code once. If that response is lost on
+    // the network, the next poll gets invalid_grant: tell the user what happened.
+    let calls = 0;
+    globalThis.fetch = mock(() => {
+      calls++;
+      if (calls === 1) return Promise.reject(bunReset());
+      return Promise.resolve(
+        jsonRes(
+          { detail: { error: "invalid_grant", error_description: "Device code already used" } },
+          400,
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    const err = (await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5, fast).catch(
+      (e: unknown) => e,
+    )) as DeviceFlowError & { hint?: string };
+
+    expect(err).toBeInstanceOf(DeviceFlowError);
+    expect(err.message).toContain("response was lost");
+    expect(err.hint).toContain("reoclo login");
+  });
+
+  test("invalid_grant without a failed poll before it keeps the server's wording", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        jsonRes({ detail: { error: "invalid_grant", error_description: "Device code not found" } }, 400),
+      ),
+    ) as unknown as typeof fetch;
+
+    const err = (await pollForToken(AUTH_BASE, DEVICE_CODE, CLIENT_ID, 5, fast).catch(
+      (e: unknown) => e,
+    )) as DeviceFlowError;
+
+    expect(err.message).toContain("Device code not found");
+    expect(err.message).not.toContain("response was lost");
+  });
+
   test("aborting the login still reads as a cancel, not a network error", async () => {
     const ctrl = new AbortController();
     globalThis.fetch = mock((_url: string, init?: RequestInit) => {

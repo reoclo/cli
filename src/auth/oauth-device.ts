@@ -2,6 +2,7 @@
 // Pure OAuth 2.1 device-flow helpers (RFC 8628). No side effects beyond fetch.
 
 import { NetworkError } from "../client/errors";
+import { EXIT } from "../client/exit-codes";
 import { sendWithRetry } from "../client/transport";
 import { verboseLogger } from "../client/verbose";
 
@@ -190,6 +191,7 @@ export async function pollForToken(
       }
       throw e;
     }
+    const afterFailedPoll = failedPolls > 0;
     failedPolls = 0;
 
     if (res.ok) {
@@ -222,6 +224,19 @@ export async function pollForToken(
     }
     if (errorCode === "access_denied") {
       throw new DeviceFlowError("access_denied", "authorization cancelled by user");
+    }
+
+    // A device code issues tokens once. invalid_grant right after a poll that
+    // got no response means the server approved and answered that poll, and
+    // the answer was lost on the way back.
+    if (errorCode === "invalid_grant" && afterFailedPoll) {
+      const err = new DeviceFlowError(
+        "network",
+        "the login was approved, but the response was lost on the network",
+      );
+      err.exitCode = EXIT.NETWORK;
+      err.hint = "Run 'reoclo login' again.";
+      throw err;
     }
 
     // Unknown error
