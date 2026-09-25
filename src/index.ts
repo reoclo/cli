@@ -49,6 +49,7 @@ import {
   isEnvCredential,
 } from "./client/bootstrap";
 import { automationAllowedCommands, commandSupportedBy } from "./client/routing";
+import { setVerbose } from "./client/verbose";
 import { maybeSpawnBackgroundRefresh } from "./completion/refresh";
 import {
   maybeNotifyUpdate,
@@ -210,6 +211,9 @@ if (import.meta.main) {
     setGlobalProfileOverride(actionCommand.optsWithGlobals().profile as string | undefined);
     // Same for the global --org flag → per-invocation organization override.
     setGlobalOrgOverride(actionCommand.optsWithGlobals().org as string | undefined);
+    // --verbose: log each HTTP request (credentials redacted) to stderr before
+    // it is sent, so a request that dies with no response still leaves a trace.
+    setVerbose(Boolean(actionCommand.optsWithGlobals().verbose));
 
     // For nested commands like `apps deploy`, actionCommand is the leaf
     // ("deploy"), and its parent is the group ("apps"). For top-level

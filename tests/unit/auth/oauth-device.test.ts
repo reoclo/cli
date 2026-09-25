@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { setVerbose } from "../../../src/client/verbose";
 import {
   initiateDeviceFlow,
   pollForToken,
@@ -285,6 +286,59 @@ describe("refreshAccessToken", () => {
     const err = await refreshAccessToken(AUTH_BASE, "bad_rt", CLIENT_ID).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DeviceFlowError);
     expect((err as DeviceFlowError).status).toBe(400);
+  });
+
+  describe("connection resets (field report 2026-09-24)", () => {
+    function bunReset(): Error & { code: string } {
+      const e = new Error(
+        "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+      ) as Error & { code: string };
+      e.code = "ECONNRESET";
+      return e;
+    }
+
+    afterEach(() => setVerbose(false));
+
+    test("a reset reads as plain words, without Bun's fetch() advice", async () => {
+      globalThis.fetch = mock(() => Promise.reject(bunReset())) as unknown as typeof fetch;
+
+      const err = (await refreshAccessToken(AUTH_BASE, "rt", CLIENT_ID).catch((e: unknown) => e)) as DeviceFlowError;
+
+      expect(err).toBeInstanceOf(DeviceFlowError);
+      expect(err.code).toBe("network");
+      expect(err.status).toBeUndefined();
+      expect(err.message).toContain("closed the connection before responding");
+      expect(err.message).not.toContain("second argument to fetch");
+    });
+
+    test("makes one attempt: refreshSession owns the retry policy for the rotating token", async () => {
+      let calls = 0;
+      globalThis.fetch = mock(() => {
+        calls++;
+        return Promise.reject(bunReset());
+      }) as unknown as typeof fetch;
+
+      await refreshAccessToken(AUTH_BASE, "rt", CLIENT_ID).catch(() => undefined);
+
+      expect(calls).toBe(1);
+    });
+
+    test("--verbose logs the refresh request, never the refresh token or the new tokens", async () => {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(jsonRes({ access_token: "new-access-xyz", refresh_token: "new-refresh-xyz", scope: "openid" })),
+      ) as unknown as typeof fetch;
+      const lines: string[] = [];
+      setVerbose(true, (l) => lines.push(l));
+
+      await refreshAccessToken(AUTH_BASE, "old-refresh-secret", CLIENT_ID);
+
+      const text = lines.join("\n");
+      expect(text).toContain("POST ");
+      expect(text).toContain("/oauth/token");
+      expect(text).not.toContain("old-refresh-secret");
+      expect(text).not.toContain("new-access-xyz");
+      expect(text).not.toContain("new-refresh-xyz");
+    });
   });
 
   test("leaves status undefined on a genuine network failure", async () => {

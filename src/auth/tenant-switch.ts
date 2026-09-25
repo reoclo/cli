@@ -5,6 +5,9 @@
 // and the per-invocation `--org` / $REOCLO_ORG override in bootstrap() (which
 // uses it in-memory only). The mint never mutates stored state itself.
 
+import { sendWithRetry, type FetchLike } from "../client/transport";
+import { verboseLogger } from "../client/verbose";
+
 export interface TenantSwitchParams {
   /** OAuth issuer base, e.g. https://auth.reoclo.com (trailing slash tolerated). */
   authUrl: string;
@@ -23,17 +26,27 @@ export class TenantSwitchError extends Error {
   }
 }
 
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+/** Transport knobs for {@link mintTenantSwitchToken}, injectable for tests. */
+export interface TenantSwitchTransport {
+  sleep?: (ms: number) => Promise<void>;
+  /** Defaults to the process-wide --verbose logger. */
+  log?: (line: string) => void;
+}
 
 /**
  * POST the `tenant_switch` grant and return the new access token. Throws
  * {@link TenantSwitchError} with the server's `error_description` (when present)
- * on a non-2xx response. `fetchImpl` is injectable for tests; it defaults to
- * the global `fetch`.
+ * on a non-2xx response, and a NetworkError when no response arrives.
+ * `fetchImpl` is injectable for tests; it defaults to the global `fetch`.
+ *
+ * Unlike most POSTs, this one retries a connection that fails before any
+ * response: the grant reuses the caller's session and rotates nothing
+ * server-side, so a repeat mints one more short-lived token and nothing else.
  */
 export async function mintTenantSwitchToken(
   params: TenantSwitchParams,
   fetchImpl: FetchLike = fetch,
+  transport: TenantSwitchTransport = {},
 ): Promise<string> {
   const body = new URLSearchParams({
     grant_type: "tenant_switch",
@@ -41,14 +54,23 @@ export async function mintTenantSwitchToken(
     current_access_token: params.currentAccessToken,
     tenant_id: params.tenantId,
   });
-  const res = await fetchImpl(`${params.authUrl.replace(/\/$/, "")}/oauth/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
+  const res = await sendWithRetry(
+    `${params.authUrl.replace(/\/$/, "")}/oauth/token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: body.toString(),
     },
-    body: body.toString(),
-  });
+    {
+      retries: 2,
+      fetchImpl,
+      sleep: transport.sleep,
+      log: transport.log ?? verboseLogger(),
+    },
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     let detail = text;

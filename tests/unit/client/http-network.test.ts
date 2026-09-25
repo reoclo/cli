@@ -16,7 +16,8 @@ import { HttpClient } from "../../../src/client/http";
  * exercise the wiring, with the error shapes Bun actually produces.
  */
 
-/** Bun's connection-refused / DNS-failure shape, verified against Bun 1.3.x. */
+/** Bun's connection-refused / DNS-failure shape, verified against Bun 1.3.x. Bun 1.4.x keeps the
+ *  code and message but names it TypeError; the wrapping must not care either way. */
 function bunConnectionError(): Error & { code: string } {
   const e = new Error("Unable to connect. Is the computer able to access the url?") as Error & {
     code: string;
@@ -44,7 +45,13 @@ describe("HttpClient network error wrapping", () => {
     globalThis.fetch = originalFetch;
   });
 
-  const client = () => new HttpClient({ baseUrl: "https://api.example.com", token: "t" });
+  // No-op sleep: a failed GET now retries with backoff; the tests need not wait it out.
+  const client = () =>
+    new HttpClient({
+      baseUrl: "https://api.example.com",
+      token: "t",
+      sleep: () => Promise.resolve(),
+    });
 
   test("Bun connection-refused is wrapped as NetworkError (exit 7), not leaked as generic", async () => {
     globalThis.fetch = mock(() => Promise.reject(bunConnectionError())) as unknown as typeof fetch;
@@ -68,7 +75,7 @@ describe("HttpClient network error wrapping", () => {
     expect((err as NetworkError).exitCode).toBe(7);
   });
 
-  test("AbortError (timeout) is still wrapped as NetworkError", async () => {
+  test("an AbortError raised by the runtime is still wrapped as NetworkError", async () => {
     globalThis.fetch = mock(() => Promise.reject(abortError())) as unknown as typeof fetch;
 
     const err = await client()
@@ -116,6 +123,137 @@ describe("HttpClient network error wrapping", () => {
 
     expect(err).not.toBeInstanceOf(NetworkError);
     expect(err).toBe("just a string");
+  });
+
+  describe("connection resets (field report 2026-09-24)", () => {
+    /** Bun's shape when the peer resets the socket before any response. */
+    function bunReset(): Error & { code: string } {
+      const e = new Error(
+        "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+      ) as Error & { code: string };
+      e.code = "ECONNRESET";
+      return e;
+    }
+
+    const fastClient = () =>
+      new HttpClient({
+        baseUrl: "https://api.example.com",
+        token: "t",
+        sleep: () => Promise.resolve(),
+      });
+
+    test("a GET that is reset before any response is retried on a fresh attempt", async () => {
+      let calls = 0;
+      globalThis.fetch = mock(() => {
+        calls++;
+        return calls === 1
+          ? Promise.reject(bunReset())
+          : Promise.resolve(
+              new Response('{"ok":true}', {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+      }) as unknown as typeof fetch;
+
+      const out = await fastClient().get<{ ok: boolean }>("/x");
+
+      expect(out.ok).toBe(true);
+      expect(calls).toBe(2);
+    });
+
+    test("a POST is never retried: the server may have acted on it", async () => {
+      let calls = 0;
+      globalThis.fetch = mock(() => {
+        calls++;
+        return Promise.reject(bunReset());
+      }) as unknown as typeof fetch;
+
+      const err = await fastClient()
+        .post("/deploy", { a: 1 })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(NetworkError);
+      expect(calls).toBe(1);
+    });
+
+    for (const method of ["put", "patch", "del"] as const) {
+      test(`${method.toUpperCase()} is never retried either`, async () => {
+        let calls = 0;
+        globalThis.fetch = mock(() => {
+          calls++;
+          return Promise.reject(bunReset());
+        }) as unknown as typeof fetch;
+
+        const c = fastClient();
+        const err = await (method === "del" ? c.del("/x") : c[method]("/x", { a: 1 })).catch(
+          (e: unknown) => e,
+        );
+
+        expect(err).toBeInstanceOf(NetworkError);
+        expect(calls).toBe(1);
+      });
+    }
+
+    test("our own timeout is honored per attempt and is NOT retried", async () => {
+      let calls = 0;
+      // Settles only when the attempt's signal aborts, like a server that never answers.
+      globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+        calls++;
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const e = new Error("The operation was aborted.");
+            e.name = "AbortError";
+            reject(e);
+          });
+        });
+      }) as unknown as typeof fetch;
+      const c = new HttpClient({
+        baseUrl: "https://api.example.com",
+        token: "t",
+        timeoutMs: 10,
+        sleep: () => Promise.resolve(),
+      });
+
+      const err = (await c.get("/x").catch((e: unknown) => e)) as NetworkError;
+
+      expect(err).toBeInstanceOf(NetworkError);
+      expect(err.message).toContain("timed out after 10 ms");
+      expect(calls).toBe(1);
+    });
+
+    test("the final error names the method and URL and carries a hint", async () => {
+      globalThis.fetch = mock(() => Promise.reject(bunReset())) as unknown as typeof fetch;
+
+      const err = (await fastClient()
+        .get("/auth/me")
+        .catch((e: unknown) => e)) as NetworkError;
+
+      expect(err).toBeInstanceOf(NetworkError);
+      expect(err.exitCode).toBe(7);
+      // The token picks the API prefix (/mcp for a bare token); assert around it.
+      expect(err.message).toMatch(/GET https:\/\/api\.example\.com\/\S*auth\/me/);
+      expect(err.message).not.toContain("second argument to fetch");
+      expect(err.hint).toContain("--verbose");
+    });
+
+    test("with a logger, each request is logged before it is sent", async () => {
+      globalThis.fetch = mock(() => Promise.reject(bunReset())) as unknown as typeof fetch;
+      const lines: string[] = [];
+      const c = new HttpClient({
+        baseUrl: "https://api.example.com",
+        token: "secret-token-value",
+        sleep: () => Promise.resolve(),
+        log: (l) => lines.push(l),
+      });
+
+      await c.get("/auth/me").catch(() => undefined);
+
+      const text = lines.join("\n");
+      expect(text).toMatch(/> GET https:\/\/api\.example\.com\/\S*auth\/me/);
+      expect(text).toContain("Authorization: Bearer [redacted]");
+      expect(text).not.toContain("secret-token-value");
+    });
   });
 
   test("our own errors are NOT mislabelled as network — request building happens outside the try", async () => {

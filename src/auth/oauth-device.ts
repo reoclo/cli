@@ -1,6 +1,10 @@
 // src/auth/oauth-device.ts
 // Pure OAuth 2.1 device-flow helpers (RFC 8628). No side effects beyond fetch.
 
+import { NetworkError } from "../client/errors";
+import { sendWithRetry } from "../client/transport";
+import { verboseLogger } from "../client/verbose";
+
 export interface DeviceInitResponse {
   device_code: string;
   user_code: string;
@@ -197,18 +201,29 @@ export async function refreshAccessToken(
   // targeting different orgs can't clobber each other.
   if (tenantId) body.set("tenant_id", tenantId);
 
+  // One attempt only (retries: 0). The refresh token rotates, so a blind
+  // resend after the server already rotated it trips reuse detection;
+  // refreshSession owns the retry policy. The transport still gives --verbose
+  // a trace and turns Bun's error into plain words.
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
+    res = await sendWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
       },
-      body: body.toString(),
-    });
+      { retries: 0, log: verboseLogger() },
+    );
   } catch (e) {
-    throw new DeviceFlowError("network", `network error during token refresh: ${(e as Error).message}`);
+    if (e instanceof NetworkError) {
+      throw new DeviceFlowError("network", `token refresh failed: ${e.message}`);
+    }
+    throw e;
   }
 
   if (!res.ok) {
