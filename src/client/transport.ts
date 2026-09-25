@@ -36,11 +36,18 @@ const BACKOFF_MS = [250, 750];
 const NETWORK_HINT = "Check your network connection";
 const VERBOSE_HINT = "run with --verbose to see each request";
 
+/** Statuses whose Response must have a null body (the constructor throws otherwise). */
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
 /**
  * Send `init` to `url`, retrying up to `opts.retries` times when the connection
- * fails before any response. The transport owns the abort signal: each attempt
- * gets its own AbortController for its timeout, and any `init.signal` is
- * replaced (no caller passes one today).
+ * fails before the full response arrives. Each attempt reads the whole body, so
+ * the timeout covers it and a connection that dies mid-body is handled like one
+ * that dies before the headers; the returned Response is fully buffered.
+ *
+ * Each attempt gets its own AbortController for its timeout, combined with any
+ * `init.signal`. A caller abort ends the call at once: its error is rethrown
+ * as-is, never wrapped and never retried.
  */
 export async function sendWithRetry(
   url: string,
@@ -57,35 +64,50 @@ export async function sendWithRetry(
   for (let attempt = 1; ; attempt++) {
     if (log) logRequest(log, method, url, init);
     const ctrl = new AbortController();
+    const signal = init.signal ? AbortSignal.any([init.signal, ctrl.signal]) : ctrl.signal;
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const started = Date.now();
+    // Set once the headers arrive: a failure after that happened mid-body.
+    let status: number | undefined;
     try {
-      const res = await fetchImpl(url, { ...init, signal: ctrl.signal });
+      const res = await fetchImpl(url, { ...init, signal });
+      status = res.status;
+      const body =
+        NULL_BODY_STATUSES.has(res.status) || method === "HEAD" ? null : await res.arrayBuffer();
       log?.(`< ${res.status} ${method} ${url} (${Date.now() - started} ms)`);
-      return res;
+      // fetch() already decoded the body: these two described the encoded one.
+      const headers = new Headers(res.headers);
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(body, { status: res.status, statusText: res.statusText, headers });
     } catch (e) {
       // Disarm first: this attempt is over, and its timer must not fire
       // during the backoff sleep below.
       clearTimeout(timer);
-      // fetch() rejects only when no response arrived: DNS, connect, TLS,
-      // a reset, or our own timeout. HTTP errors resolve and are returned
-      // above, so every Error here is a transport failure. Match on that, not
-      // on runtime-specific error names (Bun and Node disagree).
+      // The caller cancelled: not a network failure, not ours to retry.
+      if (init.signal?.aborted) throw e;
+      // fetch() and the body read reject only on a transport failure (DNS,
+      // connect, TLS, a reset, or our own timeout). HTTP errors resolve and
+      // are returned above. Match on that, not on runtime-specific error
+      // names (Bun and Node disagree).
       if (!(e instanceof Error)) throw e;
       const timedOut = ctrl.signal.aborted;
-      const reason = timedOut
-        ? `timed out after ${formatDuration(timeoutMs)} with no response`
-        : describeTransportFailure(e);
+      const reason = failureReason(e, timedOut, timeoutMs, status);
       const retrying = !timedOut && attempt < attempts;
       log?.(
         `! ${method} ${url} failed: ${reason} (attempt ${attempt} of ${attempts}${retrying ? ", retrying" : ""})`,
       );
       if (!retrying) {
-        throw new NetworkError(
-          `network error: ${method} ${url}: ${reason}`,
-          e,
-          hintFor(attempt, Boolean(log)),
-        );
+        // A success answer to a request that is not safe to repeat means the
+        // server may have applied it: say so, because running it again could
+        // apply it twice. A caller that allowed retries has declared the
+        // request safe to repeat, so that warning would only mislead.
+        const safeToRepeat = opts.retries > 0 || SAFE_TO_REPEAT.has(method);
+        const hint =
+          status !== undefined && status >= 200 && status < 300 && !safeToRepeat
+            ? "The server answered, so it may have applied the request. Check the result before you run it again."
+            : hintFor(attempt, Boolean(log), status !== undefined);
+        throw new NetworkError(`network error: ${method} ${url}: ${reason}`, e, hint);
       }
       await sleep(BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!);
     } finally {
@@ -94,13 +116,39 @@ export async function sendWithRetry(
   }
 }
 
+/** Methods that are safe to send again after a connection failure. Anything
+ *  else may already have acted on the server. */
+export const SAFE_TO_REPEAT: ReadonlySet<string> = new Set(["GET", "HEAD"]);
+
+function failureReason(
+  e: Error,
+  timedOut: boolean,
+  timeoutMs: number,
+  status: number | undefined,
+): string {
+  const afterHeaders = status !== undefined ? ` (status ${status})` : "";
+  if (timedOut) {
+    return status !== undefined
+      ? `timed out after ${formatDuration(timeoutMs)} while reading the response${afterHeaders}`
+      : `timed out after ${formatDuration(timeoutMs)} with no response`;
+  }
+  if (status !== undefined) {
+    return `the connection closed before the full response arrived${afterHeaders}`;
+  }
+  return describeTransportFailure(e);
+}
+
 function formatDuration(ms: number): string {
   return ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${ms} ms`;
 }
 
 /** What to do next. Skips "--verbose" when the user already has it on. */
-function hintFor(attempts: number, verbose: boolean): string {
+function hintFor(attempts: number, verbose: boolean, cutOff: boolean): string {
   const action = verbose ? `${NETWORK_HINT}.` : `${NETWORK_HINT}, or ${VERBOSE_HINT}.`;
+  if (cutOff) {
+    const tries = attempts > 1 ? ` (${attempts} attempts)` : "";
+    return `The response was cut off${tries}. ${action}`;
+  }
   return attempts > 1 ? `No response after ${attempts} attempts. ${action}` : action;
 }
 

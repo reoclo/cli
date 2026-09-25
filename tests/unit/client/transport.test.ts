@@ -210,6 +210,188 @@ describe("sendWithRetry", () => {
   });
 });
 
+/** A body that yields some bytes, then dies the way Bun reports a reset. */
+function cutOffBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('{"partial":'));
+      c.error(bunReset());
+    },
+  });
+}
+
+describe("sendWithRetry reads the whole body inside the attempt", () => {
+  // fetch() resolves when the headers arrive. A connection that dies while the
+  // body streams in used to surface later from res.json() as a raw runtime
+  // error (exit 1), outside the timeout and outside any retry.
+
+  test("a GET whose body is cut off is retried, and the full body is returned", async () => {
+    let calls = 0;
+    const impl = (): Promise<Response> => {
+      calls++;
+      return Promise.resolve(
+        calls === 1
+          ? new Response(cutOffBody(), { status: 200 })
+          : new Response('{"ok":true}', {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+      );
+    };
+    const res = await sendWithRetry(URL_, { method: "GET" }, opts({ fetchImpl: impl }));
+    expect(calls).toBe(2);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  test("a POST whose body is cut off is not retried, and says the server may have applied it", async () => {
+    let calls = 0;
+    const impl = (): Promise<Response> => {
+      calls++;
+      return Promise.resolve(new Response(cutOffBody(), { status: 200 }));
+    };
+    const err = (await sendWithRetry(
+      URL_,
+      { method: "POST" },
+      opts({ retries: 0, fetchImpl: impl }),
+    ).catch((e: unknown) => e)) as NetworkError;
+    expect(calls).toBe(1);
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(err.message).toContain("before the full response arrived");
+    expect(err.hint).toContain("may have applied");
+  });
+
+  test("a POST cut off after a 4xx answer does not claim it may have applied", async () => {
+    const impl = (): Promise<Response> =>
+      Promise.resolve(new Response(cutOffBody(), { status: 403 }));
+    const err = (await sendWithRetry(
+      URL_,
+      { method: "POST" },
+      opts({ retries: 0, fetchImpl: impl }),
+    ).catch((e: unknown) => e)) as NetworkError;
+    expect(err.hint).not.toContain("may have applied");
+  });
+
+  test("a POST the caller marked safe to repeat never gets the may-have-applied hint", async () => {
+    // tenant_switch retries: the user cannot act on "check the result" there.
+    const impl = (): Promise<Response> =>
+      Promise.resolve(new Response(cutOffBody(), { status: 200 }));
+    const err = (await sendWithRetry(URL_, { method: "POST" }, opts({ fetchImpl: impl })).catch(
+      (e: unknown) => e,
+    )) as NetworkError;
+    expect(err.hint).not.toContain("may have applied");
+    expect(err.hint).toContain("cut off");
+  });
+
+  test("a GET cut off on every attempt says the response was cut off, not that none came", async () => {
+    const impl = (): Promise<Response> =>
+      Promise.resolve(new Response(cutOffBody(), { status: 200 }));
+    const err = (await sendWithRetry(URL_, { method: "GET" }, opts({ fetchImpl: impl })).catch(
+      (e: unknown) => e,
+    )) as NetworkError;
+    expect(err.hint).toContain("cut off");
+    expect(err.hint).not.toContain("No response");
+  });
+
+  test("the buffered response drops headers that described the encoded body", async () => {
+    // fetch() already decoded the body, so content-encoding and the encoded
+    // content-length no longer describe what the caller reads.
+    const impl = (): Promise<Response> =>
+      Promise.resolve(
+        new Response('{"a":1}', {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+            "content-length": "3",
+          },
+        }),
+      );
+    const res = await sendWithRetry(URL_, { method: "GET" }, opts({ fetchImpl: impl }));
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.json()).toEqual({ a: 1 });
+  });
+
+  test("the timeout covers the body read", async () => {
+    // Headers arrive, then the body never finishes until the attempt aborts.
+    const impl = (_url: string, init: RequestInit): Promise<Response> => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("{"));
+          init.signal?.addEventListener("abort", () => {
+            const e = new Error("The operation was aborted.");
+            e.name = "AbortError";
+            c.error(e);
+          });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    };
+    const err = (await sendWithRetry(
+      URL_,
+      { method: "GET" },
+      opts({ fetchImpl: impl, timeoutMs: 10 }),
+    ).catch((e: unknown) => e)) as NetworkError;
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(err.message).toContain("timed out");
+  });
+
+  test("a 204 comes back as a 204 with no body", async () => {
+    const impl = (): Promise<Response> => Promise.resolve(new Response(null, { status: 204 }));
+    const res = await sendWithRetry(URL_, { method: "DELETE" }, opts({ fetchImpl: impl }));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+});
+
+describe("sendWithRetry honors the caller's abort signal", () => {
+  test("a caller abort rejects with the caller's error, is not a NetworkError, and is not retried", async () => {
+    let calls = 0;
+    const caller = new AbortController();
+    const impl = (_url: string, init: RequestInit): Promise<Response> => {
+      calls++;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          const e = new Error("The operation was aborted.");
+          e.name = "AbortError";
+          reject(e);
+        });
+      });
+    };
+    const p = sendWithRetry(
+      URL_,
+      { method: "GET", signal: caller.signal },
+      opts({ fetchImpl: impl }),
+    );
+    caller.abort();
+    const err = await p.catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(NetworkError);
+    expect((err as Error).name).toBe("AbortError");
+    expect(calls).toBe(1);
+  });
+
+  test("with a caller signal present, our own timeout still fires", async () => {
+    const caller = new AbortController();
+    const impl = (_url: string, init: RequestInit): Promise<Response> =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          const e = new Error("The operation was aborted.");
+          e.name = "AbortError";
+          reject(e);
+        });
+      });
+    const err = (await sendWithRetry(
+      URL_,
+      { method: "GET", signal: caller.signal },
+      opts({ fetchImpl: impl, timeoutMs: 10 }),
+    ).catch((e: unknown) => e)) as NetworkError;
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(err.message).toContain("timed out");
+  });
+});
+
 describe("sendWithRetry verbose log", () => {
   const TOKEN = "eyJhbGciOiJSUzI1NiJ9.secret-payload.signature";
 

@@ -133,6 +133,12 @@ export interface BootstrapOptions {
    *  rewrites the binding, so a stale or ungranted `.reoclo` org must not block
    *  it. `--org` / `$REOCLO_ORG` are unaffected. */
   ignoreProjectOrg?: boolean;
+  /** When true, make no network request: skip the proactive refresh and the
+   *  org-override probe + tenant_switch mint, but still run every local check.
+   *  index.ts's preAction hook passes this: it needs only the token type, and
+   *  the command's own bootstrap() does the network work once. With an
+   *  unresolved cross-org override, `tenantId` comes back undefined. */
+  networkFree?: boolean;
 }
 
 /**
@@ -353,9 +359,11 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // expiry, so a long-idle session doesn't eat a 401 round-trip. Reuses the
   // profile's single-flight + locked refresh (never double-spends the rotating
   // token).
-  token = await applyProactiveRefresh(
-    token, profile?.access_token_expires_at, profileRefreshCallback, Date.now(), PROACTIVE_SKEW_MS,
-  );
+  if (!opts.networkFree) {
+    token = await applyProactiveRefresh(
+      token, profile?.access_token_expires_at, profileRefreshCallback, Date.now(), PROACTIVE_SKEW_MS,
+    );
+  }
   effectiveToken = token;
 
   const orgOverride = resolveOrgOverride({
@@ -407,45 +415,55 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       err.exitCode = 4;
       throw err;
     }
-    // The probe reuses the profile's refresh callback so a stale-but-refreshable
-    // token transparently refreshes here, matching the non-override path.
-    const probe = new HttpClient({
-      baseUrl: api,
-      token,
-      profile: envCredential ? undefined : profileName,
-      refreshToken: profileRefreshCallback,
-    });
-    const me = await probe.get<Me>("/auth/me");
-    const target = (me.memberships ?? []).find((m) => m.tenant_slug === orgOverride);
-    if (!target) {
-      const granted = (me.memberships ?? []).map((m) => m.tenant_slug).join(", ") || "(none)";
-      const err = new Error(
-        `org '${orgOverride}' is not in your granted organizations.\n` +
-          `Granted: ${granted}\nRe-run 'reoclo login' to expand the consent.`,
-      ) as Error & { exitCode: number };
-      err.exitCode = 5;
-      throw err;
-    }
-    tenantId = target.tenant_id;
-    // Only mint a fresh token when actually crossing org boundaries — a
-    // tenant_switch back to the profile's own org is unnecessary.
-    if (target.tenant_id !== profile.tenant_id) {
-      effectiveToken = await mintTenantSwitchToken({
-        authUrl: profile.oauth_auth_url ?? defaultAuthUrl(),
-        clientId: profile.oauth_client_id ?? "reoclo-cli",
-        currentAccessToken: token,
-        tenantId: target.tenant_id,
+    if (opts.networkFree) {
+      // Resolving the override needs the network. Leave it to the command's
+      // own bootstrap(), and do not report the profile's tenant as this
+      // invocation's: the override points somewhere else.
+      tenantId = undefined;
+    } else {
+      // The probe reuses the profile's refresh callback so a stale-but-refreshable
+      // token transparently refreshes here, matching the non-override path.
+      const probe = new HttpClient({
+        baseUrl: api,
+        token,
+        profile: envCredential ? undefined : profileName,
+        refreshToken: profileRefreshCallback,
       });
-      // The minted token is fresh and bound to the override org; a 401-driven
-      // refresh would re-bind to the profile's default org, so suppress it.
-      suppressRefresh = true;
+      const me = await probe.get<Me>("/auth/me");
+      const target = (me.memberships ?? []).find((m) => m.tenant_slug === orgOverride);
+      if (!target) {
+        const granted = (me.memberships ?? []).map((m) => m.tenant_slug).join(", ") || "(none)";
+        const err = new Error(
+          `org '${orgOverride}' is not in your granted organizations.\n` +
+            `Granted: ${granted}\nRe-run 'reoclo login' to expand the consent.`,
+        ) as Error & { exitCode: number };
+        err.exitCode = 5;
+        throw err;
+      }
+      tenantId = target.tenant_id;
+      // Only mint a fresh token when actually crossing org boundaries — a
+      // tenant_switch back to the profile's own org is unnecessary.
+      if (target.tenant_id !== profile.tenant_id) {
+        effectiveToken = await mintTenantSwitchToken({
+          authUrl: profile.oauth_auth_url ?? defaultAuthUrl(),
+          clientId: profile.oauth_client_id ?? "reoclo-cli",
+          currentAccessToken: token,
+          tenantId: target.tenant_id,
+        });
+        // The minted token is fresh and bound to the override org; a 401-driven
+        // refresh would re-bind to the profile's default org, so suppress it.
+        suppressRefresh = true;
+      }
     }
   }
 
   // Scope the completion cache to the resolved tenant (honors --org override),
   // so opportunistic cache writes from this command land under the authorised
-  // account — never leaking into another account's completions.
-  setActiveTenantId(tenantId);
+  // account — never leaking into another account's completions. A networkFree
+  // probe leaves it alone: an unresolved override has no tenant yet, and an
+  // unset tenant falls back to the profile's home org. The command's own
+  // bootstrap() sets it.
+  if (!opts.networkFree) setActiveTenantId(tenantId);
 
   const client = new HttpClient({
     baseUrl: api,

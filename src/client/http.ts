@@ -1,6 +1,6 @@
 import { detectKeyType, apiPrefix } from "./routing";
 import { mapHttpError, ReauthRequiredError } from "./errors";
-import { sendWithRetry } from "./transport";
+import { SAFE_TO_REPEAT, sendWithRetry } from "./transport";
 import { verboseLogger } from "./verbose";
 import { updateProfileCapabilities as _updateProfileCapabilities } from "../config/store";
 
@@ -38,9 +38,6 @@ export interface HttpClientOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Methods that are safe to send again when the connection fails before any
- *  response. Anything else may already have acted on the server. */
-const RETRYABLE_METHODS = new Set(["GET", "HEAD"]);
 const CONNECTION_RETRIES = 2;
 
 export class HttpClient {
@@ -134,7 +131,7 @@ export class HttpClient {
     };
 
     return sendWithRetry(url, init, {
-      retries: RETRYABLE_METHODS.has(method) ? CONNECTION_RETRIES : 0,
+      retries: SAFE_TO_REPEAT.has(method) ? CONNECTION_RETRIES : 0,
       timeoutMs: this.opts.timeoutMs,
       log: this.opts.log ?? verboseLogger(),
       sleep: this.opts.sleep,
@@ -179,7 +176,14 @@ export class HttpClient {
       return this.parseResponse<T>(res, path);
     }
 
-    // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint)
+    // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint).
+    // Resending is safe for every method, POST and DELETE included. Handlers
+    // check permissions before they write, so a 403 normally means nothing was
+    // applied. The known exceptions write first and then refuse
+    // (api/routers/server_proxy.py link, api/routers/auth.py profile update),
+    // and both are idempotent, so a second send cannot apply anything twice.
+    // The second send can succeed when a permission changed in between
+    // (platform capabilities are cached server-side for up to 60 s).
     if (res.status === 403 && path !== "/auth/me/capabilities") {
       try {
         const capsRes = await this.doFetch("GET", "/auth/me/capabilities");

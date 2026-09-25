@@ -1,9 +1,9 @@
 // src/auth/tenant-switch.ts
 //
 // Mint an access token bound to a different organization via the OAuth
-// `tenant_switch` grant. Shared by `reoclo org use` (which persists the result)
-// and the per-invocation `--org` / $REOCLO_ORG override in bootstrap() (which
-// uses it in-memory only). The mint never mutates stored state itself.
+// `tenant_switch` grant. Used by bootstrap() for the per-invocation `--org` /
+// $REOCLO_ORG / `.reoclo` override, in memory only (there is no persistent
+// active org to switch). The mint never mutates stored state itself.
 
 import { sendWithRetry, type FetchLike } from "../client/transport";
 import { verboseLogger } from "../client/verbose";

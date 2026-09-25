@@ -226,7 +226,10 @@ if (import.meta.main) {
       parentName && parentName !== PROGRAM_NAME ? `${parentName} ${leafName}` : leafName;
 
     // Resolve the auth context (token + key type) without making a network call.
-    const ctx = await bootstrap({ orgRequired: false });
+    // networkFree matters under an org override: without it this probe ran the
+    // /auth/me lookup and tenant_switch mint, and the command's own bootstrap()
+    // ran them again.
+    const ctx = await bootstrap({ orgRequired: false, networkFree: true });
 
     if (!commandSupportedBy(commandPath, ctx.tokenType)) {
       const cmd = commandPath;

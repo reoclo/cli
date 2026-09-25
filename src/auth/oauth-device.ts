@@ -23,6 +23,10 @@ export interface TokenResponse {
 }
 
 export class DeviceFlowError extends Error {
+  /** Set for transport failures so the top-level handler exits 7 (network). */
+  exitCode?: number;
+  /** Printed by the top-level handler under the message. */
+  hint?: string;
   constructor(
     public code: "expired_token" | "access_denied" | "network",
     message: string,
@@ -36,6 +40,15 @@ export class DeviceFlowError extends Error {
   }
 }
 
+/** A DeviceFlowError for a request that got no complete response. Keeps the
+ *  network exit code and the transport's hint for the top-level handler. */
+function networkFailure(what: string, e: NetworkError): DeviceFlowError {
+  const err = new DeviceFlowError("network", `${what}: ${e.message}`);
+  err.exitCode = e.exitCode;
+  err.hint = e.hint;
+  return err;
+}
+
 /**
  * POST /oauth/device — initiate the device authorization flow.
  * Returns the device_code, user_code, verification_uri, etc.
@@ -44,21 +57,31 @@ export async function initiateDeviceFlow(
   authBaseUrl: string,
   clientId: string,
   scope: string,
+  transport: { sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<DeviceInitResponse> {
   const url = `${authBaseUrl.replace(/\/$/, "")}/oauth/device`;
   const body = new URLSearchParams({ client_id: clientId, scope });
+  // Safe to send again: a lost response leaves at most one unused device code
+  // on the server, and it expires on its own.
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
+    res = await sendWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
       },
-      body: body.toString(),
-    });
+      { retries: 2, sleep: transport.sleep, log: verboseLogger() },
+    );
   } catch (e) {
-    throw new DeviceFlowError("network", `network error during device init: ${(e as Error).message}`);
+    if (e instanceof NetworkError) {
+      throw networkFailure("device login could not start", e);
+    }
+    throw e;
   }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -91,6 +114,13 @@ function unwrapTokenError(raw: TokenErrorBody & FastAPIWrappedError): TokenError
   return raw;
 }
 
+/** Consecutive failed polls (no response) before the login gives up. */
+const MAX_FAILED_POLLS = 3;
+/** Ceiling for the failure backoff, so scattered failures cannot stretch the
+ *  wait past the device code's lifetime. A longer interval set by the server's
+ *  slow_down is kept as it is. */
+const MAX_BACKOFF_INTERVAL_SEC = 60;
+
 /**
  * POST /oauth/token — poll for the token using device_code grant.
  * Uses form-encoding per RFC 8628 / API spec.
@@ -102,17 +132,24 @@ export async function pollForToken(
   deviceCode: string,
   clientId: string,
   initialInterval: number,
-  options?: { onTick?: () => void; abortSignal?: AbortSignal },
+  options?: {
+    onTick?: () => void;
+    abortSignal?: AbortSignal;
+    /** Wait between polls (injectable for tests). */
+    sleep?: (ms: number) => Promise<void>;
+  },
 ): Promise<TokenResponse> {
   const url = `${authBaseUrl.replace(/\/$/, "")}/oauth/token`;
+  const wait = options?.sleep ?? sleep;
   let intervalSec = initialInterval;
+  let failedPolls = 0;
 
   while (true) {
     if (options?.abortSignal?.aborted) {
       throw new DeviceFlowError("access_denied", "polling aborted");
     }
 
-    await sleep(intervalSec * 1000);
+    await wait(intervalSec * 1000);
     options?.onTick?.();
 
     const body = new URLSearchParams({
@@ -123,21 +160,37 @@ export async function pollForToken(
 
     let res: Response;
     try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
+      res = await sendWithRetry(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: body.toString(),
+          signal: options?.abortSignal,
         },
-        body: body.toString(),
-        signal: options?.abortSignal,
-      });
+        { retries: 0, log: verboseLogger() },
+      );
     } catch (e) {
       if (options?.abortSignal?.aborted) {
         throw new DeviceFlowError("access_denied", "polling aborted");
       }
-      throw new DeviceFlowError("network", `network error during token poll: ${(e as Error).message}`);
+      if (e instanceof NetworkError) {
+        // The next poll is the retry: the loop sends one every interval
+        // anyway. Give up only after several failures in a row, so one reset
+        // does not end a login the user is approving in the browser. Back off
+        // first: RFC 8628 section 3.5 asks clients to poll less often after a
+        // connection failure.
+        failedPolls++;
+        intervalSec = Math.max(intervalSec, Math.min(intervalSec * 2, MAX_BACKOFF_INTERVAL_SEC));
+        if (failedPolls < MAX_FAILED_POLLS) continue;
+        throw networkFailure("token poll failed", e);
+      }
+      throw e;
     }
+    failedPolls = 0;
 
     if (res.ok) {
       return res.json() as Promise<TokenResponse>;
@@ -221,7 +274,7 @@ export async function refreshAccessToken(
     );
   } catch (e) {
     if (e instanceof NetworkError) {
-      throw new DeviceFlowError("network", `token refresh failed: ${e.message}`);
+      throw networkFailure("token refresh failed", e);
     }
     throw e;
   }
