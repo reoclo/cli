@@ -28,7 +28,7 @@ steps:
   # scripts/release.sh is the backstop. Bypass with [no-release] in a commit
   # message for docs-only / non-releasing PRs.
   - name: version-bump
-    image: oven/bun:1.3.11-slim
+    image: oven/bun:1.4.2-slim
     when:
       - event: pull_request
     commands:
@@ -61,7 +61,7 @@ steps:
   # unit loop + typecheck + build), minus the publish scripts. Catches breakage
   # (e.g. a bash-ism in packaging/install.sh) before it reaches a release tag.
   - name: test
-    image: oven/bun:1.3.11-slim
+    image: oven/bun:1.4.2-slim
     when:
       - event: pull_request
       - event: push
@@ -75,7 +75,7 @@ steps:
       - bun run build
 
   - name: release
-    image: oven/bun:1.3.11-slim
+    image: oven/bun:1.4.2-slim
     when:
       - event: tag
         ref: refs/tags/v*

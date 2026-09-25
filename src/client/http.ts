@@ -1,10 +1,14 @@
 import { detectKeyType, apiPrefix } from "./routing";
-import { mapHttpError, NetworkError, ReauthRequiredError } from "./errors";
+import { mapHttpError, ReauthRequiredError } from "./errors";
+import { SAFE_TO_REPEAT, sendWithRetry } from "./transport";
+import { verboseLogger } from "./verbose";
 import { updateProfileCapabilities as _updateProfileCapabilities } from "../config/store";
 
 export interface HttpClientOptions {
   baseUrl: string;
   token: string;
+  /** Timeout for each attempt (default 30 s). A GET that fails before any
+   *  response is sent again, so a call can take up to 3 attempts. */
   timeoutMs?: number;
   userAgent?: string;
   profile?: string;
@@ -28,7 +32,13 @@ export interface HttpClientOptions {
   mcpSource?: boolean;
   /** Overrides the token-derived API prefix for every request this client makes. */
   prefix?: string;
+  /** Receives --verbose request lines. Defaults to the process-wide --verbose logger. */
+  log?: (line: string) => void;
+  /** Backoff sleep between connection retries (injectable for tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const CONNECTION_RETRIES = 2;
 
 export class HttpClient {
   private readonly prefix: string;
@@ -100,12 +110,16 @@ export class HttpClient {
   }
 
   private async doFetch(method: string, path: string, body?: unknown, token?: string): Promise<Response> {
-    const ctrl = new AbortController();
-
-    // Build the request BEFORE the try. url()/headers()/JSON.stringify are our
+    // Build the request BEFORE sending. url()/headers()/JSON.stringify are our
     // own code — if they throw that is a bug, not a network fault, and it must
-    // not be relabelled as one below. Keeping them out here means the try wraps
-    // fetch() and nothing else.
+    // not be relabelled as one. sendWithRetry wraps fetch() and nothing else.
+    //
+    // Every fetch() rejection becomes a NetworkError there, whatever the
+    // runtime named it. Do NOT reintroduce a name check: the old guard matched
+    // `e.name === "TypeError"` (Node/undici's `TypeError: fetch failed`), but
+    // Bun 1.3 threw `name: "Error"` with a `code`, so every connection failure
+    // escaped unwrapped as a generic exit 1. (Bun 1.4 renamed it TypeError;
+    // the names keep moving, the semantics of fetch() do not.)
     const url = this.url(path);
     const init: RequestInit = {
       method,
@@ -114,33 +128,14 @@ export class HttpClient {
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: ctrl.signal,
     };
 
-    const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 30_000);
-    try {
-      return await fetch(url, init);
-    } catch (e) {
-      // fetch() rejects only when the request never completed: DNS failure,
-      // connection refused, TLS failure, or our own abort/timeout. An HTTP
-      // error is NOT a rejection — it resolves with a non-ok Response and is
-      // handled by parseResponse. So every rejection here is a transport
-      // failure, whatever the runtime named it.
-      //
-      // Do NOT reintroduce a name check. The previous guard matched
-      // `e.name === "TypeError"` (Node/undici's `TypeError: fetch failed`), but
-      // this CLI runs on Bun, which throws `name: "Error"` with
-      // `code: "ConnectionRefused"`. Every connection failure escaped unwrapped
-      // and fell through to the generic exit 1, printing Bun's raw
-      // "Unable to connect..." instead of ours. Matching on runtime-specific
-      // error shapes is what rotted; the semantics of fetch() do not.
-      if (e instanceof Error) {
-        throw new NetworkError(`network error: ${e.message}`, e);
-      }
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
+    return sendWithRetry(url, init, {
+      retries: SAFE_TO_REPEAT.has(method) ? CONNECTION_RETRIES : 0,
+      timeoutMs: this.opts.timeoutMs,
+      log: this.opts.log ?? verboseLogger(),
+      sleep: this.opts.sleep,
+    });
   }
 
   private async parseResponse<T>(res: Response, path: string): Promise<T> {
@@ -181,7 +176,14 @@ export class HttpClient {
       return this.parseResponse<T>(res, path);
     }
 
-    // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint)
+    // On 403, attempt a one-shot capability refresh then retry (unless this IS the caps endpoint).
+    // Resending is safe for every method, POST and DELETE included. Handlers
+    // check permissions before they write, so a 403 normally means nothing was
+    // applied. The known exceptions write first and then refuse
+    // (api/routers/server_proxy.py link, api/routers/auth.py profile update),
+    // and both are idempotent, so a second send cannot apply anything twice.
+    // The second send can succeed when a permission changed in between
+    // (platform capabilities are cached server-side for up to 60 s).
     if (res.status === 403 && path !== "/auth/me/capabilities") {
       try {
         const capsRes = await this.doFetch("GET", "/auth/me/capabilities");

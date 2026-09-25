@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { bootstrap, defaultStreamsUrl, isEnvCredential, requireTenantId } from "../../../src/client/bootstrap";
+import { getSlice, setActiveTenantId, writeSlice } from "../../../src/completion/cache";
 
 let tmp: string;
 beforeEach(() => {
@@ -812,5 +813,79 @@ test("a tenant-scoped request under an env credential carries the token's own te
   } finally {
     delete process.env.REOCLO_MACHINE_TOKEN;
     await server.stop();
+  }
+});
+
+// --- networkFree: the preAction probe (field report 2026-09-24) -------------
+//
+// index.ts's preAction hook bootstraps only to learn the token type, and
+// requireTenantId documents that it "relies on it being network-free". With an
+// org override it was not: the preAction bootstrap ran the /auth/me probe and
+// the tenant_switch mint, and the command's own bootstrap ran them again, so
+// `groups ls` sent 5 requests where 3 do. On a network that resets
+// connections, every extra request is another chance to fail.
+
+test("networkFree: an org override is not probed or minted (no request at all)", async () => {
+  // The api is unreachable, so any request would reject. Resolving proves none was sent.
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const ctx = await bootstrap({ orgRequired: false, org: "other-org", networkFree: true });
+  expect(ctx.tokenType).toBe("tenant");
+  // The override's tenant is unknown until the command's own bootstrap resolves it.
+  expect(ctx.tenantId).toBeUndefined();
+});
+
+test("networkFree: without an org override the profile's tenant is still reported", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const ctx = await bootstrap({ orgRequired: false, networkFree: true });
+  expect(ctx.tenantId).toBe("t-home");
+});
+
+test("networkFree: skips the proactive refresh (the command's bootstrap does it)", async () => {
+  // Past expiry + a refresh ref with no stored token: a proactive refresh would
+  // throw ReauthRequiredError("missing"). Resolving proves it was not attempted.
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: {
+      default: {
+        ...oauthProfileUnreachable("home"),
+        refresh_token_ref: "keyring:networkfree-test-missing-refresh",
+        oauth_auth_url: "http://127.0.0.1:1",
+        access_token_expires_at: "2020-01-01T00:00:00Z",
+      },
+    },
+  });
+  const ctx = await bootstrap({ orgRequired: false, networkFree: true });
+  expect(ctx.token).toBe("tok-home");
+});
+
+test("networkFree: the local --org rules still apply (machine token + --org exits 4)", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  process.env.REOCLO_MACHINE_TOKEN = "rk_m_robot";
+  try {
+    const err = (await bootstrap({ orgRequired: false, org: "other-org", networkFree: true }).catch(
+      (e: unknown) => e,
+    )) as { exitCode?: number };
+    expect(err.exitCode).toBe(4);
+  } finally {
+    delete process.env.REOCLO_MACHINE_TOKEN;
+  }
+});
+
+test("networkFree: an unresolved override leaves the completion cache's tenant alone", async () => {
+  // The override's tenant is unknown here, so the probe must not move the cache
+  // to any tenant (an unset tenant falls back to the profile's home org).
+  process.env.REOCLO_CACHE_DIR = mkdtempSync(join(tmpdir(), "cache-"));
+  try {
+    seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+    setActiveTenantId("t-sentinel");
+    await bootstrap({ orgRequired: false, org: "other-org", networkFree: true });
+    const entry = { id: "s1", value: "s1", name: "s1", desc: "" };
+    writeSlice("servers", [entry]);
+
+    setActiveTenantId("t-sentinel");
+    expect(getSlice("servers")).toEqual([entry]);
+  } finally {
+    delete process.env.REOCLO_CACHE_DIR;
+    setActiveTenantId(undefined);
   }
 });

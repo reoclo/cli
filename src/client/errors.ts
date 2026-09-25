@@ -65,6 +65,7 @@ export class NetworkError extends Error {
   constructor(
     message: string,
     public override cause?: unknown,
+    public hint?: string,
   ) {
     super(message);
     this.name = "NetworkError";
