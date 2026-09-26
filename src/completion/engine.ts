@@ -9,7 +9,9 @@ import type { Command } from "commander";
 import { getCompletionSpec, type ResourceRef } from "../client/command-meta";
 import { loadConfigSync } from "../config/store";
 import { extractProfileFromArgv, resolveProfileName } from "../config/profile-resolve";
-import { getEnvKeys, getSlice, setActiveTenantId } from "./cache";
+import { extractOrgFromArgv, resolveOrgOverride } from "../config/org-resolve";
+import { projectOrgFor, readProjectOrg } from "../config/project-config";
+import { getEnvKeys, getSlice, setActiveOrg } from "./cache";
 import type { Candidate, ResourceKind } from "./types";
 
 const HIDDEN = new Set(["__complete", "__refresh-completion"]);
@@ -33,6 +35,15 @@ interface Walked {
   rest: string[];
 }
 
+/** Find an option by long/short name on `cmd` or any of its ancestors. */
+function optionOnChain(cmd: Command, name: string): Command["options"][number] | undefined {
+  for (let c: Command | null = cmd; c; c = c.parent) {
+    const opt = c.options.find((o) => o.long === name || o.short === name);
+    if (opt) return opt;
+  }
+  return undefined;
+}
+
 /** Walk the program tree consuming subcommands; return the resolved command
  *  and the trailing tokens that were not consumed. */
 function walk(program: Command, words: string[]): Walked {
@@ -45,9 +56,12 @@ function walk(program: Command, words: string[]): Walked {
         i += 1;
         continue;
       }
-      const opt = cmd.options.find((o) => o.long === w || o.short === w);
-      // Best-effort heuristic: an unrecognised value-taking flag will only
-      // consume 1 token here, so its value may be misread as a positional.
+      // A flag can belong to the command reached so far OR to any ancestor:
+      // the root's globals (`--org`, `--profile`, `-o`) are valid after a
+      // subcommand too, and a global typed there must still consume its
+      // value. Best-effort heuristic: an unrecognised value-taking flag will
+      // only consume 1 token here, so its value may be misread as a positional.
+      const opt = optionOnChain(cmd, w);
       i += opt && (opt.required || opt.optional) ? 2 : 1;
       continue;
     }
@@ -93,13 +107,15 @@ function refCandidates(ref: ResourceRef, words: string[]): Candidate[] {
 }
 
 /**
- * Scope the completion cache to the tenant this completion line targets: a
- * `--profile <name>` typed on the line (else the active profile), mapped to its
- * tenant_id via config. Runs in the zero-network __complete process, where
- * bootstrap() never ran, so the cache would otherwise read whichever tenant was
- * written last. Never throws.
+ * Scope the completion cache to the org this completion line targets: `--org`
+ * typed on the line, else $REOCLO_ORG, else the `.reoclo` binding of the
+ * working directory (OAuth profiles only, as in bootstrap). The profile
+ * (`--profile` on the line, else $REOCLO_PROFILE, else the active profile) is
+ * part of the key. With no org there are no candidates: the profile's login
+ * org is never a source. Runs in the zero-network __complete process, where
+ * bootstrap() never ran. Never throws.
  */
-function scopeCacheToProfile(words: string[]): void {
+function scopeCacheToOrg(words: string[]): void {
   try {
     const cfg = loadConfigSync();
     const name = resolveProfileName({
@@ -107,10 +123,47 @@ function scopeCacheToProfile(words: string[]): void {
       envProfile: process.env.REOCLO_PROFILE,
       activeProfile: cfg.active_profile,
     });
-    setActiveTenantId(cfg.profiles[name]?.tenant_id);
+    const slug = resolveOrgOverride({
+      flagOrg: extractOrgFromArgv(words),
+      envOrg: process.env.REOCLO_ORG,
+      projectOrg: projectOrgFor(cfg.profiles[name]?.auth_kind, () => readProjectOrg()),
+    });
+    setActiveOrg(name, slug);
   } catch {
-    setActiveTenantId(undefined);
+    setActiveOrg(undefined, undefined);
   }
+}
+
+/** Long and short names of every value-taking flag visible at `cmd`: the root
+ *  program's globals, the command's own options, and its completion-spec flags. */
+function valueFlagsOf(
+  program: Command,
+  cmd: Command,
+  spec: ReturnType<typeof getCompletionSpec>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const o of [...program.options, ...cmd.options]) {
+    if (!(o.required || o.optional)) continue;
+    if (o.long) out.add(o.long);
+    if (o.short) out.add(o.short);
+  }
+  for (const f of Object.keys(spec?.flags ?? {})) out.add(f);
+  return out;
+}
+
+/** The positional tokens of `rest`: flags are dropped, and so is the token that
+ *  follows a value-taking flag (`--org acme`), unless it was written `--org=acme`. */
+function positionalsOf(rest: string[], valueFlags: Set<string>): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i] ?? "";
+    if (w.startsWith("-")) {
+      if (!w.includes("=") && valueFlags.has(w)) i += 1;
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
 }
 
 /**
@@ -122,7 +175,7 @@ export function getCompletionCandidates(
   current: string,
 ): Candidate[] {
   try {
-    scopeCacheToProfile(words);
+    scopeCacheToOrg(words);
 
     // 1. Flag-name completion.
     if (current.startsWith("-")) {
@@ -151,8 +204,10 @@ export function getCompletionCandidates(
     const { cmd, rest } = walk(program, words);
     const spec = getCompletionSpec(cmd);
 
-    // 4. Resource arg slot.
-    const positionals = rest.filter((w) => !w.startsWith("-"));
+    // 4. Resource arg slot. A value-taking flag typed after the command (a
+    // global `--org acme` / `--profile x`, or the command's own `--app x`)
+    // must not have its value counted as a positional.
+    const positionals = positionalsOf(rest, valueFlagsOf(program, cmd, spec));
     const argSpec = spec?.args?.find((a) => a.slot === positionals.length);
     const argCands = argSpec
       ? byPrefix(resourceCandidates(argSpec.resource, words), current)

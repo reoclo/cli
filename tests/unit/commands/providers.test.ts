@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { registerProviders } from "../../../src/commands/providers";
+import {
+  connectRedirectUri,
+  isNewlyConnected,
+  registerProviders,
+  waitForConnection,
+} from "../../../src/commands/providers";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 
 describe("providers command registration", () => {
@@ -134,5 +139,62 @@ describe("webhook-url github provider rejection", () => {
       threw = true;
     }
     expect(threw).toBe(false);
+  });
+});
+
+describe("providers connect helpers", () => {
+  test("connectRedirectUri lands on the org's repositories settings page", () => {
+    expect(connectRedirectUri("https://app.reoclo.com", "prawnwire")).toBe(
+      "https://app.reoclo.com/org/prawnwire/repositories/settings",
+    );
+  });
+
+  test("connect registers --no-wait", () => {
+    const program = new Command();
+    registerProviders(program);
+    const connect = program.commands.find((c) => c.name() === "providers")!.commands.find((c) => c.name() === "connect")!;
+    expect(connect.options.map((o) => o.long)).toContain("--no-wait");
+  });
+
+  const startedAt = new Date("2026-09-26T10:00:00Z");
+  const provider = (over: Partial<{ is_connected: boolean; connected_at: string | null }>) =>
+    ({ id: "p1", name: "Gitea", is_connected: false, connected_at: null, ...over }) as never;
+
+  test("isNewlyConnected: only a connection made after the command started counts", () => {
+    expect(isNewlyConnected(provider({ is_connected: false }), startedAt)).toBe(false);
+    expect(isNewlyConnected(provider({ is_connected: true, connected_at: "2026-09-26T09:59:59Z" }), startedAt)).toBe(false);
+    expect(isNewlyConnected(provider({ is_connected: true, connected_at: "2026-09-26T10:00:05Z" }), startedAt)).toBe(true);
+    expect(isNewlyConnected(provider({ is_connected: true, connected_at: null }), startedAt)).toBe(false);
+  });
+
+  test("waitForConnection resolves with the provider once it connects", async () => {
+    let polls = 0;
+    const poll = () => {
+      polls++;
+      return Promise.resolve(
+        provider(polls >= 3 ? { is_connected: true, connected_at: "2026-09-26T10:00:05Z" } : {}),
+      );
+    };
+    const slept: number[] = [];
+    const out = await waitForConnection(poll, startedAt, {
+      timeoutMs: 60_000,
+      intervalMs: 3_000,
+      sleep: (ms) => { slept.push(ms); return Promise.resolve(); },
+      now: () => startedAt.getTime() + slept.length * 3_000,
+    });
+    expect(out).not.toBeNull();
+    expect(polls).toBe(3);
+    expect(slept).toEqual([3_000, 3_000]);
+  });
+
+  test("waitForConnection returns null after the timeout", async () => {
+    let t = startedAt.getTime();
+    const out = await waitForConnection(() => Promise.resolve(provider({})), startedAt, {
+      timeoutMs: 10_000,
+      intervalMs: 3_000,
+      sleep: (ms) => { t += ms; return Promise.resolve(); },
+      now: () => t,
+    });
+    expect(out).toBeNull();
   });
 });

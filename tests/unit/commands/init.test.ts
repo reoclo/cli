@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildProjectBinding,
+  chooseInitOrg,
   parseHarnessOption,
   parseSkillsOption,
   resolveInitOrgFlag,
 } from "../../../src/commands/init";
+import type { OrgMembership } from "../../../src/client/types";
 
 describe("parseHarnessOption", () => {
   test("splits and validates a comma list", () => {
@@ -125,5 +127,60 @@ describe("resolveInitOrgFlag", () => {
 
   test("trims the returned value", () => {
     expect(resolveInitOrgFlag("  acme ", undefined)).toBe("acme");
+  });
+});
+
+const m = (slug: string): OrgMembership => ({
+  id: slug,
+  tenant_id: `t-${slug}`,
+  tenant_slug: slug,
+  tenant_name: slug.toUpperCase(),
+  role: "tenant_admin",
+});
+
+// `init` is the one place a directory gets its org, so the choice must be
+// explicit: a flag, the only membership, or a real pick. The login org (the
+// first membership at `reoclo login`) is never a default — on a non-TTY that
+// used to bind it silently.
+describe("chooseInitOrg", () => {
+  const never = (): Promise<string> => Promise.reject(new Error("select must not be called"));
+
+  test("--org wins without consulting memberships", async () => {
+    expect(await chooseInitOrg({ flagOrg: "beta", memberships: [m("acme"), m("beta")], isTTY: false, select: never })).toBe("beta");
+  });
+
+  test("a single membership binds itself", async () => {
+    expect(await chooseInitOrg({ memberships: [m("acme")], isTTY: false, select: never })).toBe("acme");
+  });
+
+  test("several memberships on a TTY: picks from every org with no login-org bias", async () => {
+    let seen: { options: { value: string; label: string }[]; initial: string } | null = null;
+    const select = (options: { value: string; label: string }[], initial: string) => {
+      seen = { options, initial };
+      return Promise.resolve("beta");
+    };
+    const org = await chooseInitOrg({ memberships: [m("acme"), m("beta")], isTTY: true, select });
+    expect(org).toBe("beta");
+    expect(seen!.options.map((o) => o.value)).toEqual(["acme", "beta"]);
+    expect(seen!.initial).toBe("acme");
+  });
+
+  test("several memberships on a non-TTY: exit 4 and name the flag", async () => {
+    try {
+      await chooseInitOrg({ memberships: [m("acme"), m("beta")], isTTY: false, select: never });
+      throw new Error("did not throw");
+    } catch (e) {
+      expect((e as { exitCode?: number }).exitCode).toBe(4);
+      expect((e as Error).message).toContain("--org");
+    }
+  });
+
+  test("no memberships: exit 3", async () => {
+    try {
+      await chooseInitOrg({ memberships: [], isTTY: true, select: never });
+      throw new Error("did not throw");
+    } catch (e) {
+      expect((e as { exitCode?: number }).exitCode).toBe(3);
+    }
   });
 });

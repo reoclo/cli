@@ -6,7 +6,6 @@ import { withCompletion } from "../client/command-meta";
 import { resolveProvider } from "../client/resolve";
 import { PermissionError } from "../client/errors";
 import type { GitProvider, SyncStatusResponse } from "../client/types";
-import { getActiveProfile } from "../config/store";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 import { openBrowser } from "../ui/open-browser";
@@ -32,6 +31,50 @@ function deriveGatewayOrigin(apiUrl: string): string {
     return url.origin;
   } catch {
     return gatewayUrl();
+  }
+}
+
+const CONNECT_WAIT_MS = 5 * 60_000;
+const CONNECT_POLL_MS = 3_000;
+
+/** Where the dashboard finishes a CLI-started OAuth flow: the org's repositories
+ *  settings page, which handles the returning `code` and `state`. */
+export function connectRedirectUri(dashboardOrigin: string, orgSlug: string): string {
+  return `${dashboardOrigin}/org/${orgSlug}/repositories/settings`;
+}
+
+/** True once the provider reports a connection made after `startedAt`. A
+ *  connection that predates the command (a previous session) does not count. */
+export function isNewlyConnected(
+  provider: Pick<GitProvider, "is_connected" | "connected_at">,
+  startedAt: Date,
+): boolean {
+  if (!provider.is_connected || !provider.connected_at) return false;
+  const at = Date.parse(provider.connected_at);
+  return Number.isFinite(at) && at >= startedAt.getTime();
+}
+
+/** Poll `poll` every `intervalMs` until {@link isNewlyConnected} or `timeoutMs`
+ *  elapses. Resolves with the connected provider, or null on timeout. `sleep`
+ *  and `now` are injectable for tests. */
+export async function waitForConnection(
+  poll: () => Promise<GitProvider>,
+  startedAt: Date,
+  opts: {
+    timeoutMs: number;
+    intervalMs: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  },
+): Promise<GitProvider | null> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = opts.now ?? Date.now;
+  const deadline = now() + opts.timeoutMs;
+  for (;;) {
+    const provider = await poll();
+    if (isNewlyConnected(provider, startedAt)) return provider;
+    if (now() >= deadline) return null;
+    await sleep(opts.intervalMs);
   }
 }
 
@@ -141,26 +184,50 @@ export function registerProviders(program: Command): void {
   withCompletion(
     g
       .command("connect <provider>")
-      .description("start OAuth flow (opens browser)")
-      .action(async (ref: string) => {
+      .description("start OAuth in the browser and wait until the provider is connected")
+      .option("--no-wait", "print the authorize URL and exit without waiting")
+      .action(async (ref: string, opts: { wait: boolean }) => {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
-        const profile = await getActiveProfile();
-        const slug = profile?.tenant_slug ?? "";
+        // The dashboard finishes the flow on this org's repositories settings
+        // page, so the redirect must name the org THIS invocation targets —
+        // never the profile's login org.
+        const slug = ctx.orgSlug;
         if (!slug) {
           const err = new Error(
-            "tenant_slug not found in active profile — run 'reoclo login' to refresh your profile",
+            "No organization selected: pass --org <slug> or run 'reoclo init' to bind this directory.",
           ) as Error & { exitCode: number };
-          err.exitCode = 3;
+          err.exitCode = 4;
           throw err;
         }
         const id = await resolveProvider(ctx.client, tid, ref);
-        const dashboardOrigin = deriveDashboardOrigin(ctx.api);
+        const startedAt = new Date();
+        const redirectUri = connectRedirectUri(deriveDashboardOrigin(ctx.api), slug);
         const resp = await ctx.client.get<{ authorize_url: string; state: string }>(
-          `/tenants/${tid}/git-providers/${id}/oauth/authorize-url?redirect_uri=${encodeURIComponent(`${dashboardOrigin}/org/${slug}/repositories/settings`)}`,
+          `/tenants/${tid}/git-providers/${id}/oauth/authorize-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
         );
         console.log(`Open this URL to authorize (also opened in browser):\n${resp.authorize_url}`);
         openBrowser(resp.authorize_url);
+        if (!opts.wait) return;
+        console.log("Waiting for the connection to complete in the browser (Ctrl-C to stop waiting)...");
+        const connected = await waitForConnection(
+          () => ctx.client.get<GitProvider>(`/tenants/${tid}/git-providers/${id}`),
+          startedAt,
+          { timeoutMs: CONNECT_WAIT_MS, intervalMs: CONNECT_POLL_MS },
+        );
+        if (connected) {
+          console.log(
+            `Connected ${connected.name}. Repository sync started; follow it with 'reoclo providers status ${ref}'.`,
+          );
+          return;
+        }
+        const err = new Error(
+          `Timed out after ${Math.round(CONNECT_WAIT_MS / 60_000)} minutes waiting for the connection. ` +
+            `Finish the authorization in the browser, then check 'reoclo providers get ${ref}'. ` +
+            `To start again, open ${redirectUri} and use Connect.`,
+        ) as Error & { exitCode: number };
+        err.exitCode = 1;
+        throw err;
       }),
     { args: [{ slot: 0, resource: "providers" }] },
   );

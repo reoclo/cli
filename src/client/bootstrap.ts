@@ -11,7 +11,7 @@ import { canonicalApiUrl, canonicalStreamsUrl, authUrl as defaultAuthUrl } from 
 import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride, orgSelectionError } from "../config/org-resolve";
 import { projectOrgFor, readProjectConfig } from "../config/project-config";
-import { setActiveTenantId } from "../completion/cache";
+import { setActiveOrg } from "../completion/cache";
 import { mintTenantSwitchToken } from "../auth/tenant-switch";
 import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { EXIT } from "./exit-codes";
@@ -53,12 +53,21 @@ export interface ResolvedContext {
   token: string;
   tokenType: KeyType;
   /**
-   * Tenant ID from the active profile. Populated by `reoclo login` from
-   * the `/auth/me` response. May be undefined in env-var-only flows where
-   * no profile exists; in that case, tenant-scoped commands should call
-   * `/auth/me` themselves or use {@link requireTenantId}.
+   * Tenant id of the org this invocation targets. Set only when an override
+   * (`--org` / $REOCLO_ORG / `.reoclo`) selected one; an OAuth profile's login
+   * org is never reported here on its own. Undefined for env credentials until
+   * {@link requireTenantId} resolves their org from `/auth/me`.
    */
   tenantId?: string;
+  /** Slug of the override that selected this invocation's org, when any. */
+  orgSlug?: string;
+  /**
+   * The profile's auth kind when the profile token is the credential in use.
+   * Undefined for `--token`, machine tokens and automation keys, which are
+   * org-bound on their own. {@link requireTenantId} uses it to refuse the
+   * login-org fallback for OAuth profiles.
+   */
+  authKind?: "oauth" | "api-key";
   /** Profile access-token expiry (ISO), when known: used by the MCP server to
    *  schedule proactive refreshes. */
   accessTokenExpiresAt?: string;
@@ -99,6 +108,17 @@ export function defaultStreamsUrl(apiUrl: string): string {
  */
 export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
   if (ctx.tenantId) return ctx.tenantId;
+  // Explicit-org policy: an OAuth profile with no override has NO org. Its
+  // login org must never be resolved from /auth/me on the sly — that is the
+  // "falls back to the first membership" leak. Fail exactly as the bootstrap
+  // gate does. Env and flag credentials are org-bound on their own and still
+  // resolve below.
+  const orgErr = orgSelectionError({
+    orgRequired: true,
+    orgOverride: undefined,
+    authKind: ctx.authKind,
+  });
+  if (orgErr) throw orgErr;
   const me = await ctx.client.get<Me>("/auth/me");
   if (!me.tenant_id) {
     const err = new Error(
@@ -108,10 +128,9 @@ export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
     throw err;
   }
   ctx.tenantId = me.tenant_id;
-  // Once the credential's OWN tenant is known, the completion cache must
-  // bucket under it (not NO_TENANT, and never an ambient profile's) — see
-  // completion/cache.ts's currentTenantKey() for the other half of this fix.
-  setActiveTenantId(ctx.tenantId);
+  // Once the credential's OWN org is known, the completion cache must bucket
+  // under it (not the no-org bucket, and never an ambient profile's).
+  setActiveOrg(ctx.profileName, me.tenant_slug);
   return me.tenant_id;
 }
 
@@ -346,11 +365,19 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // Per-invocation organization override (`--org` / $REOCLO_ORG / `.reoclo`).
   // Resolves the target org slug -> tenant_id via /auth/me, then mints a token
   // scoped to it through the OAuth tenant_switch grant — in-memory only, never
-  // persisted, so parallel agents / CI never clobber the stored active org. When
-  // the override already equals the profile's org it's a no-op (no extra network
-  // calls). The `.reoclo` project file is consulted only for OAuth profiles (and
-  // ranks below the flag/env), so it stays inert under automation-key CI.
-  let tenantId = envCredential ? undefined : profile?.tenant_id;
+  // persisted, so parallel agents / CI never clobber a stored org. When the
+  // override names the profile's own login org no mint is needed and the
+  // tenant comes from the profile — because the override named it. With no
+  // override there is NO tenant: the login org is never an implicit target.
+  // The `.reoclo` project file is consulted only for OAuth profiles (and ranks
+  // below the flag/env), so it stays inert under automation-key CI. A legacy
+  // api-key profile is single-tenant (its token is bound to the one org it
+  // was minted for), so its profile tenant IS the credential's org and is
+  // kept, exactly as an automation key resolves its own org.
+  let tenantId: string | undefined =
+    !envCredential && !flagToken && profile && profile.auth_kind !== "oauth"
+      ? profile.tenant_id
+      : undefined;
   let effectiveToken = token;
   let suppressRefresh = false;
 
@@ -373,16 +400,18 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       ? undefined
       : projectOrgFor(profile?.auth_kind, () => projectConfig?.org ?? null),
   });
+  // `profile.auth_kind` reflects whatever profile happens to be on disk, not
+  // necessarily the credential actually in use — --token / REOCLO_MACHINE_TOKEN
+  // / REOCLO_AUTOMATION_KEY all outrank the profile token (see the precedence
+  // chain above). Those credentials are single-tenant, or org-scoped on their
+  // own, so when any is set, the profile's auth_kind must not trigger the
+  // OAuth-only org requirement. The same value rides on the context so
+  // requireTenantId() applies the identical rule later.
+  const authKind = flagToken || envCredential ? undefined : profile?.auth_kind;
   const orgErr = orgSelectionError({
     orgRequired: opts.orgRequired ?? true,
     orgOverride,
-    // `profile.auth_kind` reflects whatever profile happens to be on disk, not
-    // necessarily the credential actually in use — --token / REOCLO_MACHINE_TOKEN
-    // / REOCLO_AUTOMATION_KEY all outrank the profile token (see the precedence
-    // chain above). Those credentials are single-tenant, or org-scoped on their
-    // own, so when any is set, the profile's auth_kind must not trigger the
-    // OAuth-only org requirement.
-    authKind: flagToken || envCredential ? undefined : profile?.auth_kind,
+    authKind,
   });
   if (orgErr) throw orgErr;
   // An env credential (machine token / automation key) is tenant-bound on its
@@ -455,15 +484,19 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
         suppressRefresh = true;
       }
     }
+  } else if (orgOverride && profile && !flagToken) {
+    // The override names the profile's own login org: the token is already
+    // bound to it, so no probe or mint is needed and the tenant is known
+    // offline. Only an override gets here — never a bare profile.
+    tenantId = profile.tenant_id;
   }
 
-  // Scope the completion cache to the resolved tenant (honors --org override),
-  // so opportunistic cache writes from this command land under the authorised
-  // account — never leaking into another account's completions. A networkFree
-  // probe leaves it alone: an unresolved override has no tenant yet, and an
-  // unset tenant falls back to the profile's home org. The command's own
-  // bootstrap() sets it.
-  if (!opts.networkFree) setActiveTenantId(tenantId);
+  // Scope the completion cache to the org the override named, so opportunistic
+  // cache writes from this command land under that org — never leaking into
+  // another org's completions. The key is the slug, known even to the
+  // zero-network probe. With no override this selects the no-org bucket; an
+  // env credential moves to its own org once requireTenantId() resolves it.
+  setActiveOrg(profileName, orgOverride);
 
   const client = new HttpClient({
     baseUrl: api,
@@ -481,6 +514,8 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     token: effectiveToken,
     tokenType: detectKeyType(effectiveToken),
     tenantId,
+    orgSlug: orgOverride,
+    authKind,
     accessTokenExpiresAt: profile?.access_token_expires_at,
     refresh: suppressRefresh ? undefined : profileRefreshCallback,
   };

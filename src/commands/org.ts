@@ -39,17 +39,20 @@ export function orgCurrentOutput(
 }
 
 /**
- * Build the rows for `org ls`. The role is humanized for human/text output but
- * kept RAW for machine output (`-o json` / `-o yaml`) so scripts still match on
- * the server value (e.g. "tenant_admin").
+ * Build the rows for `org ls`. The `*` marks the org commands run in this
+ * directory will target — the effective override (--org / $REOCLO_ORG /
+ * .reoclo), by slug. There is no active org, so with no override nothing is
+ * marked; the login org is not special. The role is humanized for human/text
+ * output but kept RAW for machine output (`-o json` / `-o yaml`) so scripts
+ * still match on the server value (e.g. "tenant_admin").
  */
 export function buildOrgRows(
   memberships: OrgMembership[],
-  activeTenantId: string,
+  effectiveSlug: string | undefined,
   fmt: OutputFormat,
 ): Array<{ active: string; slug: string; name: string; role: string }> {
   return memberships.map((m) => ({
-    active: m.tenant_id === activeTenantId ? "*" : "",
+    active: effectiveSlug !== undefined && m.tenant_slug === effectiveSlug ? "*" : "",
     slug: m.tenant_slug,
     name: m.tenant_name,
     role: fmt === "text" ? formatRole(m.role) : m.role,
@@ -83,7 +86,7 @@ export function registerOrg(program: Command): void {
       const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
-      const rows = buildOrgRows(memberships, me.tenant_id, fmt);
+      const rows = buildOrgRows(memberships, ctx.orgSlug, fmt);
       printList(
         rows as unknown as Array<Record<string, unknown>>,
         [

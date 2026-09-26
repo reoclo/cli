@@ -14,6 +14,9 @@ export interface ProfileRecord {
   // cut-over; new code paths must not write it. OAuth-issued profiles also
   // set `auth_kind: "oauth"` below.
   token_type: "tenant" | "automation";
+  // The token's LOGIN org (the membership `reoclo login` bound the session to).
+  // Not a target: commands never fall back to it. bootstrap() reads it only to
+  // skip the tenant-switch mint when an override names this same org.
   tenant_id: string;
   tenant_slug: string;
   user_email: string;

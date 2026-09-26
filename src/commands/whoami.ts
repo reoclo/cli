@@ -1,7 +1,6 @@
 // src/commands/whoami.ts
 import type { Command } from "commander";
 import { bootstrap } from "../client/bootstrap";
-import { projectConfigPresent } from "../config/project-config";
 import type { KeyType } from "../client/routing";
 import type { Me } from "../client/types";
 
@@ -40,10 +39,10 @@ export function registerWhoami(program: Command): void {
       const ctx = await bootstrap({ orgRequired: false });
       const me = await ctx.client.get<Me>("/auth/me");
       const displayType = resolveWhoamiType(ctx.tokenType);
-      // Show the org only when a `.reoclo` binds this directory to one. Otherwise
-      // it's just the ambient/default org (noise here), and `reoclo org ls` lists
-      // every granted org anyway.
-      const org = projectConfigPresent() ? me.tenant_slug : null;
+      // Show the org only when an override (--org / $REOCLO_ORG / .reoclo)
+      // selected one. The profile's login org is never shown as the org: it is
+      // not a target, and `reoclo org ls` lists every granted org anyway.
+      const org = ctx.orgSlug ?? null;
       for (const line of formatWhoamiLines({
         org,
         user: me.email,
