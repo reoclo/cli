@@ -9,7 +9,7 @@ import { apiUrl, authUrl, deriveAuthFromApi } from "../lib/urls";
 import { loadConfig, saveProfile, setActiveProfile, type ProfileRecord } from "../config/store";
 import { resolveCommandProfileWithSource, type ProfileSource } from "../config/profile-resolve";
 import { shouldSetActiveProfile, formatLoginSummary } from "./login-summary";
-import { clearTenant } from "../completion/cache";
+import { clearProfile } from "../completion/cache";
 import { resolveStore, refreshTokenKey } from "../config/token-store";
 import { HttpClient } from "../client/http";
 import type { Me } from "../client/types";
@@ -185,9 +185,10 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   const setActive = shouldSetActiveProfile({ hadNoProfiles, source: opts.source });
   if (setActive) await setActiveProfile(profileName);
 
-  // Identity (re)established — drop any stale completion cache for this tenant
-  // so the next completion re-warms fresh data for the account just signed in.
-  clearTenant(me.tenant_id);
+  // Identity (re)established — drop this profile's completion cache (every
+  // org bucket) so the next completion re-warms fresh data for the account
+  // just signed in.
+  clearProfile(profileName);
 
   // 6. Success
   console.log(

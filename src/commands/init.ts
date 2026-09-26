@@ -12,13 +12,13 @@ import type { Command } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootstrap } from "../client/bootstrap";
-import type { Me } from "../client/types";
+import type { Me, OrgMembership } from "../client/types";
 import { loadConfig } from "../config/store";
 import { PROJECT_CONFIG_VERSION } from "../config/project-config";
 import { HARNESSES, type HarnessId, type Scope } from "../init/harness";
 import { runSkillsInstall } from "../init/flow";
 import { mergeMcpServer } from "../init/mcp";
-import { confirmPrompt, selectPrompt } from "../ui/interactive";
+import { confirmPrompt, isInteractive, selectPrompt } from "../ui/interactive";
 
 interface InitOpts {
   org?: string; // command-local --org (discoverable in `init --help`)
@@ -103,6 +103,44 @@ export function parseSkillsOption(skills: string | boolean | undefined): {
  * Returns undefined when neither is set, so the caller falls back to the
  * interactive picker (TTY, multi-org) or the profile's active org.
  */
+/**
+ * Choose the org `init` binds. `init` is the one place a directory gets its
+ * org, so the choice must be explicit: the `--org` flag, the only membership,
+ * or a real pick on a TTY. The login org (the first membership at `reoclo
+ * login`) is never a default; on a non-TTY with several memberships the
+ * command fails and names the flag instead of binding one silently.
+ * `select` is injected so the picker is testable; it is only called on a TTY.
+ */
+export async function chooseInitOrg(opts: {
+  flagOrg?: string;
+  memberships: OrgMembership[];
+  isTTY: boolean;
+  select: (options: { value: string; label: string }[], initial: string) => Promise<string>;
+}): Promise<string> {
+  if (opts.flagOrg) return opts.flagOrg;
+  const [first] = opts.memberships;
+  if (!first) {
+    const err = new Error(
+      "no organizations are granted to this login — run 'reoclo login' and authorize one",
+    ) as Error & { exitCode: number };
+    err.exitCode = 3;
+    throw err;
+  }
+  if (opts.memberships.length === 1) return first.tenant_slug;
+  if (!opts.isTTY) {
+    const err = new Error(
+      "several organizations are granted: pass --org <slug> to choose the one to bind",
+    ) as Error & { exitCode: number };
+    err.exitCode = 4;
+    throw err;
+  }
+  const options = opts.memberships.map((m) => ({
+    value: m.tenant_slug,
+    label: `${m.tenant_slug}  (${m.tenant_name})`,
+  }));
+  return opts.select(options, first.tenant_slug);
+}
+
 export function resolveInitOrgFlag(
   localOrg: string | undefined,
   globalOrg: string | undefined,
@@ -144,20 +182,15 @@ export function registerInit(program: Command): void {
       const me = await ctx.client.get<Me>("/auth/me");
       const memberships = me.memberships ?? [];
 
-      // Pick the org to bind. An explicit --org already resolved via bootstrap
-      // (flagOrg above); otherwise offer a picker (multi-org only). selectPrompt
-      // returns the initial value (the active org) verbatim on a non-TTY, so a
-      // scripted run still binds the active org without prompting.
-      let org = me.tenant_slug;
-      if (!flagOrg && memberships.length > 1) {
-        const options = memberships.map((m) => ({
-          value: m.tenant_slug,
-          label: `${m.tenant_slug}  (${m.tenant_name})`,
-        }));
-        const initial =
-          memberships.find((m) => m.tenant_slug === me.tenant_slug)?.tenant_slug ?? me.tenant_slug;
-        org = await selectPrompt("Which organization should this project use?", options, initial);
-      }
+      // Pick the org to bind: the flag, the only membership, or a real pick.
+      // The login org is never a default (see chooseInitOrg).
+      const org = await chooseInitOrg({
+        flagOrg,
+        memberships,
+        isTTY: isInteractive(),
+        select: (options, initial) =>
+          selectPrompt("Which organization should this project use?", options, initial),
+      });
 
       // 1. Install skills first, so the installed head SHA is known by the time
       // the `.reoclo` binding is written below. The flow is harness-aware and

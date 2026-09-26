@@ -13,6 +13,31 @@
 // project-file rung sits BELOW the flag/env so an explicit per-command
 // override always wins.
 
+const ORG_FLAG = "--org";
+const ORG_FLAG_EQ = "--org=";
+
+/**
+ * Pull a `--org <slug>` / `--org=<slug>` off a raw argv (the completion line),
+ * mirroring extractProfileFromArgv. Runs in the zero-network __complete
+ * process where commander never parsed the line.
+ */
+export function extractOrgFromArgv(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg == null) continue;
+    if (arg === ORG_FLAG) {
+      const next = argv[i + 1];
+      // Don't swallow the next token if it's itself a flag.
+      return next && !next.startsWith("-") ? next : undefined;
+    }
+    if (arg.startsWith(ORG_FLAG_EQ)) {
+      const value = arg.slice(ORG_FLAG_EQ.length);
+      return value || undefined;
+    }
+  }
+  return undefined;
+}
+
 export function resolveOrgOverride(opts: {
   flagOrg?: string;
   envOrg?: string;

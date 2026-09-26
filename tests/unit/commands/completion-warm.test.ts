@@ -125,6 +125,37 @@ function resetStubs(): void {
 // Tests
 // ---------------------------------------------------------------------------
 describe("warmCache", () => {
+  // Explicit-org policy: an OAuth profile with no --org / $REOCLO_ORG / .reoclo
+  // has no org to warm. The command fails with exit 4 before any fetch — it
+  // must never warm the profile's login org on the sly.
+  test("an OAuth profile with no org selected exits 4 without fetching", async () => {
+    writeFileSync(
+      join(tmpConfigDir, "config.json"),
+      JSON.stringify({
+        active_profile: "default",
+        profiles: {
+          default: {
+            token: "oauth-access-token",
+            api_url: "https://api.reoclo.com",
+            auth_kind: "oauth",
+            tenant_id: "tenant-login",
+            tenant_slug: "login-org",
+          },
+        },
+      }),
+      "utf8",
+    );
+    delete process.env.REOCLO_ORG;
+    let caught: unknown = null;
+    try {
+      await warmCache();
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { exitCode?: number } | null)?.exitCode).toBe(4);
+    expect(_writeAllSlicesCalled).toBe(false);
+  });
+
   test("success: returns true and calls writeAllSlices with the fetched slices", async () => {
     const slices = { apps: [{ id: "a1", value: "myapp", name: "My App", desc: "" }] };
     _fetchResult = slices;

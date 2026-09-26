@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { bootstrap, defaultStreamsUrl, isEnvCredential, requireTenantId } from "../../../src/client/bootstrap";
-import { getSlice, setActiveTenantId, writeSlice } from "../../../src/completion/cache";
+import { getSlice, setActiveOrg, writeSlice } from "../../../src/completion/cache";
 
 let tmp: string;
 beforeEach(() => {
@@ -508,9 +508,11 @@ test("ignoreProjectOrg makes bootstrap skip the .reoclo org (no tenant-switch pr
   process.env.REOCLO_PROJECT_DIR = projectDir;
   try {
     // .reoclo binds "other-org" != profile slug "home". With the org suppressed
-    // there is no probe, so bootstrap resolves against the profile's own tenant.
+    // there is no probe, and no override means NO org: the profile's login
+    // org is never reported as this invocation's tenant.
     const ctx = await bootstrap({ orgRequired: false, ignoreProjectOrg: true });
-    expect(ctx.tenantId).toBe("t-home");
+    expect(ctx.tenantId).toBeUndefined();
+    expect(ctx.orgSlug).toBeUndefined();
   } finally {
     process.chdir(origCwd);
     process.env.REOCLO_PROJECT_DIR = origProjectDir;
@@ -834,10 +836,41 @@ test("networkFree: an org override is not probed or minted (no request at all)",
   expect(ctx.tenantId).toBeUndefined();
 });
 
-test("networkFree: without an org override the profile's tenant is still reported", async () => {
+test("networkFree: without an org override no tenant is reported (no login-org fallback)", async () => {
   seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
   const ctx = await bootstrap({ orgRequired: false, networkFree: true });
+  expect(ctx.tenantId).toBeUndefined();
+  expect(ctx.orgSlug).toBeUndefined();
+  expect(ctx.authKind).toBe("oauth");
+});
+
+// Explicit-org policy, the positive half: an override that names the profile's
+// OWN login org resolves offline (the token is already bound to it), and the
+// context reports both the slug and the tenant id — because the override
+// named it, not because it is the login org.
+test("an override naming the profile's login org resolves without a request", async () => {
+  seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+  const ctx = await bootstrap({ orgRequired: true, org: "home" });
   expect(ctx.tenantId).toBe("t-home");
+  expect(ctx.orgSlug).toBe("home");
+  expect(ctx.authKind).toBe("oauth");
+});
+
+test("an override stamps the completion cache under <profile>/<slug>", async () => {
+  process.env.REOCLO_CACHE_DIR = mkdtempSync(join(tmpdir(), "cache-"));
+  try {
+    seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
+    await bootstrap({ orgRequired: true, org: "home" });
+    const entry = { id: "s1", value: "s1", name: "s1", desc: "" };
+    writeSlice("servers", [entry]);
+    setActiveOrg("default", "home");
+    expect(getSlice("servers")).toEqual([entry]);
+    setActiveOrg("staging", "home");
+    expect(getSlice("servers")).toEqual([]);
+  } finally {
+    delete process.env.REOCLO_CACHE_DIR;
+    setActiveOrg(undefined, undefined);
+  }
 });
 
 test("networkFree: skips the proactive refresh (the command's bootstrap does it)", async () => {
@@ -871,21 +904,22 @@ test("networkFree: the local --org rules still apply (machine token + --org exit
   }
 });
 
-test("networkFree: an unresolved override leaves the completion cache's tenant alone", async () => {
-  // The override's tenant is unknown here, so the probe must not move the cache
-  // to any tenant (an unset tenant falls back to the profile's home org).
+test("networkFree: an override stamps the completion cache by slug even before its tenant is known", async () => {
+  // The cache is keyed by org slug, which the override names outright, so the
+  // zero-network probe can scope the cache without resolving a tenant id.
   process.env.REOCLO_CACHE_DIR = mkdtempSync(join(tmpdir(), "cache-"));
   try {
     seedConfig(tmp, { active_profile: "default", profiles: { default: oauthProfileUnreachable("home") } });
-    setActiveTenantId("t-sentinel");
     await bootstrap({ orgRequired: false, org: "other-org", networkFree: true });
     const entry = { id: "s1", value: "s1", name: "s1", desc: "" };
     writeSlice("servers", [entry]);
 
-    setActiveTenantId("t-sentinel");
+    setActiveOrg("default", "other-org");
     expect(getSlice("servers")).toEqual([entry]);
+    setActiveOrg("default", "home");
+    expect(getSlice("servers")).toEqual([]);
   } finally {
     delete process.env.REOCLO_CACHE_DIR;
-    setActiveTenantId(undefined);
+    setActiveOrg(undefined, undefined);
   }
 });

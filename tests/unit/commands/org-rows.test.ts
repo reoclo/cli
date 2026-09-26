@@ -7,20 +7,28 @@ const memberships: OrgMembership[] = [
   { id: "2", tenant_id: "t2", tenant_slug: "beta", tenant_name: "Beta", role: "viewer" },
 ];
 
+// The marker means "the org commands in this directory will target": the
+// effective override (--org / $REOCLO_ORG / .reoclo) by slug. There is no
+// active org, so with no override nothing is marked — the login org is not
+// special.
 describe("buildOrgRows", () => {
-  test("text mode prettifies the role and marks the active org", () => {
-    const rows = buildOrgRows(memberships, "t1", "text");
+  test("text mode prettifies the role and marks the effective org by slug", () => {
+    const rows = buildOrgRows(memberships, "acme", "text");
     expect(rows[0]!).toEqual({ active: "*", slug: "acme", name: "Acme", role: "Tenant Admin" });
     expect(rows[1]!).toEqual({ active: "", slug: "beta", name: "Beta", role: "Viewer" });
   });
   test("json mode keeps the raw role for machine consumers", () => {
-    const rows = buildOrgRows(memberships, "t1", "json");
+    const rows = buildOrgRows(memberships, "acme", "json");
     expect(rows[0]!.role).toBe("tenant_admin");
     expect(rows[1]!.role).toBe("viewer");
   });
-  test("yaml mode keeps the raw role and marks the active org", () => {
-    const rows = buildOrgRows(memberships, "t2", "yaml");
+  test("yaml mode keeps the raw role and marks the effective org", () => {
+    const rows = buildOrgRows(memberships, "beta", "yaml");
     expect(rows[0]!.role).toBe("tenant_admin");
     expect(rows[1]!.active).toBe("*");
+  });
+  test("no effective org: nothing is marked", () => {
+    const rows = buildOrgRows(memberships, undefined, "text");
+    expect(rows.map((r) => r.active)).toEqual(["", ""]);
   });
 });
