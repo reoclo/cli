@@ -3,10 +3,13 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
-import type { Domain } from "../client/types";
+import type { Domain, RedirectCode } from "../client/types";
 import type { HttpClient } from "../client/http";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
+import { resolveApp, resolveServer } from "../client/resolve";
+import { EXIT } from "../client/exit-codes";
+import { parseEnum, parseIntFlag } from "../util/parse-flag";
 
 interface VerifyResponse {
   txt_name: string;
@@ -83,6 +86,108 @@ async function resolveDomain(
   return { id: found.id, fqdn: found.fqdn };
 }
 
+function exitError(message: string, code: number): Error & { exitCode: number } {
+  const e = new Error(message) as Error & { exitCode: number };
+  e.exitCode = code;
+  return e;
+}
+
+const REDIRECT_CODE_TEXT = ["301", "302", "307", "308"] as const;
+const REDIRECT_CODE: Record<(typeof REDIRECT_CODE_TEXT)[number], RedirectCode> = {
+  "301": 301,
+  "302": 302,
+  "307": 307,
+  "308": 308,
+};
+
+/** The API's redirect body (DomainRedirect). */
+export interface RedirectBody {
+  target_domain_id?: string;
+  target_url?: string;
+  target_path?: string | null;
+  status_code: RedirectCode;
+  keep_path: boolean;
+}
+
+export function parseRedirectCode(raw: string | undefined): RedirectCode {
+  if (raw === undefined) return 301;
+  return REDIRECT_CODE[parseEnum(raw, REDIRECT_CODE_TEXT, "--code")];
+}
+
+/**
+ * Turn a --redirect-to / --to value into the API's redirect body. A value that
+ * starts with http:// or https:// is a URL target; anything else is
+ * `<fqdn>[/<path>]`, looked up among the organization's domains.
+ */
+export function buildRedirect(
+  target: string,
+  domains: ReadonlyArray<Pick<Domain, "id" | "fqdn">>,
+  opts: { code?: string | undefined; keepPath: boolean },
+): RedirectBody {
+  const status_code = parseRedirectCode(opts.code);
+  const keep_path = opts.keepPath;
+  if (/^https?:\/\//i.test(target)) return { target_url: target, status_code, keep_path };
+  const slash = target.indexOf("/");
+  const host = (slash === -1 ? target : target.slice(0, slash)).toLowerCase();
+  const path = slash === -1 ? null : target.slice(slash);
+  const found = domains.find((d) => d.fqdn === host);
+  if (!found) {
+    throw exitError(
+      `domain '${host}' not found. Use a full https:// URL for a target outside your domains.`,
+      EXIT.NOT_FOUND,
+    );
+  }
+  return { target_domain_id: found.id, target_path: path, status_code, keep_path };
+}
+
+/** "301 → example.com/blog", "308 → https://x.example.org", or "-". */
+export function redirectLabel(
+  domain: Pick<Domain, "redirect">,
+  domains: ReadonlyArray<Pick<Domain, "id" | "fqdn">>,
+): string {
+  const r = domain.redirect;
+  if (!r) return "-";
+  const host = domains.find((d) => d.id === r.target_domain_id)?.fqdn ?? r.target_domain_id ?? "?";
+  const target = r.target_url ?? `${host}${r.target_path ?? ""}`;
+  return `${r.status_code} → ${target}`;
+}
+
+export interface AddOptions {
+  app?: string;
+  server?: string;
+  port?: string;
+  redirectTo?: string;
+  code?: string;
+  /** commander sets this from --no-keep-path; true unless the flag is given. */
+  keepPath: boolean;
+}
+
+export async function buildAddBody(
+  client: HttpClient,
+  tid: string,
+  fqdn: string,
+  opts: AddOptions,
+): Promise<Record<string, unknown>> {
+  if (opts.redirectTo === undefined && (opts.code !== undefined || !opts.keepPath)) {
+    throw exitError("--code and --no-keep-path need --redirect-to", EXIT.MISUSE);
+  }
+  if (opts.redirectTo !== undefined && opts.app === undefined) {
+    throw exitError("--redirect-to needs --app: a redirect belongs to an application", EXIT.MISUSE);
+  }
+  if (opts.redirectTo !== undefined && opts.port !== undefined) {
+    throw exitError("--port does not apply to a redirect", EXIT.MISUSE);
+  }
+  const body: Record<string, unknown> = { fqdn };
+  if (opts.app !== undefined) body["application_id"] = await resolveApp(client, tid, opts.app);
+  if (opts.server !== undefined) body["bound_server_id"] = await resolveServer(client, tid, opts.server);
+  if (opts.port !== undefined) body["target_port"] = parseIntFlag(opts.port, "--port", 1, 65535);
+  if (opts.redirectTo !== undefined) {
+    const domains = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
+    body["redirect"] = buildRedirect(opts.redirectTo, domains, { code: opts.code, keepPath: opts.keepPath });
+  }
+  return body;
+}
+
 export function registerDomains(program: Command): void {
   const g = program.command("domains").description("manage domains");
 
@@ -129,16 +234,27 @@ export function registerDomains(program: Command): void {
   );
 
   g.command("add <fqdn>")
-    .description("register a new domain")
-    .action(async (fqdn: string) => {
+    .description("register a domain, optionally linked to an app or as a redirect")
+    .option("--app <nameOrId>", "link the domain to this application")
+    .option("--server <nameOrId>", "server that serves the domain")
+    .option("--port <n>", "container port to route to")
+    .option("--redirect-to <target>", "redirect to a domain (example.com[/path]) or a URL (https://...)")
+    .option("--code <code>", "redirect status code: 301 (default), 302, 307 or 308")
+    .option("--no-keep-path", "do not append the request path and query to the redirect target")
+    .action(async (fqdn: string, opts: AddOptions) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
-      const d = await ctx.client.post<Domain>(`/tenants/${tid}/domains/`, { fqdn });
+      const body = await buildAddBody(ctx.client, tid, fqdn, opts);
+      const d = await ctx.client.post<Domain>(`/tenants/${tid}/domains/`, body);
       console.log(`✓ added ${d.fqdn} (id: ${d.id}, status: ${d.status})`);
-      console.log(
-        "Run 'reoclo domains verify <fqdn>' to fetch the TXT record needed for verification.",
-      );
+      if (d.redirect && opts.redirectTo !== undefined) {
+        console.log(`  redirects to ${opts.redirectTo} (${d.redirect.status_code})`);
+      } else {
+        console.log(
+          "Run 'reoclo domains verify <fqdn>' to fetch the TXT record needed for verification.",
+        );
+      }
       // For -o json, also dump the full record
       if (fmt === "json") printObject(d as unknown as Record<string, unknown>, fmt);
     });

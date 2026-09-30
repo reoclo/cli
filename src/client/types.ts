@@ -73,6 +73,16 @@ export interface Repository {
   last_push_at?: string | null;
 }
 
+export type RedirectCode = 301 | 302 | 307 | 308;
+
+export interface DomainRedirect {
+  target_domain_id: string | null;
+  target_url: string | null;
+  target_path: string | null;
+  status_code: RedirectCode;
+  keep_path: boolean;
+}
+
 export interface Domain {
   id: string;
   tenant_id: string;
@@ -82,6 +92,9 @@ export interface Domain {
   bound_server_id: string | null;
   verified_domain_id: string | null;
   scheme_hint: string | null;
+  target_port?: number | null;
+  /** Set when the domain redirects instead of serving its application (API 1.238.0+). */
+  redirect?: DomainRedirect | null;
 }
 
 /**
