@@ -150,3 +150,80 @@ test("plan_domain_dns and publish_domain_dns post to the dns routes", async () =
     { path: "/tenants/T-ACME/dns/publish/D1", body: { plan_hash: "abc", proxied: false } },
   ]);
 });
+
+function redirectHarness(domains: Array<{ id: string; fqdn: string }>): {
+  registry: Registered[];
+  posts: { path: string; body: unknown }[];
+  patches: { path: string; body: unknown }[];
+} {
+  const { registry, server } = fakeServer();
+  const posts: { path: string; body: unknown }[] = [];
+  const patches: { path: string; body: unknown }[] = [];
+  const client = {
+    get: () => Promise.resolve(domains),
+    post: (path: string, body: unknown) => {
+      posts.push({ path, body });
+      return Promise.resolve({ id: "D1" });
+    },
+    put: () => Promise.resolve({}),
+    patch: (path: string, body: unknown) => {
+      patches.push({ path, body });
+      return Promise.resolve({ id: "D2" });
+    },
+    del: () => Promise.resolve({}),
+  } as unknown as McpRegistrationContext["client"];
+  const ctx: McpRegistrationContext = {
+    client,
+    orgParam: { organization: z.string().min(1) },
+    resolveOrg: (): Promise<OrgScope> => Promise.resolve({ tenantId: "T-ACME", client }),
+  };
+  registerDomainTools(server as never, ctx);
+  return { registry, posts, patches };
+}
+
+const REDIRECT = { target_domain_id: "d-root", status_code: 301, keep_path: true };
+
+test("add_domain forwards a redirect", async () => {
+  const { registry, posts } = redirectHarness([]);
+  const add = tool(registry, "add_domain");
+  expect(add.schema["redirect"]?.isOptional()).toBe(true);
+  await add.cb({ organization: "acme", fqdn: "www.example.com", application_id: "A", redirect: REDIRECT });
+  expect(posts).toEqual([
+    { path: "/tenants/T-ACME/domains/", body: { fqdn: "www.example.com", application_id: "A", redirect: REDIRECT } },
+  ]);
+});
+
+test("set_domain_redirect patches by fqdn or id", async () => {
+  const domains = [{ id: "d-www", fqdn: "www.example.com" }];
+  const { registry, patches } = redirectHarness(domains);
+  const set = tool(registry, "set_domain_redirect");
+  await set.cb({ organization: "acme", domain: "WWW.example.com", redirect: REDIRECT });
+  await set.cb({ organization: "acme", domain: "d-www", clear: true });
+  expect(patches).toEqual([
+    { path: "/tenants/T-ACME/domains/d-www", body: { redirect: REDIRECT } },
+    { path: "/tenants/T-ACME/domains/d-www", body: { redirect: null } },
+  ]);
+});
+
+test("set_domain_redirect needs exactly one of redirect and clear", async () => {
+  const { registry, patches } = redirectHarness([{ id: "d-www", fqdn: "www.example.com" }]);
+  const set = tool(registry, "set_domain_redirect");
+  const neither = (await set.cb({ organization: "acme", domain: "www.example.com" })) as { isError?: boolean };
+  const both = (await set.cb({ organization: "acme", domain: "www.example.com", redirect: REDIRECT, clear: true })) as {
+    isError?: boolean;
+  };
+  expect(neither.isError).toBe(true);
+  expect(both.isError).toBe(true);
+  expect(patches).toEqual([]);
+});
+
+test("set_domain_redirect on an unknown domain sends nothing", async () => {
+  const { registry, patches } = redirectHarness([]);
+  const result = (await tool(registry, "set_domain_redirect").cb({
+    organization: "acme",
+    domain: "nope.example.com",
+    clear: true,
+  })) as { isError?: boolean };
+  expect(result.isError).toBe(true);
+  expect(patches).toEqual([]);
+});
