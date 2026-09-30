@@ -188,6 +188,38 @@ export async function buildAddBody(
   return body;
 }
 
+export interface RedirectOptions {
+  to?: string;
+  code?: string;
+  /** commander sets this from --no-keep-path; true unless the flag is given. */
+  keepPath: boolean;
+  off?: boolean;
+}
+
+export function assertRedirectOptions(opts: RedirectOptions): void {
+  if (opts.off && opts.to !== undefined) throw exitError("use either --to or --off, not both", EXIT.MISUSE);
+  if (opts.off && (opts.code !== undefined || !opts.keepPath)) {
+    throw exitError("--code and --no-keep-path need --to", EXIT.MISUSE);
+  }
+  if (!opts.off && opts.to === undefined) {
+    throw exitError("pass --to <target>, or --off to serve the application again", EXIT.MISUSE);
+  }
+}
+
+export function redirectPatchBody(
+  opts: RedirectOptions,
+  domains: ReadonlyArray<Pick<Domain, "id" | "fqdn">>,
+): { redirect: RedirectBody | null } {
+  assertRedirectOptions(opts);
+  if (opts.off || opts.to === undefined) return { redirect: null };
+  return { redirect: buildRedirect(opts.to, domains, { code: opts.code, keepPath: opts.keepPath }) };
+}
+
+/** `ls` rows: every API field, plus a `redirects_to` label for the table. */
+export function lsRows(list: Domain[]): Array<Record<string, unknown>> {
+  return list.map((d) => ({ ...d, redirects_to: redirectLabel(d, list) }));
+}
+
 export function registerDomains(program: Command): void {
   const g = program.command("domains").description("manage domains");
 
@@ -200,11 +232,12 @@ export function registerDomains(program: Command): void {
       const list = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
       cacheList("domains", list);
       printList(
-        list as unknown as Array<Record<string, unknown>>,
+        lsRows(list),
         [
           { key: "fqdn", label: "DOMAIN" },
           { key: "status", label: "STATUS" },
           { key: "application_id", label: "APP" },
+          { key: "redirects_to", label: "REDIRECT" },
         ],
         fmt,
       );
@@ -427,6 +460,37 @@ export function registerDomains(program: Command): void {
             registration: d["registration"],
           },
           fmt,
+        );
+      }),
+    { args: [{ slot: 0, resource: "domains" }] },
+  );
+
+  withCompletion(
+    g
+      .command("redirect <fqdnOrId>")
+      .description("make a domain redirect, or serve its application again with --off")
+      .option("--to <target>", "redirect target: a domain (example.com[/path]) or a URL (https://...)")
+      .option("--code <code>", "status code: 301 (default), 302, 307 or 308")
+      .option("--no-keep-path", "do not append the request path and query to the target")
+      .option("--off", "stop redirecting; the domain serves its application again")
+      .action(async (fqdnOrId: string, opts: RedirectOptions) => {
+        assertRedirectOptions(opts);
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const domains = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
+        const found =
+          domains.find((d) => d.fqdn === fqdnOrId.toLowerCase()) ?? domains.find((d) => d.id === fqdnOrId);
+        if (!found) throw exitError(`domain '${fqdnOrId}' not found`, EXIT.NOT_FOUND);
+        const updated = await ctx.client.patch<Domain>(
+          `/tenants/${tid}/domains/${found.id}`,
+          redirectPatchBody(opts, domains),
+        );
+        printMutation(
+          program,
+          updated as unknown as Record<string, unknown>,
+          updated.redirect
+            ? `✓ ${updated.fqdn} redirects: ${redirectLabel(updated, domains)}`
+            : `✓ ${updated.fqdn} serves its application again`,
         );
       }),
     { args: [{ slot: 0, resource: "domains" }] },

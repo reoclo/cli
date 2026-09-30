@@ -8,9 +8,13 @@ import {
   buildRedirect,
   parseRedirectCode,
   redirectLabel,
+  assertRedirectOptions,
+  lsRows,
+  redirectPatchBody,
 } from "../../../src/commands/domains";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 import type { HttpClient } from "../../../src/client/http";
+import type { Domain } from "../../../src/client/types";
 
 describe("domains dns/health/rm", () => {
   test("all three subcommands registered with withCompletion(domains)", () => {
@@ -218,5 +222,52 @@ describe("domains add", () => {
       ),
     ).toBe(2);
     expect(gets).toEqual([]);
+  });
+});
+
+describe("domains redirect", () => {
+  test("registered with completion on the domain argument", () => {
+    const program = new Command().name("reoclo");
+    registerDomains(program);
+    const cmd = program.commands.find((c) => c.name() === "domains")!.commands.find((c) => c.name() === "redirect")!;
+    expect(getCompletionSpec(cmd)!.args).toEqual([{ slot: 0, resource: "domains" }]);
+    const longs = cmd.options.map((o) => o.long);
+    for (const flag of ["--to", "--code", "--no-keep-path", "--off"]) expect(longs).toContain(flag);
+  });
+
+  test("--to builds the redirect", () => {
+    expect(redirectPatchBody({ to: "example.com/blog", keepPath: true }, DOMAINS)).toEqual({
+      redirect: { target_domain_id: "d-root", target_path: "/blog", status_code: 301, keep_path: true },
+    });
+  });
+
+  test("--off clears it", () => {
+    expect(redirectPatchBody({ off: true, keepPath: true }, DOMAINS)).toEqual({ redirect: null });
+  });
+
+  test("misuse exits 2", () => {
+    expect(exitCodeOf(() => assertRedirectOptions({ keepPath: true }))).toBe(2);
+    expect(exitCodeOf(() => assertRedirectOptions({ to: "example.com", off: true, keepPath: true }))).toBe(2);
+    expect(exitCodeOf(() => assertRedirectOptions({ off: true, code: "308", keepPath: true }))).toBe(2);
+    expect(exitCodeOf(() => assertRedirectOptions({ off: true, keepPath: false }))).toBe(2);
+  });
+});
+
+describe("domains ls", () => {
+  test("lsRows keeps every field and adds redirects_to", () => {
+    const list = [
+      { id: "d-root", fqdn: "example.com", status: "active", application_id: "A", redirect: null },
+      {
+        id: "d-www",
+        fqdn: "www.example.com",
+        status: "active",
+        application_id: "A",
+        redirect: { target_domain_id: "d-root", target_url: null, target_path: null, status_code: 301, keep_path: true },
+      },
+    ] as unknown as Domain[];
+    const rows = lsRows(list);
+    expect(rows[0]).toMatchObject({ id: "d-root", redirect: null, redirects_to: "-" });
+    expect(rows[1]).toMatchObject({ id: "d-www", redirects_to: "301 → example.com" });
+    expect(rows[1]!["redirect"]).toEqual(list[1]!.redirect);
   });
 });
