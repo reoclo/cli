@@ -1,5 +1,5 @@
 /**
- * Domain tools: list, inspect, add, verify, check health, and preview/publish
+ * Domain tools: list, inspect, add, verify, set redirects, check health, and preview/publish
  * DNS changes to Cloudflare.
  * No delete tools (non-destructive guardrails).
  */
@@ -9,6 +9,30 @@ import { z } from "zod";
 
 import type { McpRegistrationContext } from "./context";
 import { asToolError, asToolResult } from "./common";
+
+const redirectSchema = z
+  .object({
+    target_domain_id: z
+      .string()
+      .optional()
+      .describe("Id of a domain of the same application that serves traffic"),
+    target_url: z
+      .string()
+      .optional()
+      .describe("Absolute http or https URL with no query, fragment or user name"),
+    target_path: z.string().optional().describe("Path added to the target domain, e.g. /blog"),
+    status_code: z
+      .union([z.literal(301), z.literal(302), z.literal(307), z.literal(308)])
+      .optional()
+      .describe("301 (default) or 308 are permanent; 302 or 307 are temporary"),
+    keep_path: z
+      .boolean()
+      .optional()
+      .describe("Append the request path and query to the target (default true)"),
+  })
+  .describe(
+    "Make the domain redirect instead of serving its application. Set exactly one of target_domain_id and target_url.",
+  );
 
 export function registerDomainTools(server: McpServer, ctx: McpRegistrationContext): void {
   server.tool(
@@ -81,7 +105,7 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
 
   server.tool(
     "add_domain",
-    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated.",
+    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated. Pass redirect to link the domain as a redirect.",
     {
       ...ctx.orgParam,
       fqdn: z
@@ -99,8 +123,9 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
         .positive()
         .optional()
         .describe("Container port to route to; must be one of the application's declared ports"),
+      redirect: redirectSchema.optional(),
     },
-    async ({ fqdn, application_id, bound_server_id, target_port, ...args }) => {
+    async ({ fqdn, application_id, bound_server_id, target_port, redirect, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         // Only send what the caller set: the API keeps an adopted record's
@@ -109,8 +134,38 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
         if (application_id !== undefined) body["application_id"] = application_id;
         if (bound_server_id !== undefined) body["bound_server_id"] = bound_server_id;
         if (target_port !== undefined) body["target_port"] = target_port;
+        if (redirect !== undefined) body["redirect"] = redirect;
         const domain = await client.post(`/tenants/${tenantId}/domains/`, body);
         return asToolResult(domain);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "set_domain_redirect",
+    "Make an existing domain redirect, or make it serve its application again (clear: true). A redirect target is a serving domain of the same application or an absolute URL.",
+    {
+      ...ctx.orgParam,
+      domain: z.string().min(1).describe("Domain FQDN or id"),
+      redirect: redirectSchema.optional(),
+      clear: z.boolean().optional().describe("true to stop redirecting"),
+    },
+    async ({ domain, redirect, clear, ...args }) => {
+      try {
+        if ((redirect === undefined) === (clear !== true)) {
+          throw new Error("Pass either redirect or clear: true.");
+        }
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const domains = await client.get<Array<{ id: string; fqdn: string }>>(`/tenants/${tenantId}/domains/`);
+        const found =
+          domains.find((d) => d.fqdn === domain.toLowerCase()) ?? domains.find((d) => d.id === domain);
+        if (!found) throw new Error(`Domain '${domain}' not found in this organization.`);
+        const updated = await client.patch(`/tenants/${tenantId}/domains/${found.id}`, {
+          redirect: clear === true ? null : redirect,
+        });
+        return asToolResult(updated);
       } catch (error: unknown) {
         return asToolError(error);
       }
