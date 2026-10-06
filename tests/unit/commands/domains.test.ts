@@ -4,6 +4,7 @@ import {
   registerDomains,
   planRows,
   pollPublish,
+  publishDomainDns,
   buildAddBody,
   buildRedirect,
   parseRedirectCode,
@@ -269,5 +270,50 @@ describe("domains ls", () => {
     expect(rows[0]).toMatchObject({ id: "d-root", redirect: null, redirects_to: "-" });
     expect(rows[1]).toMatchObject({ id: "d-www", redirects_to: "301 → example.com" });
     expect(rows[1]!["redirect"]).toEqual(list[1]!.redirect);
+  });
+});
+
+describe("publishDomainDns outcome", () => {
+  const plan = {
+    credential_label: "cf",
+    zone_name: "example.com",
+    server_name: "web-1",
+    ops: [
+      {
+        op: "create" as const,
+        record_type: "A",
+        name: "app.example.com",
+        current_content: null,
+        current_proxied: null,
+        desired_content: "203.0.113.10",
+        desired_proxied: true,
+        reason: null,
+      },
+    ],
+    plan_hash: "h1",
+    blocked_reason: null,
+  };
+
+  function client(finalStatus: string, applied: string[]): HttpClient {
+    return {
+      get: () => Promise.resolve({ dns: { publish: { status: finalStatus, applied, last_error: null } } }),
+      post: (path: string) => Promise.resolve(path.includes("/dns/plan/") ? plan : {}),
+      patch: () => Promise.resolve({}),
+    } as unknown as HttpClient;
+  }
+
+  const domain = { id: "d1", dns_publish: { enabled: true, proxied: true } };
+  const wait = { proxied: true, attempts: 2, sleepMs: 0, sleep: async () => {} };
+
+  test("a publish that found every record in place reports unchanged, not failed", async () => {
+    const out = await publishDomainDns(client("noop", []), "t1", domain, wait);
+    expect(out.status).toBe("unchanged");
+    expect(out.error).toBeNull();
+  });
+
+  test("a publish that wrote records reports published", async () => {
+    const out = await publishDomainDns(client("succeeded", ["A app.example.com"]), "t1", domain, wait);
+    expect(out.status).toBe("published");
+    expect(out.applied).toEqual(["A app.example.com"]);
   });
 });

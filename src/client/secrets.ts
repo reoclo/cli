@@ -52,6 +52,20 @@ export function updateProject(
   return c.patch<SecretProjectRead>(`/tenants/${tid}/secret-projects/${projectId}`, body);
 }
 
+export interface SecretProjectCreate {
+  name: string;
+  description?: string;
+}
+
+// No trailing slash: the secret-projects collection route is registered without one.
+export function createProject(
+  c: HttpClient,
+  tid: string,
+  body: SecretProjectCreate,
+): Promise<SecretProjectRead> {
+  return c.post<SecretProjectRead>(`/tenants/${tid}/secret-projects`, body);
+}
+
 export interface SecretProjectDuplicate {
   /** Omitted → the API defaults to "<source name> (copy)". */
   name?: string;

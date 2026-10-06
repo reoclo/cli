@@ -14,8 +14,10 @@ import {
   revealSecret,
   deleteSecret,
   bulkCreateSecrets,
+  createProject,
   duplicateProject,
   updateProject,
+  type SecretProjectCreate,
   type SecretProjectDuplicate,
   type SecretProjectRead,
   type SecretProjectUpdate,
@@ -129,6 +131,16 @@ function misuse(message: string): Error {
   const err = new Error(message) as Error & { exitCode: number };
   err.exitCode = EXIT.MISUSE;
   return err;
+}
+
+/** Turn `secrets projects create` arguments into the POST body. The name is
+ *  trimmed and must be non-empty. */
+export function buildProjectCreate(name: string, description?: string): SecretProjectCreate {
+  const trimmed = name.trim();
+  if (trimmed === "") throw misuse("project name must not be empty");
+  const body: SecretProjectCreate = { name: trimmed };
+  if (description !== undefined) body.description = description;
+  return body;
 }
 
 /** Turn `secrets projects update` flags into the PATCH body. Pure, so the
@@ -285,6 +297,24 @@ export function registerSecrets(program: Command): void {
         );
       }),
     "secret_project:read",
+  );
+
+  requireCapability(
+    projectsGroup
+      .command("create <name>")
+      .description("create a secret project")
+      .option("--description <text>", "project description")
+      .action(async (name: string, opts: { description?: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const body = buildProjectCreate(name, opts.description);
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        // A taken name would make `--project <name>` ambiguous afterwards.
+        assertProjectNameAvailable(await listProjects(ctx.client, tid), body.name, "");
+        const created = await createProject(ctx.client, tid, body);
+        printObject(created as unknown as Record<string, unknown>, fmt);
+      }),
+    "secret_project:write",
   );
 
   requireCapability(

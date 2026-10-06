@@ -1,7 +1,12 @@
 // src/commands/apps.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
-import { resolveApp } from "../client/resolve";
+import { resolveApp, resolveRepo, resolveServer } from "../client/resolve";
+import type { HttpClient } from "../client/http";
+import { EXIT } from "../client/exit-codes";
+import { listProjects } from "../client/secrets";
+import { parseEnum } from "../util/parse-flag";
+import { resolveProjectId } from "./secrets";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
@@ -25,6 +30,86 @@ export function deepMerge(
   return out;
 }
 
+
+export const BUILD_PACKS = ["dockerfile", "docker_compose", "docker_image"] as const;
+type BuildPack = (typeof BUILD_PACKS)[number];
+
+export interface AppCreateFlags {
+  name: string;
+  server: string;
+  repo?: string;
+  buildPack?: string;
+  dockerImage?: string;
+  composeFile?: string;
+  composeService?: string;
+  deployBranch?: string;
+  requireCi?: boolean;
+  /** commander sets this from --no-auto-deploy; true unless the flag is given. */
+  autoDeploy: boolean;
+  bind?: string[];
+}
+
+function misuse(message: string): Error & { exitCode: number } {
+  const e = new Error(message) as Error & { exitCode: number };
+  e.exitCode = EXIT.MISUSE;
+  return e;
+}
+
+/** The build pack the flags ask for. A compose or image flag implies its pack
+ *  when --build-pack is absent, and is refused when --build-pack names another. */
+function resolveBuildPack(flags: AppCreateFlags): BuildPack | undefined {
+  let pack =
+    flags.buildPack !== undefined
+      ? parseEnum(flags.buildPack, BUILD_PACKS, "--build-pack")
+      : undefined;
+  const implied: Array<[BuildPack, string, boolean]> = [
+    ["docker_compose", "--compose-file and --compose-service", flags.composeFile !== undefined || flags.composeService !== undefined],
+    ["docker_image", "--docker-image", flags.dockerImage !== undefined],
+  ];
+  for (const [needed, flagNames, given] of implied) {
+    if (!given) continue;
+    if (pack !== undefined && pack !== needed) {
+      throw misuse(`${flagNames} need --build-pack ${needed}, got ${pack}`);
+    }
+    pack = needed;
+  }
+  return pack;
+}
+
+/** The POST body for `apps create` (ApplicationCreate). Names become ids the
+ *  same way other commands resolve them; unset flags are left out so the API's
+ *  own defaults apply. */
+export async function buildAppCreateBody(
+  client: HttpClient,
+  tid: string,
+  flags: AppCreateFlags,
+): Promise<Record<string, unknown>> {
+  const pack = resolveBuildPack(flags);
+  const body: Record<string, unknown> = {
+    name: flags.name,
+    server_id: await resolveServer(client, tid, flags.server),
+  };
+  if (flags.repo !== undefined) body["repository_id"] = await resolveRepo(client, tid, flags.repo);
+
+  const build: Record<string, unknown> = {};
+  if (pack !== undefined) build["build_pack"] = pack;
+  if (flags.dockerImage !== undefined) build["docker_image"] = flags.dockerImage;
+  if (flags.composeFile !== undefined) build["compose_file_path"] = flags.composeFile;
+  if (flags.composeService !== undefined) build["compose_service"] = flags.composeService;
+  if (Object.keys(build).length > 0) body["build"] = build;
+
+  if (flags.deployBranch !== undefined) body["deploy"] = { deploy_branch: flags.deployBranch };
+  if (flags.requireCi) body["require_ci"] = true;
+  if (!flags.autoDeploy) body["auto_deploy"] = false;
+
+  if (flags.bind !== undefined && flags.bind.length > 0) {
+    const projects = await listProjects(client, tid);
+    body["secret_project_bindings"] = flags.bind.map((ref) => ({
+      project_id: resolveProjectId(projects, ref),
+    }));
+  }
+  return body;
+}
 
 export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
@@ -73,6 +158,36 @@ export function registerApps(program: Command): void {
       }
     });
 
+  g.command("create")
+    .description("create an application")
+    .requiredOption("--name <name>", "application name")
+    .requiredOption("--server <nameOrId>", "server the application runs on")
+    .option("--repo <nameOrId>", "repository to build from")
+    .option("--build-pack <pack>", `build strategy: ${BUILD_PACKS.join(", ")}`)
+    .option("--docker-image <ref>", "image to run (build pack docker_image)")
+    .option("--compose-file <path>", "compose file path in the repository (build pack docker_compose)")
+    .option("--compose-service <name>", "compose service to deploy (build pack docker_compose)")
+    .option("--deploy-branch <branch>", "branch that deploys")
+    .option("--require-ci", "deploy a push only after its CI checks pass")
+    .option("--no-auto-deploy", "do not deploy on push")
+    .option(
+      "--bind <project>",
+      "bind a secret project by name or id (repeatable)",
+      (val: string, prev: string[]) => [...prev, val],
+      [] as string[],
+    )
+    .action(async (opts: AppCreateFlags) => {
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const body = await buildAppCreateBody(ctx.client, tid, opts);
+      const app = await ctx.client.post<Application>(`/tenants/${tid}/applications/`, body);
+      printMutation(
+        program,
+        app as unknown as Record<string, unknown>,
+        `✓ created application ${app.slug} (id: ${app.id})`,
+      );
+    });
+
   withCompletion(
     g
       .command("get <idOrSlug>")
@@ -118,7 +233,7 @@ export function registerApps(program: Command): void {
       const appId = await resolveApp(ctx.client, tid, idOrSlug);
 
       const body: Record<string, unknown> = {};
-      if (opts.ref) body["commit_ref"] = opts.ref;
+      if (opts.ref) body["ref"] = opts.ref;
       if (opts.forceRecreate) body["force_recreate"] = true;
 
       interface DeployResponse {

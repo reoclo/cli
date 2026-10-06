@@ -70,11 +70,84 @@ export async function pollPublish(
   return null;
 }
 
+export type PublishStatus = "blocked" | "unchanged" | "published" | "failed" | "timeout";
+
+export interface PublishResult {
+  status: PublishStatus;
+  /** Null only when the wait for an earlier publish ran out before planning. */
+  plan: DnsPlan | null;
+  applied: string[];
+  error: string | null;
+}
+
+interface PublishWait {
+  attempts?: number;
+  sleepMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Enable publishing on the domain if it is not already, then plan and publish
+ * its DNS records. A publish the enable step started is waited out first, so
+ * the plan sees its result and the publish call is not refused as in progress.
+ */
+export async function publishDomainDns(
+  client: Pick<HttpClient, "get" | "post" | "patch">,
+  tid: string,
+  domain: Pick<Domain, "id" | "dns_publish">,
+  opts: { proxied: boolean } & PublishWait,
+): Promise<PublishResult> {
+  const wait = {
+    attempts: opts.attempts ?? 30,
+    sleepMs: opts.sleepMs ?? 2000,
+    ...(opts.sleep ? { sleep: opts.sleep } : {}),
+  };
+  const fetchDomain = () =>
+    client.get<{ dns: { publish?: PublishState } }>(`/tenants/${tid}/domains/${domain.id}`);
+
+  if (domain.dns_publish?.enabled !== true) {
+    await client.patch(`/tenants/${tid}/domains/${domain.id}`, {
+      dns_publish: { enabled: true, proxied: opts.proxied },
+    });
+    if ((await pollPublish(fetchDomain, wait)) === null) {
+      return { status: "timeout", plan: null, applied: [], error: null };
+    }
+  }
+
+  const plan = await client.post<DnsPlan>(`/tenants/${tid}/dns/plan/${domain.id}`, {
+    proxied: opts.proxied,
+  });
+  if (plan.blocked_reason) {
+    return { status: "blocked", plan, applied: [], error: plan.blocked_reason };
+  }
+  if (planRows(plan).length === 0) {
+    return { status: "unchanged", plan, applied: [], error: null };
+  }
+
+  await client.post(`/tenants/${tid}/dns/publish/${domain.id}`, {
+    plan_hash: plan.plan_hash,
+    proxied: opts.proxied,
+  });
+  const outcome = await pollPublish(fetchDomain, wait);
+  if (outcome === null) return { status: "timeout", plan, applied: [], error: null };
+  // "noop": the publish ran cleanly and every record was already in place.
+  if (outcome.status === "noop") return { status: "unchanged", plan, applied: [], error: null };
+  if (outcome.status !== "succeeded") {
+    return {
+      status: "failed",
+      plan,
+      applied: outcome.applied,
+      error: outcome.last_error ?? "unknown error",
+    };
+  }
+  return { status: "published", plan, applied: outcome.applied, error: null };
+}
+
 async function resolveDomain(
   client: HttpClient,
   tid: string,
   fqdnOrId: string,
-): Promise<{ id: string; fqdn: string }> {
+): Promise<Domain> {
   const list = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
   const found =
     list.find((d) => d.fqdn === fqdnOrId) ?? list.find((d) => d.id === fqdnOrId);
@@ -83,7 +156,7 @@ async function resolveDomain(
     e.exitCode = 5;
     throw e;
   }
-  return { id: found.id, fqdn: found.fqdn };
+  return found;
 }
 
 function exitError(message: string, code: number): Error & { exitCode: number } {
@@ -362,6 +435,10 @@ export function registerDomains(program: Command): void {
             process.stderr.write("still publishing; check `reoclo domains dns` in a moment\n");
             process.exit(1);
           }
+          if (outcome.status === "noop") {
+            console.log("Cloudflare already matches. Nothing was changed.");
+            return;
+          }
           if (outcome.status !== "succeeded") {
             process.stderr.write(`publish failed: ${outcome.last_error ?? "unknown error"}\n`);
             for (const line of outcome.applied) process.stderr.write(`  applied before failure: ${line}\n`);
@@ -437,6 +514,55 @@ export function registerDomains(program: Command): void {
           "text",
         );
         process.stdout.write(`\nStatus: ${r.dns_status}\n`);
+      }),
+    { args: [{ slot: 0, resource: "domains" }] },
+  );
+
+  withCompletion(
+    g
+      .command("publish <fqdnOrId>")
+      .description("write the domain's DNS records to Cloudflare: enable publishing, plan, then publish")
+      .option("--proxied", "proxy new records through Cloudflare (orange cloud)")
+      .action(async (fqdnOrId: string, opts: { proxied?: boolean }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const domain = await resolveDomain(ctx.client, tid, fqdnOrId);
+        const result = await publishDomainDns(ctx.client, tid, domain, {
+          proxied: Boolean(opts.proxied),
+        });
+
+        if (fmt === "json" || fmt === "yaml") {
+          printObject(result as unknown as Record<string, unknown>, fmt);
+        } else if (result.plan) {
+          const rows = planRows(result.plan);
+          if (rows.length > 0) {
+            printList(
+              rows as unknown as Array<Record<string, unknown>>,
+              [
+                { key: "action", label: "ACTION" }, { key: "type", label: "TYPE" }, { key: "name", label: "NAME" },
+                { key: "current", label: "CURRENT" }, { key: "new", label: "NEW" },
+              ],
+              "text",
+            );
+          }
+        }
+
+        switch (result.status) {
+          case "unchanged":
+            if (fmt === "text") console.log("Every expected record is already correct.");
+            return;
+          case "published":
+            if (fmt === "text") for (const line of result.applied) console.log(`✓ published: ${line}`);
+            return;
+          case "blocked":
+            throw exitError(`cannot publish: ${result.error ?? "blocked"}`, 1);
+          case "failed":
+            for (const line of result.applied) process.stderr.write(`  applied before failure: ${line}\n`);
+            throw exitError(`publish failed: ${result.error ?? "unknown error"}`, 1);
+          case "timeout":
+            throw exitError("still publishing; check `reoclo domains dns` in a moment", 1);
+        }
       }),
     { args: [{ slot: 0, resource: "domains" }] },
   );

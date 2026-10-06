@@ -93,6 +93,8 @@ export interface Domain {
   verified_domain_id: string | null;
   scheme_hint: string | null;
   target_port?: number | null;
+  /** Whether Reoclo keeps this domain's DNS records published. Absent on older APIs. */
+  dns_publish?: { enabled: boolean; proxied: boolean } | null;
   /** Set when the domain redirects instead of serving its application (API 1.238.0+). */
   redirect?: DomainRedirect | null;
 }
