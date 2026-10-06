@@ -28,6 +28,7 @@ Commands:
   verified-domains        manage verified root domains (proof of ownership)
   status-pages            manage status pages
   exec                    run a command on a server
+  proxy                   manage a server's managed proxy
   shell                   open an interactive shell on a server
   tunnel                  forward / reverse TCP and UDP tunnels
   profile                 manage named profiles
@@ -120,6 +121,27 @@ reoclo tunnel my-server -L 5432:5432
 # Open a reverse tunnel: server's localhost:8080 → localhost:3000 on your machine
 reoclo tunnel my-server -R 8080:3000
 ```
+
+## Create apps and secret projects, publish DNS, reconcile the proxy
+
+```bash
+# Secret project, then an app that binds it (--bind is repeatable)
+reoclo secrets projects create staging-secrets --description "Staging stack"
+reoclo apps create --name stack --server web1 --repo acme/web \
+  --compose-file deploy/compose.staging.yml --compose-service web \
+  --deploy-branch staging --require-ci --bind staging-secrets
+
+# Deploy a branch or commit once, without changing the app's deploy branch
+reoclo apps deploy stack --ref feat/login
+
+# Enable DNS publishing, plan the records, publish them (exits 1 if blocked)
+reoclo domains publish app.example.com --proxied
+
+# Re-sync a server's managed proxy now
+reoclo proxy reconcile web1
+```
+
+`reoclo exec` waits for the command to finish: `--timeout <seconds>` (default 600) is both the command timeout and the basis for how long the CLI waits for the answer.
 
 ## Tunnels
 

@@ -66,6 +66,17 @@ export class HttpClient {
     return new HttpClient({ ...this.opts, prefix });
   }
 
+  /** A client identical to this one but sending to `baseUrl`. */
+  withBaseUrl(baseUrl: string): HttpClient {
+    return new HttpClient({ ...this.opts, baseUrl });
+  }
+
+  /** A client identical to this one but waiting up to `timeoutMs` per attempt.
+   *  For a call that is slow by design (`exec` runs a user command). */
+  withTimeout(timeoutMs: number): HttpClient {
+    return new HttpClient({ ...this.opts, timeoutMs });
+  }
+
   /**
    * Swap the bearer token used for subsequent requests, in place. Used by the
    * proactive refresh (bootstrap start) and the MCP background refresh loop to

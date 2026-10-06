@@ -1,6 +1,7 @@
 // src/commands/exec.ts
 import { type Command, Help } from "commander";
-import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { bootstrap, requireTenantId, type ResolvedContext } from "../client/bootstrap";
+import type { HttpClient } from "../client/http";
 import { resolveServer } from "../client/resolve";
 import { globalOutput, printObject, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
@@ -163,6 +164,63 @@ export function detectShCQuotingFootgun(commandParts: string[]): boolean {
   );
 }
 
+/** Command timeout in seconds when --timeout is not given. */
+export const DEFAULT_EXEC_TIMEOUT_SECONDS = 600;
+
+/** Extra seconds the client waits beyond the command timeout: the server
+ *  relay allows the same margin (`timeout + 30`) before it gives up. */
+const EXEC_CLIENT_MARGIN_SECONDS = 30;
+
+/** Command timeout in seconds from the --timeout text; the default when absent. */
+export function parseExecTimeoutSeconds(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_EXEC_TIMEOUT_SECONDS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    const e = new Error(`--timeout expects a positive number of seconds, got: ${raw}`) as Error & {
+      exitCode: number;
+    };
+    e.exitCode = 2;
+    throw e;
+  }
+  return n;
+}
+
+/** How long the HTTP client waits for the exec response: the command timeout
+ *  plus a margin, so the client outlasts the command instead of cutting it
+ *  off at the client's default 30 s request timeout. */
+export function execClientTimeoutMs(timeoutSeconds: number): number {
+  return (timeoutSeconds + EXEC_CLIENT_MARGIN_SECONDS) * 1000;
+}
+
+/** Longest command timeout that still answers inside Cloudflare's ~100 s
+ *  limit, with room for the relay's own retries. A command with a longer
+ *  timeout can outlast it, so its request goes to the streams host, which
+ *  bypasses Cloudflare. */
+export const STREAMS_EXEC_THRESHOLD_SECONDS = 60;
+
+function sameHost(a: string, b: string): boolean {
+  return a.replace(/\/$/, "") === b.replace(/\/$/, "");
+}
+
+/**
+ * The client for a tenant-session exec: waits as long as the command may run,
+ * and for a long command sends to the streams host instead of the API host.
+ * The streams host serves the API's own routes, so the request drops the
+ * `/mcp` prefix the API host's proxy would have stripped. Where the streams
+ * URL is the API URL (dev, staging, self-hosted without a bypass host) there
+ * is nothing to switch to and the normal path is kept.
+ */
+export function selectTenantExecClient(
+  ctx: Pick<ResolvedContext, "client" | "api" | "streamsUrl">,
+  timeoutSeconds: number,
+): HttpClient {
+  const client = ctx.client.withTimeout(execClientTimeoutMs(timeoutSeconds));
+  if (timeoutSeconds <= STREAMS_EXEC_THRESHOLD_SECONDS || sameHost(ctx.streamsUrl, ctx.api)) {
+    return client;
+  }
+  return client.withBaseUrl(ctx.streamsUrl).withPrefix("");
+}
+
 export function buildAutomationExecBody(args: {
   serverId: string;
   command: string;
@@ -302,6 +360,7 @@ export function registerExec(program: Command): void {
             ? buildShellWrappedCommand(opts.shell, commandParts)
             : buildArgvCommand(commandParts);
 
+        const timeoutSeconds = parseExecTimeoutSeconds(opts.timeout);
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
 
@@ -316,13 +375,13 @@ export function registerExec(program: Command): void {
           const sid = requireServerUuid(serverIdOrName);
           const ci = detectCiContext();
           const r = await execOnServer(
-            ctx.client,
+            ctx.client.withTimeout(execClientTimeoutMs(timeoutSeconds)),
             buildAutomationExecBody({
               serverId: sid,
               command,
               cwd: opts.cwd,
               env: mergedEnv,
-              timeoutSeconds: opts.timeout ? Number.parseInt(opts.timeout, 10) : undefined,
+              timeoutSeconds: opts.timeout !== undefined ? timeoutSeconds : undefined,
               runId: ci.runId,
               runContext: ci.runContext,
             }),
@@ -331,12 +390,13 @@ export function registerExec(program: Command): void {
         } else {
           const tid = await requireTenantId(ctx);
           const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
-          const body: Record<string, unknown> = { command };
-          if (opts.timeout) body["timeout"] = Number.parseInt(opts.timeout, 10);
+          // Always send the timeout: the API's own default is 60 s, not the 600 s
+          // this command documents.
+          const body: Record<string, unknown> = { command, timeout: timeoutSeconds };
           if (opts.cwd) body["working_directory"] = opts.cwd;
           if (Object.keys(mergedEnv).length > 0) body["env"] = mergedEnv;
           if (opts.scope && opts.scope !== "host") body["scope"] = opts.scope;
-          res = await ctx.client.post<ExecResponse>(
+          res = await selectTenantExecClient(ctx, timeoutSeconds).post<ExecResponse>(
             `/tenants/${tid}/servers/${serverId}/exec`,
             body,
           );

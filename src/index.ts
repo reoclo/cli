@@ -42,6 +42,7 @@ import { registerRun } from "./commands/run";
 import { registerSync } from "./commands/sync";
 import { registerApi } from "./commands/api";
 import { registerGroups } from "./commands/groups";
+import { registerProxy } from "./commands/proxy";
 import {
   bootstrap,
   setGlobalProfileOverride,
@@ -68,10 +69,13 @@ import { readProjectConfig } from "./config/project-config";
 import { configAdvisories } from "./config/config-advisory";
 import { detectProgramName } from "./lib/program-name";
 import { applyVerbAliases } from "./lib/verb-aliases";
+import { installSyncStdio } from "./util/sync-stdio";
 
 export const VERSION = pkg.version;
 
 if (import.meta.main) {
+  // Before anything writes: a pipe must be fully written before any process.exit.
+  installSyncStdio();
   const PROGRAM_NAME = detectProgramName();
   const program = new Command()
     .name(PROGRAM_NAME)
@@ -132,6 +136,7 @@ if (import.meta.main) {
   registerSync(program);
   registerApi(program);
   registerGroups(program);
+  registerProxy(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
