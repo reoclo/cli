@@ -9,7 +9,7 @@ test("CLI context exposes no organization argument", () => {
   const ctx = buildCliMcpContext(client, "t-bound");
   expect(ctx.orgParam).toEqual({});
   const schemas: Record<string, object> = {};
-  const server = { tool(name: string, ...rest: unknown[]) { schemas[name] = (rest.find((r) => r && typeof r === "object" && typeof r !== "function") ?? {}) as object; } };
+  const server = { tool(name: string, ...rest: unknown[]) { schemas[name] = rest.find((r) => r && typeof r === "object" && typeof r !== "function") ?? {}; } };
   registerAllTools(server as never, ctx);
   for (const [name, schema] of Object.entries(schemas)) {
     expect(Object.keys(schema), `${name} must not expose organization on the CLI`).not.toContain("organization");

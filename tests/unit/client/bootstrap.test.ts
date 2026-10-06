@@ -615,7 +615,7 @@ test("REOCLO_MACHINE_TOKEN + --org (foreign slug) exits 4 even with an ambient O
   let requestCount = 0;
   const server = Bun.serve({
     port: 0,
-    fetch(req) {
+    fetch() {
       requestCount++;
       return Response.json({ memberships: [] });
     },

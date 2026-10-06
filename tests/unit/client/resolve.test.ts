@@ -1,43 +1,38 @@
 // tests/unit/client/resolve.test.ts
 //
-// Uses mock.module to stub src/completion/cache so the tests are isolated from
-// the file-system and from any other test file that also stubs that module
-// (completion-warm.test.ts does the same — both files share the module registry
-// in the same Bun worker, so the last mock.module wins per-import).
+// Drives the REAL completion cache against a throwaway REOCLO_CACHE_DIR.
+// Do not mock.module() src/completion/cache here: bun registers every file's
+// top-level mocks before any test runs and never undoes them, so a stub leaks
+// into every other file that uses the real cache (bootstrap, require-tenant-id)
+// in a full `bun test` run.
 
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getSlice, setActiveOrg, writeSlice } from "../../../src/completion/cache";
+import type { Entry } from "../../../src/completion/types";
+import { resolveServer, resolveApp, resolveRepo } from "../../../src/client/resolve";
 
 // ---------------------------------------------------------------------------
-// Stub state — controlled per-test via resetCache().
+// Cache state: a fresh empty cache dir per test; resetCache(entries) seeds the
+// servers slice.
 // ---------------------------------------------------------------------------
-let _slice: Array<{ id: string; value: string; name: string; desc: string }> = [];
-let _writtenSlice: Array<{ id: string; value: string; name: string; desc: string }> | null = null;
+let cacheRoot: string | undefined;
 
-function resetCache(
-  entries: Array<{ id: string; value: string; name: string; desc: string }> = [],
-): void {
-  _slice = entries;
-  _writtenSlice = null;
+function resetCache(entries: Entry[] = []): void {
+  if (cacheRoot) rmSync(cacheRoot, { recursive: true, force: true });
+  cacheRoot = mkdtempSync(join(tmpdir(), "resolve-cache-"));
+  process.env.REOCLO_CACHE_DIR = cacheRoot;
+  setActiveOrg(undefined, undefined);
+  if (entries.length > 0) writeSlice("servers", entries);
 }
 
-// ---------------------------------------------------------------------------
-// Mock the cache module before importing resolve.
-// ---------------------------------------------------------------------------
-await mock.module("../../../src/completion/cache", () => ({
-  getSlice: (_kind: string) => _slice,
-  writeSlice: (_kind: string, entries: typeof _slice) => {
-    _writtenSlice = entries;
-    // Also update the in-memory slice so subsequent getSlice calls see it.
-    _slice = entries;
-  },
-  writeAllSlices: () => {},
-  writeEnvKeys: () => {},
-  getEnvKeys: () => [],
-  sliceAge: () => Infinity,
-}));
-
-// Import the module under test AFTER stubs are registered.
-const { resolveServer, resolveApp, resolveRepo } = await import("../../../src/client/resolve");
+afterEach(() => {
+  if (cacheRoot) rmSync(cacheRoot, { recursive: true, force: true });
+  cacheRoot = undefined;
+  delete process.env.REOCLO_CACHE_DIR;
+});
 
 // ---------------------------------------------------------------------------
 
@@ -92,10 +87,10 @@ describe("resolveServer", () => {
     ]);
     const id = await resolveServer(client as never, "t1", "reoclo-production");
     expect(id).toBe("srv-1");
-    // Verify that writeSlice was called and the slice is non-empty.
-    expect(_writtenSlice).not.toBeNull();
-    expect(_writtenSlice!.length).toBeGreaterThan(0);
-    const entry = _writtenSlice!.find((e) => e.value === "reoclo-production");
+    // Verify that the fetched list was written through to the cache.
+    const written = getSlice("servers");
+    expect(written.length).toBeGreaterThan(0);
+    const entry = written.find((e) => e.value === "reoclo-production");
     expect(entry).toBeDefined();
     expect(entry?.id).toBe("srv-1");
   });
@@ -215,10 +210,10 @@ describe("resolveApp", () => {
     ]);
     const id = await resolveApp(client as never, "t1", "my-api");
     expect(id).toBe("app-1");
-    // Verify that writeSlice was called with the entries derived from res.items.
-    expect(_writtenSlice).not.toBeNull();
-    expect(_writtenSlice!.length).toBe(2);
-    const entry = _writtenSlice!.find((e) => e.value === "my-api");
+    // Verify that the cache was written with the entries derived from res.items.
+    const written = getSlice("apps");
+    expect(written.length).toBe(2);
+    const entry = written.find((e) => e.value === "my-api");
     expect(entry).toBeDefined();
     expect(entry?.id).toBe("app-1");
   });

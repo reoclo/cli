@@ -29,7 +29,8 @@ test("status-pages create → ls → update → rm", async () => {
   const created = await $`bun run src/index.ts status-pages create --title "Public Status"`
     .env(env()).quiet();
   expect(created.stdout.toString()).toContain("✓ status page created:");
-  const id = created.stdout.toString().trim().split(": ")[1]!;
+  const id = /status page created: (\S+) \(slug: /.exec(created.stdout.toString())?.[1];
+  if (!id) throw new Error(`no id in create output: ${created.stdout.toString()}`);
 
   const ls = await $`bun run src/index.ts status-pages ls`.env(env()).quiet();
   expect(ls.stdout.toString()).toContain("Public Status");

@@ -32,9 +32,9 @@ describe("waitForConvergence", () => {
     let calls = 0;
     const out = await waitForConvergence(
       {
-        status: async () => {
+        status: () => {
           calls++;
-          return { session_id: "s", converged: true, applications: [item()] };
+          return Promise.resolve({ session_id: "s", converged: true, applications: [item()] });
         },
         sleep: async () => {},
         now: () => 0,
@@ -53,7 +53,7 @@ describe("waitForConvergence", () => {
     ];
     let i = 0;
     const out = await waitForConvergence(
-      { status: async () => seq[i++]!, sleep: async () => {}, now: () => 0 },
+      { status: () => Promise.resolve(seq[i++]!), sleep: async () => {}, now: () => 0 },
       120_000,
     );
     expect(out.ok).toBe(true);
@@ -64,11 +64,12 @@ describe("waitForConvergence", () => {
     let t = 0;
     const out = await waitForConvergence(
       {
-        status: async () => ({
-          session_id: "s",
-          converged: false,
-          applications: [item({ converged: false, attached: false, reason: "container not yet attached to reoclo-proxy" })],
-        }),
+        status: () =>
+          Promise.resolve({
+            session_id: "s",
+            converged: false,
+            applications: [item({ converged: false, attached: false, reason: "container not yet attached to reoclo-proxy" })],
+          }),
         sleep: async () => {},
         now: () => (t += 60_000), // advances 60s each call → exceeds 120s timeout
       },
@@ -83,7 +84,7 @@ describe("waitForConvergence", () => {
 
   test("treats a missing status endpoint (null) as unsupported and does not block", async () => {
     const out = await waitForConvergence(
-      { status: async () => null, sleep: async () => {}, now: () => 0 },
+      { status: () => Promise.resolve(null), sleep: async () => {}, now: () => 0 },
       120_000,
     );
     expect(out).toEqual({ ok: true, unsupported: true });

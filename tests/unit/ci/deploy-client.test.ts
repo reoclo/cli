@@ -11,7 +11,7 @@ interface RecordedCall {
 /** Build an injectable fetch that records calls and replies via `respond`. */
 function recorder(respond: (call: RecordedCall) => { status: number; body?: unknown }) {
   const calls: RecordedCall[] = [];
-  const fetchImpl = async (input: string, init?: RequestInit): Promise<Response> => {
+  const fetchImpl = (input: string, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     const call: RecordedCall = {
       url: input,
@@ -21,10 +21,12 @@ function recorder(respond: (call: RecordedCall) => { status: number; body?: unkn
     };
     calls.push(call);
     const { status, body } = respond(call);
-    return new Response(body === undefined ? null : JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    });
+    return Promise.resolve(
+      new Response(body === undefined ? null : JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+    );
   };
   return { calls, fetchImpl };
 }
@@ -155,9 +157,9 @@ describe("DeploySyncClient.revokeSession", () => {
 
   test("is a no-op before a session exists (never calls fetch)", async () => {
     let called = false;
-    const fetchImpl: FetchLike = async () => {
+    const fetchImpl: FetchLike = () => {
       called = true;
-      return new Response(null, { status: 204 });
+      return Promise.resolve(new Response(null, { status: 204 }));
     };
     const client = new DeploySyncClient("https://api.reoclo.com", "rca_key", fetchImpl);
     await client.revokeSession();
@@ -165,14 +167,16 @@ describe("DeploySyncClient.revokeSession", () => {
   });
 
   test("swallows fetch errors — cleanup must not throw", async () => {
-    const fetchImpl: FetchLike = async (input) => {
+    const fetchImpl: FetchLike = (input) => {
       if (input.endsWith("/external-deploy/session")) {
-        return new Response(JSON.stringify(SESSION_BODY), {
-          status: 201,
-          headers: { "content-type": "application/json" },
-        });
+        return Promise.resolve(
+          new Response(JSON.stringify(SESSION_BODY), {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          }),
+        );
       }
-      throw new Error("network down");
+      return Promise.reject(new Error("network down"));
     };
     const client = new DeploySyncClient("https://api.reoclo.com", "rca_key", fetchImpl);
     await client.createSession({ container_names: ["web"] });

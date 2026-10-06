@@ -15,13 +15,13 @@ function stubClient(posts: unknown[], gets: unknown[]) {
   return {
     calls,
     client: {
-      post: async <T>(path: string, body?: unknown): Promise<T> => {
+      post: <T>(path: string, body?: unknown): Promise<T> => {
         calls.push({ method: "POST", path, body });
-        return posts[pi++] as T;
+        return Promise.resolve(posts[pi++] as T);
       },
-      get: async <T>(path: string): Promise<T> => {
+      get: <T>(path: string): Promise<T> => {
         calls.push({ method: "GET", path });
-        return gets[gi++] as T;
+        return Promise.resolve(gets[gi++] as T);
       },
     },
   };

@@ -110,19 +110,21 @@ describe("installSkills", () => {
     const failing = (() =>
       Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
     const { placement } = tempPlacement();
-    await expect(installSkills({ placement, fetchImpl: failing })).rejects.toThrow(/404/);
+    const err = await installSkills({ placement, fetchImpl: failing }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/404/);
   });
 });
 
 test("resolveSkillsHead returns the branch head sha", async () => {
-  const fetchImpl = (async () => new Response(JSON.stringify({ sha: "deadbeef" }), {
+  const fetchImpl = (() => Promise.resolve(new Response(JSON.stringify({ sha: "deadbeef" }), {
     status: 200, headers: { "content-type": "application/json" },
-  })) as unknown as typeof fetch;
+  }))) as unknown as typeof fetch;
   expect(await resolveSkillsHead("main", fetchImpl)).toBe("deadbeef");
 });
 
 test("resolveSkillsHead returns null on non-ok / rate-limit (no throw)", async () => {
-  const fetchImpl = (async () => new Response("rate limited", { status: 403 })) as unknown as typeof fetch;
+  const fetchImpl = (() => Promise.resolve(new Response("rate limited", { status: 403 }))) as unknown as typeof fetch;
   expect(await resolveSkillsHead("main", fetchImpl)).toBeNull();
 });
 

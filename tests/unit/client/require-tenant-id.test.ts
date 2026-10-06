@@ -12,14 +12,14 @@ test("returns the context tenant without a network call", async () => {
 
 test("resolves via /auth/me once and memoizes on the context", async () => {
   let calls = 0;
-  const ctx = { tenantId: undefined, client: { get: async (p: string) => { calls++; expect(p).toBe("/auth/me"); return { tenant_id: "t-9" }; } } };
+  const ctx = { tenantId: undefined, client: { get: (p: string) => { calls++; expect(p).toBe("/auth/me"); return Promise.resolve({ tenant_id: "t-9" }); } } };
   expect(await requireTenantId(ctx as never)).toBe("t-9");
   expect(await requireTenantId(ctx as never)).toBe("t-9");
   expect(calls).toBe(1);
 });
 
 test("exits 3 when /auth/me has no tenant", async () => {
-  const ctx = { tenantId: undefined, client: { get: async () => ({}) } };
+  const ctx = { tenantId: undefined, client: { get: () => Promise.resolve({}) } };
   try {
     await requireTenantId(ctx as never);
     throw new Error("did not throw");

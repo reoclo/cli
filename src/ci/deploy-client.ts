@@ -92,7 +92,7 @@ function exitErr(message: string, code: number): Error & { exitCode: number } {
 /** Pull a useful message out of a JSON error body (`{detail}`), else stringify. */
 function describe(body: unknown): string {
   if (body && typeof body === "object" && "detail" in body) {
-    const d = (body as { detail: unknown }).detail;
+    const d = body.detail;
     return typeof d === "string" ? d : JSON.stringify(d);
   }
   if (typeof body === "string") return body;

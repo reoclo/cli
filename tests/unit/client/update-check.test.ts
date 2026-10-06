@@ -211,7 +211,7 @@ describe("runAuthUpdateCheck", () => {
     const written: unknown[] = [];
     await runAuthUpdateCheck({
       current: "0.59.0", enabled: true, now: 1_000,
-      fetchLatest: async () => "0.60.0",
+      fetchLatest: () => Promise.resolve("0.60.0"),
       readCache: () => ({}), writeCache: (c) => written.push(c),
       detectMethod: method, emit: (l) => emitted.push(l),
     });
@@ -223,7 +223,7 @@ describe("runAuthUpdateCheck", () => {
     const emitted: string[] = [];
     await runAuthUpdateCheck({
       current: "0.59.0", enabled: false, now: 1_000,
-      fetchLatest: async () => "9.9.9",
+      fetchLatest: () => Promise.resolve("9.9.9"),
       readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
     });
     expect(emitted).toEqual([]);
@@ -233,7 +233,7 @@ describe("runAuthUpdateCheck", () => {
     const emitted: string[] = [];
     await runAuthUpdateCheck({
       current: "0.59.0", enabled: true, now: 1_000,
-      fetchLatest: async () => { throw new Error("offline"); },
+      fetchLatest: () => Promise.reject(new Error("offline")),
       readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
     });
     expect(emitted).toEqual([]); // no throw, no notice
@@ -243,7 +243,7 @@ describe("runAuthUpdateCheck", () => {
     const emitted: string[] = [];
     await runAuthUpdateCheck({
       current: "0.60.0", enabled: true, now: 1_000,
-      fetchLatest: async () => "0.60.0",
+      fetchLatest: () => Promise.resolve("0.60.0"),
       readCache: () => ({}), writeCache: noop, detectMethod: method, emit: (l) => emitted.push(l),
     });
     expect(emitted).toEqual([]);

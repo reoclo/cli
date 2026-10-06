@@ -84,7 +84,7 @@ test("saveProfile does not move active_profile (no implicit flip)", async () => 
 test("migrateGlobalConfig stamps a plain (unversioned) config forward, no reauth", () => {
   const { cfg, changed, needsReauth } = migrateGlobalConfig({
     active_profile: "default", profiles: {},
-  } as any);
+  });
   expect(cfg.version).toBe(GLOBAL_CONFIG_VERSION);
   expect(changed).toBe(true);
   expect(needsReauth).toBe(false);
@@ -93,7 +93,7 @@ test("migrateGlobalConfig stamps a plain (unversioned) config forward, no reauth
 test("migrateGlobalConfig leaves an already-current config unchanged", () => {
   const { changed, needsReauth } = migrateGlobalConfig({
     active_profile: "default", profiles: {}, version: GLOBAL_CONFIG_VERSION,
-  } as any);
+  });
   expect(changed).toBe(false);
   expect(needsReauth).toBe(false);
 });

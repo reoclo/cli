@@ -36,9 +36,9 @@ test("domains dns shows records table and overall status", async () => {
 test("domains health prints composite", async () => {
   const r = await $`bun run src/index.ts domains health example.com`.env(env()).quiet();
   const out = r.stdout.toString();
+  expect(out).toContain("verification");
   expect(out).toContain("dns");
-  expect(out).toContain("tls");
-  expect(out).toContain("uptime");
+  expect(out).toContain("ssl");
 });
 
 test("domains rm --yes deletes", async () => {

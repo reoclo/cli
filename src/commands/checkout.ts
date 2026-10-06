@@ -177,7 +177,7 @@ export function registerCheckout(program: Command): void {
         const dirCheck = await run(
           `test -d "${targetPath}/.git" && echo exists || echo missing`,
           15,
-        ).catch(() => ({ stdout: "missing" }) as { stdout: string });
+        ).catch(() => ({ stdout: "missing" }));
         const dirExists = dirCheck.stdout.trim() === "exists";
 
         if (!dirExists) {

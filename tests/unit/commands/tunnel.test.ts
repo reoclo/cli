@@ -506,7 +506,7 @@ describe("buildTunnelSessionOptions", () => {
   const noopStatus = () => {};
 
   it("passes ctx.refresh through by identity, not a wrapping thunk", () => {
-    const refreshFn = async (_currentToken: string) => "new-token";
+    const refreshFn = (_currentToken: string) => Promise.resolve("new-token");
     const ctx: TunnelSessionCtx = {
       token: "tok-1",
       refresh: refreshFn,

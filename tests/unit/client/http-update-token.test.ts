@@ -5,9 +5,11 @@ test("updateToken swaps the bearer used by subsequent requests", async () => {
   const seen: string[] = [];
   const orig = globalThis.fetch;
   // @ts-expect-error test stub
-  globalThis.fetch = async (_url: string, init: RequestInit) => {
+  globalThis.fetch = (_url: string, init: RequestInit) => {
     seen.push(String((init.headers as Record<string, string>).Authorization));
-    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    return Promise.resolve(
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
   };
   try {
     const c = new HttpClient({ baseUrl: "https://api.example.test", token: "tok-a" });
