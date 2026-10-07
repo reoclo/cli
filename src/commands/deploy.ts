@@ -139,7 +139,7 @@ export async function discoverFromCompose(composeFilePath: string): Promise<Disc
 
   let doc: RawCompose;
   try {
-    doc = (load(content) ?? {}) as RawCompose;
+    doc = load(content) ?? {};
   } catch (cause) {
     throw exitErr(`failed to parse compose file ${composeFilePath}: ${(cause as Error).message}`, 2);
   }
@@ -381,7 +381,7 @@ export function registerDeploy(program: Command): void {
         };
 
         if (fmt === "json" || fmt === "yaml") {
-          printObject(result as unknown as Record<string, unknown>, fmt);
+          printObject(result, fmt);
         } else {
           for (const r of syncResp.results) {
             process.stdout.write(`${r.container_name}: ${r.status}${r.reason ? ` — ${r.reason}` : ""}\n`);

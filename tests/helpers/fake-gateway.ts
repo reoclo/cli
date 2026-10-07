@@ -164,28 +164,6 @@ export function startFakeGateway(): FakeGateway {
     deploy: { replicas: 1, container_port: 3000, host_port: 8080, env: { FOO: "1" } },
   });
 
-  function mergeDeep(
-    target: Record<string, unknown>,
-    src: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...target };
-    for (const [k, v] of Object.entries(src)) {
-      if (
-        typeof v === "object" &&
-        v !== null &&
-        !Array.isArray(v) &&
-        typeof out[k] === "object" &&
-        out[k] !== null &&
-        !Array.isArray(out[k])
-      ) {
-        out[k] = mergeDeep(out[k] as Record<string, unknown>, v as Record<string, unknown>);
-      } else {
-        out[k] = v;
-      }
-    }
-    return out;
-  }
-
   let nextId = 1;
 
   // External-deploy two-token state (per gateway instance).
@@ -480,14 +458,17 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
-      // /mcp/tenants/{tid}/domains/{did}/health
+      // /mcp/tenants/{tid}/domains/{did}   (GET) - the detail `domains health` reads
       {
-        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)\/health$/);
-        if (m) {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/domains\/([^/]+)$/);
+        const found = m ? domains.find((x) => x.id === m[1]) : undefined;
+        if (found && req.method === "GET") {
           return Response.json({
+            ...found,
+            verification: { status: "verified" },
             dns: { status: "ok" },
-            tls: { status: "ok", cert_expires_at: "2026-08-19T00:00:00Z" },
-            uptime: { status: "ok", probe_at: "2026-05-19T10:00:00Z" },
+            ssl: { status: "ok", cert_expires_at: "2026-08-19T00:00:00Z" },
+            registration: null,
           });
         }
       }
@@ -603,12 +584,19 @@ export function startFakeGateway(): FakeGateway {
             return Response.json(cfg);
           }
           if (req.method === "PATCH") {
-            const body = (await req.json()) as { config?: Record<string, unknown> };
-            if (!body.config || Object.keys(body.config).length === 0) {
+            const body = (await req.json()) as {
+              build?: Record<string, unknown>;
+              deploy?: Record<string, unknown>;
+            };
+            if (!body.build && !body.deploy) {
               return Response.json({ detail: "empty patch" }, { status: 422 });
             }
             const existing = appConfigs.get(aid) ?? {};
-            const merged = mergeDeep(existing, body.config);
+            const merged = {
+              ...existing,
+              ...(body.build ? { build: body.build } : {}),
+              ...(body.deploy ? { deploy: body.deploy } : {}),
+            };
             appConfigs.set(aid, merged);
             return Response.json(merged);
           }
@@ -1247,11 +1235,14 @@ export function startFakeGateway(): FakeGateway {
       // /mcp/tenants/{tid}/logs/stats
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/logs/stats`) {
         return Response.json({
-          by_level: { debug: 100, info: 1000, warn: 50, error: 20, fatal: 1 },
-          by_source_type: { container: 800, system: 300, runner: 71 },
-          total: 1171,
-          error_count: 21,
-          warn_count: 50,
+          total_bytes: 4096,
+          total_entries: 1171,
+          total_streams: 3,
+          retention_days: 14,
+          breakdown_by_server: [
+            { server_id: "srv-1", server_name: "web-prod", bytes: 0, streams: 2 },
+            { server_id: "srv-2", server_name: "db-prod", bytes: 0, streams: 1 },
+          ],
         });
       }
 

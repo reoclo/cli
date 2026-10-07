@@ -15,7 +15,7 @@ function fakeServer(): { registry: Registered[]; server: unknown } {
   const server = {
     tool(name: string, ...rest: unknown[]) {
       const cb = rest[rest.length - 1] as Registered["cb"];
-      const schema = (rest.find((r) => r && typeof r === "object" && !Array.isArray(r) && typeof r !== "function" && !("readOnlyHint" in (r as object))) ?? {}) as Registered["schema"];
+      const schema = (rest.find((r) => r && typeof r === "object" && !Array.isArray(r) && typeof r !== "function" && !("readOnlyHint" in r)) ?? {}) as Registered["schema"];
       registry.push({ name, schema, cb });
     },
   };
@@ -23,9 +23,9 @@ function fakeServer(): { registry: Registered[]; server: unknown } {
 }
 
 function recordingClient(paths: string[]): McpRegistrationContext["client"] {
-  const record = async (path: string) => {
+  const record = (path: string) => {
     paths.push(path);
-    return { items: [] };
+    return Promise.resolve({ items: [] });
   };
   return { get: record, post: record, put: record, patch: record, del: record } as unknown as McpRegistrationContext["client"];
 }
@@ -38,9 +38,9 @@ test("every tenant-scoped tool spreads orgParam and resolves the org before call
   const ctx: McpRegistrationContext = {
     client: recordingClient(ambientPaths),
     orgParam: { organization: z.string().min(1) },
-    resolveOrg: async (organization?: unknown): Promise<OrgScope> => {
+    resolveOrg: (organization?: unknown): Promise<OrgScope> => {
       resolveCalls.push(organization);
-      return { tenantId: "T-ACME", client: recordingClient(resolvedPaths) };
+      return Promise.resolve({ tenantId: "T-ACME", client: recordingClient(resolvedPaths) });
     },
   };
   registerAllTools(server as never, ctx);
@@ -72,7 +72,7 @@ test("whoami takes an optional organization and uses the ambient client without 
   const ctx: McpRegistrationContext = {
     client: recordingClient(ambientPaths),
     orgParam: { organization: z.string().min(1) },
-    resolveOrg: async () => ({ tenantId: "T-ACME", client: recordingClient(resolvedPaths) }),
+    resolveOrg: () => Promise.resolve({ tenantId: "T-ACME", client: recordingClient(resolvedPaths) }),
   };
   registerAllTools(server as never, ctx);
   const whoami = registry.find((t) => t.name === "whoami")!;

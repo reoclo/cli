@@ -120,9 +120,13 @@ test("shell happy-path: receives ready, prints stdout, exits 0", async () => {
 test("shell sends a properly-versioned api-key subprotocol", async () => {
   await $`bun run src/index.ts shell ${SERVER_ID} --allow-no-tty`.env(baseEnv()).quiet();
   expect(gw.lastRequestedSubprotocol).not.toBeNull();
-  expect(gw.lastRequestedSubprotocol!.startsWith("reoclo.api-key.v1.")).toBe(true);
+  // The header lists the auth subprotocol first, then reoclo.renew.v1.
+  const offered = gw.lastRequestedSubprotocol!.split(",").map((p) => p.trim());
+  expect(offered[1]).toBe("reoclo.renew.v1");
+  const authProtocol = offered[0] ?? "";
+  expect(authProtocol.startsWith("reoclo.api-key.v1.")).toBe(true);
   // The encoded portion is base64url(TOKEN) — verify roundtrip.
-  const encoded = gw.lastRequestedSubprotocol!.split(".").pop() ?? "";
+  const encoded = authProtocol.split(".").pop() ?? "";
   // Re-pad and decode to check it matches the token.
   const padded = encoded + "=".repeat((4 - (encoded.length % 4)) % 4);
   const decoded = Buffer.from(

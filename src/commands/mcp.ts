@@ -52,7 +52,7 @@ export function buildCliMcpContext(client: HttpClient, tenantId: string): McpReg
   return {
     client,
     orgParam: {},
-    resolveOrg: async () => ({ tenantId, client }),
+    resolveOrg: () => Promise.resolve({ tenantId, client }),
   };
 }
 

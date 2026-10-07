@@ -45,12 +45,14 @@ test("logs sources -o json dumps raw payload", async () => {
   expect(Array.isArray(obj["journal_units"])).toBe(true);
 });
 
-test("logs stats prints by_level + by_source + total", async () => {
+test("logs stats prints the per-server breakdown and totals", async () => {
   const r = await $`bun run src/index.ts logs stats`.env(env()).quiet();
   const out = r.stdout.toString();
-  expect(out).toContain("info");
-  expect(out).toContain("error");
-  expect(out).toContain("1171");
+  expect(out).toContain("web-prod");
+  expect(out).toContain("db-prod");
+  expect(out).toContain("1171 entries");
+  expect(out).toContain("3 streams");
+  expect(out).toContain("retention 14d");
 });
 
 test("logs usage prints storage_bytes and retention_days", async () => {

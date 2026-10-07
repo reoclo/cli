@@ -237,7 +237,7 @@ export function shouldRunUpdateCheck(args: {
  * postAction hook and `login` can't drift apart.
  */
 export function updateCheckEnabledFor(
-  opts: { updateCheck?: boolean; output?: unknown; quiet?: boolean },
+  opts: { updateCheck?: boolean; output?: string; quiet?: boolean },
   env: NodeJS.ProcessEnv,
   stderrIsTty: boolean,
 ): boolean {
@@ -245,7 +245,7 @@ export function updateCheckEnabledFor(
     disabledByEnv: Boolean(env.REOCLO_NO_UPDATE_CHECK),
     disabledByFlag: opts.updateCheck === false,
     isTTY: stderrIsTty,
-    outputFormat: String(opts.output ?? "text"),
+    outputFormat: opts.output ?? "text",
     // Ambient env credential — automation key OR machine token — both mean a
     // CI/agent context, not an interactive human at a terminal, so the update
     // advisory must stay suppressed under either. `env` here is the injected

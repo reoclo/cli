@@ -7,7 +7,7 @@ function ctxWith(orgParam: McpRegistrationContext["orgParam"]): McpRegistrationC
   return {
     client: {} as McpRegistrationContext["client"],
     orgParam,
-    resolveOrg: async () => ({ tenantId: "t", client: {} as McpRegistrationContext["client"] }),
+    resolveOrg: () => Promise.resolve({ tenantId: "t", client: {} as McpRegistrationContext["client"] }),
   };
 }
 

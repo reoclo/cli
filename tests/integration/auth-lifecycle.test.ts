@@ -89,7 +89,9 @@ test("login (device flow) → whoami → logout (file store, fake gateway + auth
 
   const who = await $`bun run src/index.ts whoami`.env(env).quiet();
   const out = who.stdout.toString();
-  expect(out).toContain("organization:  acme");
+  // The login org is not a target: with no --org / $REOCLO_ORG / .reoclo the
+  // organization line is omitted.
+  expect(out).not.toMatch(/^organization:/m);
   expect(out).toContain("user:          test@example.com");
 
   await $`bun run src/index.ts logout`.env(env);
