@@ -2,8 +2,26 @@
  * Shared tool utilities for formatting results and errors.
  */
 
+import { z } from "zod";
+
 import { ApiError } from "../../client/errors";
 import type { McpRegistrationContext, OrgParamShape } from "./context";
+
+export const ipAllowlistSchema = z
+  .object({
+    cidrs: z
+      .array(z.string().min(1))
+      .max(100)
+      .default([])
+      .describe("IPv4 or IPv6 addresses or CIDR ranges, at most 100. A bare address becomes a /32 or /128."),
+    presets: z
+      .array(z.enum(["cloudflare"]))
+      .default([])
+      .describe("Named ranges kept current by the platform. Only 'cloudflare' (Cloudflare's edge ranges)."),
+  })
+  .describe(
+    "Source IPs allowed to reach the target. Both lists empty means open to everyone. Enforced only on servers running the managed proxy.",
+  );
 
 export function asToolResult(data: unknown): { content: Array<{ type: "text"; text: string }> } {
   return {

@@ -8,7 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { McpRegistrationContext } from "./context";
-import { asToolError, asToolResult } from "./common";
+import { asToolError, asToolResult, ipAllowlistSchema } from "./common";
 
 const redirectSchema = z
   .object({
@@ -105,7 +105,7 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
 
   server.tool(
     "add_domain",
-    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated. Pass redirect to link the domain as a redirect.",
+    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated. Pass redirect to link the domain as a redirect. Pass ip_allowlist to restrict which source IPs can reach it; this only applies on servers running the managed proxy, and omitting it inherits the server default.",
     {
       ...ctx.orgParam,
       fqdn: z
@@ -124,8 +124,9 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
         .optional()
         .describe("Container port to route to; must be one of the application's declared ports"),
       redirect: redirectSchema.optional(),
+      ip_allowlist: ipAllowlistSchema.optional(),
     },
-    async ({ fqdn, application_id, bound_server_id, target_port, redirect, ...args }) => {
+    async ({ fqdn, application_id, bound_server_id, target_port, redirect, ip_allowlist, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         // Only send what the caller set: the API keeps an adopted record's
@@ -135,6 +136,7 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
         if (bound_server_id !== undefined) body["bound_server_id"] = bound_server_id;
         if (target_port !== undefined) body["target_port"] = target_port;
         if (redirect !== undefined) body["redirect"] = redirect;
+        if (ip_allowlist !== undefined) body["ip_allowlist"] = ip_allowlist;
         const domain = await client.post(`/tenants/${tenantId}/domains/`, body);
         return asToolResult(domain);
       } catch (error: unknown) {
@@ -164,6 +166,35 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
         if (!found) throw new Error(`Domain '${domain}' not found in this organization.`);
         const updated = await client.patch(`/tenants/${tenantId}/domains/${found.id}`, {
           redirect: clear === true ? null : redirect,
+        });
+        return asToolResult(updated);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "set_domain_ip_allowlist",
+    "Set which source IPs may reach a domain, or make it inherit the server default again (inherit: true). Only applies on servers running the managed proxy; otherwise the API refuses. Inheriting means the domain follows its server's default allowlist. An ip_allowlist with both lists empty opens the domain to everyone, even when the server default restricts.",
+    {
+      ...ctx.orgParam,
+      domain: z.string().min(1).describe("Domain FQDN or id"),
+      ip_allowlist: ipAllowlistSchema.optional(),
+      inherit: z.boolean().optional().describe("true to use the server's default allowlist"),
+    },
+    async ({ domain, ip_allowlist, inherit, ...args }) => {
+      try {
+        if ((ip_allowlist === undefined) === (inherit !== true)) {
+          throw new Error("Pass either ip_allowlist or inherit: true.");
+        }
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const domains = await client.get<Array<{ id: string; fqdn: string }>>(`/tenants/${tenantId}/domains/`);
+        const found =
+          domains.find((d) => d.fqdn === domain.toLowerCase()) ?? domains.find((d) => d.id === domain);
+        if (!found) throw new Error(`Domain '${domain}' not found in this organization.`);
+        const updated = await client.patch(`/tenants/${tenantId}/domains/${found.id}`, {
+          ip_allowlist: inherit === true ? null : ip_allowlist,
         });
         return asToolResult(updated);
       } catch (error: unknown) {

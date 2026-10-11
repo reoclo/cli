@@ -83,6 +83,29 @@ export interface DomainRedirect {
   keep_path: boolean;
 }
 
+export type IpAllowlistPreset = "cloudflare";
+
+/**
+ * Source-IP rules enforced by the managed proxy. Shared by domains and by a
+ * server's default. `cidrs` takes IPv4/IPv6 addresses or CIDR ranges (max 100);
+ * both lists empty means open to everyone.
+ */
+export interface IpAllowlist {
+  cidrs: string[];
+  presets: IpAllowlistPreset[];
+}
+
+/** The `proxy` block of a server (API 1.239.0+ adds `ip_allowlist`). */
+export interface ServerProxyConfig {
+  mode?: string;
+  external_proxy_type?: string | null;
+  intent?: unknown;
+  observed?: unknown;
+  grant?: unknown;
+  /** The server's default allowlist; null when none is set. */
+  ip_allowlist?: IpAllowlist | null;
+}
+
 export interface Domain {
   id: string;
   tenant_id: string;
@@ -97,6 +120,8 @@ export interface Domain {
   dns_publish?: { enabled: boolean; proxied: boolean } | null;
   /** Set when the domain redirects instead of serving its application (API 1.238.0+). */
   redirect?: DomainRedirect | null;
+  /** Own allowlist; null inherits the server's default. Managed proxy only. */
+  ip_allowlist?: IpAllowlist | null;
 }
 
 /**

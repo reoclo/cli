@@ -139,6 +139,10 @@ reoclo domains publish app.example.com --proxied
 
 # Re-sync a server's managed proxy now
 reoclo proxy reconcile web1
+
+# Restrict who can reach a server's domains by source IP (managed proxy only)
+reoclo proxy allowlist web1 --cloudflare --allow 203.0.113.0/24
+reoclo domains access app.example.com --inherit
 ```
 
 `reoclo exec` waits for the command to finish: `--timeout <seconds>` (default 600) is both the command timeout and the basis for how long the CLI waits for the answer.
