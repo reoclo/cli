@@ -1,5 +1,5 @@
 /**
- * Server tools: read-only server inspection and health checks.
+ * Server tools: server inspection and health checks, plus the proxy IP allowlist.
  * No create/delete/decommission/reboot tools (non-destructive guardrails).
  */
 
@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { McpRegistrationContext } from "./context";
-import { asToolError, asToolResult } from "./common";
+import { asToolError, asToolResult, ipAllowlistSchema } from "./common";
 
 export function registerServerTools(
   server: McpServer,
@@ -186,6 +186,32 @@ export function registerServerTools(
         const result = await client.post(
           `/tenants/${tenantId}/servers/${server_id}/health-check`,
           {},
+        );
+        return asToolResult(result);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "set_server_ip_allowlist",
+    "Set the server's default IP allowlist, which domains on it inherit, or remove it (clear: true). Only applies on servers running the managed proxy; the API returns 409 otherwise. Domains with their own allowlist keep it; domains set to inherit follow this default.",
+    {
+      ...ctx.orgParam,
+      server_id: z.string().min(1).describe("Server ID"),
+      ip_allowlist: ipAllowlistSchema.optional(),
+      clear: z.boolean().optional().describe("true to remove the server's default allowlist"),
+    },
+    async ({ server_id, ip_allowlist, clear, ...args }) => {
+      try {
+        if ((ip_allowlist === undefined) === (clear !== true)) {
+          throw new Error("Pass either ip_allowlist or clear: true.");
+        }
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const result = await client.put(
+          `/tenants/${tenantId}/servers/${server_id}/proxy/ip-allowlist`,
+          { ip_allowlist: clear === true ? null : ip_allowlist },
         );
         return asToolResult(result);
       } catch (error: unknown) {

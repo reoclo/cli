@@ -12,6 +12,8 @@ import {
   assertRedirectOptions,
   lsRows,
   redirectPatchBody,
+  accessPatchBody,
+  assertAccessOptions,
 } from "../../../src/commands/domains";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 import type { HttpClient } from "../../../src/client/http";
@@ -315,5 +317,98 @@ describe("publishDomainDns outcome", () => {
     const out = await publishDomainDns(client("succeeded", ["A app.example.com"]), "t1", domain, wait);
     expect(out.status).toBe("published");
     expect(out.applied).toEqual(["A app.example.com"]);
+  });
+});
+
+describe("domains add allowlist", () => {
+  test("add has the --allow and --cloudflare flags", () => {
+    const program = new Command().name("reoclo");
+    registerDomains(program);
+    const add = program.commands.find((c) => c.name() === "domains")!.commands.find((c) => c.name() === "add")!;
+    const longs = add.options.map((o) => o.long);
+    expect(longs).toContain("--allow");
+    expect(longs).toContain("--cloudflare");
+  });
+
+  test("sends ip_allowlist only when a flag is given", async () => {
+    const { client } = fakeClient();
+    const none = await buildAddBody(client, "T", "a.example.com", { keepPath: true });
+    expect(none).toEqual({ fqdn: "a.example.com" });
+    const custom = await buildAddBody(client, "T", "a.example.com", { keepPath: true, allow: ["10.0.0.0/8", "1.2.3.4"] });
+    expect(custom["ip_allowlist"]).toEqual({ cidrs: ["10.0.0.0/8", "1.2.3.4"], presets: [] });
+    const cf = await buildAddBody(client, "T", "a.example.com", { keepPath: true, cloudflare: true });
+    expect(cf["ip_allowlist"]).toEqual({ cidrs: [], presets: ["cloudflare"] });
+    const both = await buildAddBody(client, "T", "a.example.com", { keepPath: true, allow: ["10.0.0.0/8"], cloudflare: true });
+    expect(both["ip_allowlist"]).toEqual({ cidrs: ["10.0.0.0/8"], presets: ["cloudflare"] });
+  });
+});
+
+describe("domains access", () => {
+  const current = { cidrs: ["10.0.0.0/8"], presets: ["cloudflare" as const] };
+
+  test("registered with completion on the domain argument and the flags", () => {
+    const program = new Command().name("reoclo");
+    registerDomains(program);
+    const cmd = program.commands.find((c) => c.name() === "domains")!.commands.find((c) => c.name() === "access")!;
+    expect(getCompletionSpec(cmd)!.args).toEqual([{ slot: 0, resource: "domains" }]);
+    const longs = cmd.options.map((o) => o.long);
+    for (const flag of ["--allow", "--cloudflare", "--no-cloudflare", "--open", "--inherit"]) {
+      expect(longs).toContain(flag);
+    }
+  });
+
+  test("no flags means show, not write", () => {
+    expect(accessPatchBody({}, current)).toBeNull();
+  });
+
+  test("--open sends empty lists and --inherit sends null", () => {
+    expect(accessPatchBody({ open: true }, current)).toEqual({ ip_allowlist: { cidrs: [], presets: [] } });
+    expect(accessPatchBody({ inherit: true }, current)).toEqual({ ip_allowlist: null });
+  });
+
+  test("--allow alone keeps the existing preset and replaces the ranges", () => {
+    expect(accessPatchBody({ allow: ["192.0.2.0/24", "198.51.100.7"] }, current)).toEqual({
+      ip_allowlist: { cidrs: ["192.0.2.0/24", "198.51.100.7"], presets: ["cloudflare"] },
+    });
+  });
+
+  test("--cloudflare and --no-cloudflare alone keep the existing ranges", () => {
+    expect(accessPatchBody({ cloudflare: false }, current)).toEqual({
+      ip_allowlist: { cidrs: ["10.0.0.0/8"], presets: [] },
+    });
+    expect(accessPatchBody({ cloudflare: true }, { cidrs: ["10.0.0.0/8"], presets: [] })).toEqual({
+      ip_allowlist: { cidrs: ["10.0.0.0/8"], presets: ["cloudflare"] },
+    });
+  });
+
+  test("a domain that inherits starts from empty", () => {
+    expect(accessPatchBody({ cloudflare: true }, null)).toEqual({ ip_allowlist: { cidrs: [], presets: ["cloudflare"] } });
+  });
+
+  test("--open and --inherit conflict with each other and with --allow/--cloudflare, exit 2", () => {
+    expect(exitCodeOf(() => assertAccessOptions({ open: true, inherit: true }))).toBe(2);
+    expect(exitCodeOf(() => accessPatchBody({ open: true, allow: ["10.0.0.0/8"] }, current))).toBe(2);
+    expect(exitCodeOf(() => accessPatchBody({ open: true, cloudflare: true }, current))).toBe(2);
+    expect(exitCodeOf(() => accessPatchBody({ inherit: true, allow: ["10.0.0.0/8"] }, current))).toBe(2);
+    expect(exitCodeOf(() => accessPatchBody({ inherit: true, cloudflare: false }, current))).toBe(2);
+  });
+
+  test("removing the last rule exits 2 instead of silently opening access", () => {
+    expect(exitCodeOf(() => accessPatchBody({ cloudflare: false }, { cidrs: [], presets: ["cloudflare"] }))).toBe(2);
+    expect(exitCodeOf(() => accessPatchBody({ cloudflare: false }, null))).toBe(2);
+  });
+});
+
+describe("domains ls access column", () => {
+  test("lsRows labels inherit, open and summaries and keeps the raw field", () => {
+    const list = [
+      { id: "1", fqdn: "a.example.com", ip_allowlist: null },
+      { id: "2", fqdn: "b.example.com", ip_allowlist: { cidrs: [], presets: [] } },
+      { id: "3", fqdn: "c.example.com", ip_allowlist: { cidrs: ["10.0.0.0/8", "1.2.3.4"], presets: ["cloudflare"] } },
+      { id: "4", fqdn: "d.example.com" },
+    ] as unknown as Domain[];
+    const rows = lsRows(list);
+    expect(rows.map((r) => r["access"])).toEqual(["inherit", "open", "cloudflare+2", "-"]);
+    expect(rows[2]!["ip_allowlist"]).toEqual(list[2]!.ip_allowlist);
   });
 });

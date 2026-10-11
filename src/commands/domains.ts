@@ -3,13 +3,22 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
-import type { Domain, RedirectCode } from "../client/types";
+import type { Domain, IpAllowlist, RedirectCode } from "../client/types";
 import type { HttpClient } from "../client/http";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { resolveApp, resolveServer } from "../client/resolve";
 import { EXIT } from "../client/exit-codes";
 import { parseEnum, parseIntFlag } from "../util/parse-flag";
+import {
+  allowlistFromFlags,
+  allowlistLabel,
+  allowlistLines,
+  collectAllow,
+  hasAllowFlags,
+  mergeAllowlist,
+  type AllowFlags,
+} from "../util/ip-allowlist";
 
 interface VerifyResponse {
   txt_name: string;
@@ -233,6 +242,8 @@ export interface AddOptions {
   code?: string;
   /** commander sets this from --no-keep-path; true unless the flag is given. */
   keepPath: boolean;
+  allow?: string[] | undefined;
+  cloudflare?: boolean | undefined;
 }
 
 export async function buildAddBody(
@@ -254,6 +265,8 @@ export async function buildAddBody(
   if (opts.app !== undefined) body["application_id"] = await resolveApp(client, tid, opts.app);
   if (opts.server !== undefined) body["bound_server_id"] = await resolveServer(client, tid, opts.server);
   if (opts.port !== undefined) body["target_port"] = parseIntFlag(opts.port, "--port", 1, 65535);
+  const ipAllowlist = allowlistFromFlags(opts);
+  if (ipAllowlist !== undefined) body["ip_allowlist"] = ipAllowlist;
   if (opts.redirectTo !== undefined) {
     const domains = await client.get<Domain[]>(`/tenants/${tid}/domains/`);
     body["redirect"] = buildRedirect(opts.redirectTo, domains, { code: opts.code, keepPath: opts.keepPath });
@@ -288,9 +301,41 @@ export function redirectPatchBody(
   return { redirect: buildRedirect(opts.to, domains, { code: opts.code, keepPath: opts.keepPath }) };
 }
 
-/** `ls` rows: every API field, plus a `redirects_to` label for the table. */
+/** `ls` rows: every API field, plus `redirects_to` and `access` labels for the table. */
 export function lsRows(list: Domain[]): Array<Record<string, unknown>> {
-  return list.map((d) => ({ ...d, redirects_to: redirectLabel(d, list) }));
+  return list.map((d) => ({
+    ...d,
+    redirects_to: redirectLabel(d, list),
+    access: allowlistLabel(d.ip_allowlist),
+  }));
+}
+
+export interface AccessOptions extends AllowFlags {
+  open?: boolean | undefined;
+  inherit?: boolean | undefined;
+}
+
+export function assertAccessOptions(opts: AccessOptions): void {
+  if (opts.open && opts.inherit) throw exitError("use either --open or --inherit, not both", EXIT.MISUSE);
+  if ((opts.open || opts.inherit) && hasAllowFlags(opts)) {
+    throw exitError("--open and --inherit cannot be combined with --allow or --cloudflare", EXIT.MISUSE);
+  }
+}
+
+/**
+ * The PATCH body for `domains access`, or null when no flag asks for a change
+ * (the command then shows the current access). --allow and --cloudflare merge
+ * into the domain's current allowlist.
+ */
+export function accessPatchBody(
+  opts: AccessOptions,
+  current: IpAllowlist | null | undefined,
+): { ip_allowlist: IpAllowlist | null } | null {
+  assertAccessOptions(opts);
+  if (opts.open) return { ip_allowlist: { cidrs: [], presets: [] } };
+  if (opts.inherit) return { ip_allowlist: null };
+  if (!hasAllowFlags(opts)) return null;
+  return { ip_allowlist: mergeAllowlist(current, opts, "--open") };
 }
 
 export function registerDomains(program: Command): void {
@@ -311,6 +356,7 @@ export function registerDomains(program: Command): void {
           { key: "status", label: "STATUS" },
           { key: "application_id", label: "APP" },
           { key: "redirects_to", label: "REDIRECT" },
+          { key: "access", label: "ACCESS" },
         ],
         fmt,
       );
@@ -347,6 +393,8 @@ export function registerDomains(program: Command): void {
     .option("--redirect-to <target>", "redirect to a domain (example.com[/path]) or a URL (https://...)")
     .option("--code <code>", "redirect status code: 301 (default), 302, 307 or 308")
     .option("--no-keep-path", "do not append the request path and query to the redirect target")
+    .option("--allow <cidr>", "only allow this IP or CIDR range (repeatable)", collectAllow)
+    .option("--cloudflare", "only allow Cloudflare's edge ranges")
     .action(async (fqdn: string, opts: AddOptions) => {
       const fmt = resolveFormat(globalOutput(program));
       const ctx = await bootstrap();
@@ -617,6 +665,44 @@ export function registerDomains(program: Command): void {
           updated.redirect
             ? `✓ ${updated.fqdn} redirects: ${redirectLabel(updated, domains)}`
             : `✓ ${updated.fqdn} serves its application again`,
+        );
+      }),
+    { args: [{ slot: 0, resource: "domains" }] },
+  );
+
+  withCompletion(
+    g
+      .command("access <fqdnOrId>")
+      .description("show or change which source IPs may reach a domain (managed proxy only)")
+      .option("--allow <cidr>", "allow this IP or CIDR range (repeatable; replaces the custom ranges)", collectAllow)
+      .option("--cloudflare", "allow Cloudflare's edge ranges")
+      .option("--no-cloudflare", "stop allowing Cloudflare's edge ranges")
+      .option("--open", "open to everyone, even when the server default restricts")
+      .option("--inherit", "use the server's default allowlist")
+      .action(async (fqdnOrId: string, opts: AccessOptions) => {
+        assertAccessOptions(opts);
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const domains = await ctx.client.get<Domain[]>(`/tenants/${tid}/domains/`);
+        const found =
+          domains.find((d) => d.fqdn === fqdnOrId.toLowerCase()) ?? domains.find((d) => d.id === fqdnOrId);
+        if (!found) throw exitError(`domain '${fqdnOrId}' not found`, EXIT.NOT_FOUND);
+        const body = accessPatchBody(opts, found.ip_allowlist);
+        if (body === null) {
+          if (fmt === "json" || fmt === "yaml") {
+            printObject({ fqdn: found.fqdn, ip_allowlist: found.ip_allowlist ?? null }, fmt);
+          } else {
+            console.log(found.fqdn);
+            for (const line of allowlistLines(found.ip_allowlist)) console.log(line);
+          }
+          return;
+        }
+        const updated = await ctx.client.patch<Domain>(`/tenants/${tid}/domains/${found.id}`, body);
+        printMutation(
+          program,
+          updated as unknown as Record<string, unknown>,
+          `\u2713 ${updated.fqdn} access: ${allowlistLabel(updated.ip_allowlist ?? body.ip_allowlist)}`,
         );
       }),
     { args: [{ slot: 0, resource: "domains" }] },

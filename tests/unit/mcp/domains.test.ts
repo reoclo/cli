@@ -227,3 +227,61 @@ test("set_domain_redirect on an unknown domain sends nothing", async () => {
   expect(result.isError).toBe(true);
   expect(patches).toEqual([]);
 });
+
+const ALLOWLIST = { cidrs: ["10.0.0.0/8"], presets: ["cloudflare"] };
+
+test("add_domain forwards ip_allowlist and omits it when not given", async () => {
+  const { registry, posts } = redirectHarness([]);
+  const add = tool(registry, "add_domain");
+  expect(add.schema["ip_allowlist"]?.isOptional()).toBe(true);
+  await add.cb({ organization: "acme", fqdn: "a.example.com", ip_allowlist: ALLOWLIST });
+  await add.cb({ organization: "acme", fqdn: "b.example.com" });
+  expect(posts[0]?.body).toEqual({ fqdn: "a.example.com", ip_allowlist: ALLOWLIST });
+  expect(posts[1]?.body).toEqual({ fqdn: "b.example.com" });
+});
+
+test("set_domain_ip_allowlist patches by fqdn or id, null to inherit", async () => {
+  const { registry, patches } = redirectHarness([{ id: "d-www", fqdn: "www.example.com" }]);
+  const set = tool(registry, "set_domain_ip_allowlist");
+  await set.cb({ organization: "acme", domain: "WWW.example.com", ip_allowlist: ALLOWLIST });
+  await set.cb({ organization: "acme", domain: "d-www", ip_allowlist: { cidrs: [], presets: [] } });
+  await set.cb({ organization: "acme", domain: "d-www", inherit: true });
+  expect(patches).toEqual([
+    { path: "/tenants/T-ACME/domains/d-www", body: { ip_allowlist: ALLOWLIST } },
+    { path: "/tenants/T-ACME/domains/d-www", body: { ip_allowlist: { cidrs: [], presets: [] } } },
+    { path: "/tenants/T-ACME/domains/d-www", body: { ip_allowlist: null } },
+  ]);
+});
+
+test("set_domain_ip_allowlist needs exactly one of ip_allowlist and inherit", async () => {
+  const { registry, patches } = redirectHarness([{ id: "d-www", fqdn: "www.example.com" }]);
+  const set = tool(registry, "set_domain_ip_allowlist");
+  const neither = (await set.cb({ organization: "acme", domain: "www.example.com" })) as { isError?: boolean };
+  const both = (await set.cb({
+    organization: "acme",
+    domain: "www.example.com",
+    ip_allowlist: ALLOWLIST,
+    inherit: true,
+  })) as { isError?: boolean };
+  expect(neither.isError).toBe(true);
+  expect(both.isError).toBe(true);
+  expect(patches).toEqual([]);
+});
+
+test("set_domain_ip_allowlist on an unknown domain sends nothing", async () => {
+  const { registry, patches } = redirectHarness([]);
+  const result = (await tool(registry, "set_domain_ip_allowlist").cb({
+    organization: "acme",
+    domain: "nope.example.com",
+    inherit: true,
+  })) as { isError?: boolean };
+  expect(result.isError).toBe(true);
+  expect(patches).toEqual([]);
+});
+
+test("the allowlist schema caps cidrs at 100 and only accepts the cloudflare preset", () => {
+  const schema = tool(redirectHarness([]).registry, "set_domain_ip_allowlist").schema["ip_allowlist"]!;
+  expect(schema.safeParse({ cidrs: Array.from({ length: 101 }, () => "10.0.0.0/8"), presets: [] }).success).toBe(false);
+  expect(schema.safeParse({ cidrs: [], presets: ["fastly"] }).success).toBe(false);
+  expect(schema.safeParse(ALLOWLIST).success).toBe(true);
+});
