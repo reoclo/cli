@@ -80,6 +80,64 @@ test("build-pools create with --max-concurrent out of range exits 2", async () =
   expect(r.exitCode).toBe(2);
 });
 
+test("build-pools create --mode ephemeral posts the Hetzner pool with a cent budget and resolved credential", async () => {
+  const r = await $`bun run src/index.ts -o json build-pools create --name eph --mode ephemeral --cloud-credential hetzner-main --location fsn1 --server-type cx33 --fallback-type cpx22 --idle-policy ttl:15 --budget 25.50`
+    .env(env()).quiet();
+  const pool = JSON.parse(r.stdout.toString()) as Record<string, unknown>;
+  expect(pool["mode"]).toBe("ephemeral");
+  expect(pool["provider"]).toBe("hetzner");
+  expect(pool["cloud_credential_id"]).toBe("66666666-6666-6666-6666-666666666666");
+  expect(pool["fallback_server_types"]).toEqual(["cpx22"]);
+  expect(pool["idle_policy"]).toBe("ttl:15");
+  expect(pool["monthly_budget_cents"]).toBe(2550);
+  expect(pool["server_ids"]).toBeUndefined();
+});
+
+test("build-pools estimate prints sub-cent hourly rates and the pricing snapshot", async () => {
+  const r = await $`bun run src/index.ts -o text build-pools estimate --cloud-credential hetzner-main --location fsn1 --server-type cx33`
+    .env(env()).quiet();
+  const out = r.stdout.toString();
+  expect(out).toContain("EUR 0.0144/h");
+  expect(out).toContain("EUR 0.0008/h");
+  expect(out).toContain("from 2026-10-24");
+});
+
+test("build-pools estimate with neither a pool nor unsaved settings exits 2", async () => {
+  const r = await $`bun run src/index.ts build-pools estimate --location fsn1`.env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(2);
+});
+
+test("build-pools costs reports budget usage past 80% for a pool", async () => {
+  await $`bun run src/index.ts -o json build-pools create --name eph --mode ephemeral --cloud-credential hetzner-main --location fsn1 --server-type cx33 --budget 25`
+    .env(env()).quiet();
+  const r = await $`bun run src/index.ts -o text build-pools costs eph`.env(env()).quiet();
+  const out = r.stdout.toString();
+  expect(out).toContain("EUR 21.00 of EUR 25.00 (84%)");
+  expect(out).toContain("over 80%");
+});
+
+test("build-pools builders flags a builder past its max lifetime", async () => {
+  const r = await $`bun run src/index.ts -o json build-pools builders pool-a`.env(env()).quiet();
+  const builders = rows(r.stdout);
+  const warning = (id: string): unknown => builders.find((b) => b["id"] === id)?.["warning"];
+  expect(warning("old-builder")).toBe("past max lifetime");
+  expect(warning("fresh-builder")).toBe("");
+});
+
+test("build-pools reconcile uploads the raw CSV as text/csv and prints differences", async () => {
+  const file = join(tmp, "statement.csv");
+  await Bun.write(file, "server_id;currency;net\n4711;EUR;1,50\n");
+  const r = await $`bun run src/index.ts -o text build-pools reconcile --file ${file} --cloud-credential hetzner-main --month 2026-09`
+    .env(env()).quiet();
+  expect(gw.statementUploads).toHaveLength(1);
+  expect(gw.statementUploads[0]?.contentType).toBe("text/csv");
+  expect(gw.statementUploads[0]?.body).toBe("server_id;currency;net\n4711;EUR;1,50\n");
+  expect(gw.statementUploads[0]?.search).toContain("month=2026-09");
+  const out = r.stdout.toString();
+  expect(out).toContain("+EUR 0.30");
+  expect(out).toContain("not_a_server");
+});
+
 test("build-pools set changes only the flags given", async () => {
   const r = await $`bun run src/index.ts -o json build-pools set pool-a --max-concurrent 3`.env(env()).quiet();
   const pool = JSON.parse(r.stdout.toString()) as Record<string, unknown>;

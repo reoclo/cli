@@ -81,6 +81,10 @@ function unwrapDetail(message: string): string {
   try {
     const parsed = JSON.parse(trimmed) as { detail?: unknown };
     if (typeof parsed.detail === "string") return parsed.detail;
+    const coded = parsed.detail as { code?: unknown; row?: unknown } | null | undefined;
+    if (coded && typeof coded.code === "string") {
+      return typeof coded.row === "number" ? `${coded.code} (row ${coded.row})` : coded.code;
+    }
   } catch {
     // not JSON, fall through
   }
