@@ -7,6 +7,10 @@ import type { Entry, IndexKind } from "../completion/types";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isUuid(identifier: string): boolean {
+  return UUID.test(identifier);
+}
+
 function lookup(entries: Entry[], identifier: string): string | undefined {
   const bySlug = entries.find((e) => e.value === identifier);
   if (bySlug) return bySlug.id;

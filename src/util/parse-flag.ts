@@ -5,7 +5,7 @@
 // parse-limit.ts (exit 2 = bad usage) so a mistyped flag reads the same way
 // everywhere.
 
-function badUsage(message: string): Error & { exitCode: number } {
+export function badUsage(message: string): Error & { exitCode: number } {
   const e = new Error(message) as Error & { exitCode: number };
   e.exitCode = 2;
   return e;

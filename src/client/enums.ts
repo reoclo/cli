@@ -29,6 +29,21 @@ export const REGISTRY_TYPES = ["docker", "ecr", "private"] as const;
 export type RegistryType = (typeof REGISTRY_TYPES)[number];
 export const RegistryTypeSchema = z.enum(REGISTRY_TYPES);
 
+/** What a server is used for: running apps, building images, or both. */
+export const SERVER_ROLES = ["runtime", "build", "both"] as const;
+export type ServerRole = (typeof SERVER_ROLES)[number];
+
+export const BUILD_STATUSES = [
+  "queued",
+  "building",
+  "pushing",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "builder_lost",
+] as const;
+export type BuildStatus = (typeof BUILD_STATUSES)[number];
+
 /** What a status component watches. Every kind except "manual" needs a ref id. */
 export const COMPONENT_SOURCE_KINDS = [
   "domain",

@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpRegistrationContext } from "./context";
 import { registerApplicationTools } from "./applications";
 import { registerAuthTools } from "./auth";
+import { registerBuildTools } from "./builds";
 import { registerDeploymentTools } from "./deployments";
 import { registerDomainTools } from "./domains";
 import { registerGitProviderTools } from "./git-providers";
@@ -25,6 +26,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerServerTools(server, ctx);
   registerApplicationTools(server, ctx);
   registerDeploymentTools(server, ctx);
+  registerBuildTools(server, ctx);
   registerGroupTools(server, ctx);
   registerLogTools(server, ctx);
   registerDomainTools(server, ctx);
