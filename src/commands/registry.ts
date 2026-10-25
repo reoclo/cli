@@ -142,7 +142,7 @@ export function registerRegistry(program: Command): void {
           name: opts.name,
           registry_type: registryType,
           registry_url: opts.url,
-          encrypted_credential: password,
+          credential: password,
         };
         if (opts.username !== undefined) body["username"] = opts.username;
         if (opts.description !== undefined) body["description"] = opts.description;
@@ -180,7 +180,7 @@ export function registerRegistry(program: Command): void {
         if (opts.username !== undefined) body["username"] = opts.username;
         if (opts.description !== undefined) body["description"] = opts.description;
         if (opts.passwordStdin) {
-          body["encrypted_credential"] = await readSecret({
+          body["credential"] = await readSecret({
             fromStdin: true,
             promptLabel: "registry password",
           });
@@ -219,7 +219,7 @@ export function registerRegistry(program: Command): void {
         const body: Record<string, unknown> = {
           registry_type: registryType,
           registry_url: opts.url,
-          encrypted_credential: password,
+          credential: password,
         };
         if (opts.username !== undefined) body["username"] = opts.username;
         const r = await ctx.client.post<

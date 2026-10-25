@@ -21,6 +21,8 @@ export interface FakeGateway {
   automationKey: string;
   /** Session ids passed to DELETE /external-deploy/session/{id} (revoke). */
   deployRevokes: string[];
+  /** JSON bodies the registry-credential write routes (create, update, test) received. */
+  registryBodies: Array<Record<string, unknown>>;
   stop: () => void;
 }
 
@@ -119,7 +121,6 @@ export function startFakeGateway(): FakeGateway {
     registry_url: "https://index.docker.io/v1/",
     username: "acme-bot",
     description: "Primary Docker Hub creds",
-    encrypted_credential: "***MASKED***",
     created_at: "2026-05-19T00:00:00Z",
     updated_at: "2026-05-19T00:00:00Z",
   });
@@ -216,6 +217,14 @@ export function startFakeGateway(): FakeGateway {
   let deploySessionToken: string | null = null;
   let deploySessionId: string | null = null;
   const deployRevokes: string[] = [];
+  const registryBodies: Array<Record<string, unknown>> = [];
+  const missingCredential = (body: Record<string, unknown>): Response | null =>
+    typeof body["credential"] === "string" && body["credential"] !== ""
+      ? null
+      : Response.json(
+          { detail: [{ loc: ["body", "credential"], msg: "Field required", type: "missing" }] },
+          { status: 422 },
+        );
 
   const server = Bun.serve({
     port: 0,
@@ -1185,6 +1194,9 @@ export function startFakeGateway(): FakeGateway {
         }
         if (req.method === "POST") {
           const body = (await req.json()) as Record<string, unknown>;
+          registryBodies.push(body);
+          const invalid = missingCredential(body);
+          if (invalid) return invalid;
           const id = `cred-${nextId++}`;
           const now = new Date().toISOString();
           const row: Record<string, unknown> = {
@@ -1197,7 +1209,6 @@ export function startFakeGateway(): FakeGateway {
             description: body["description"] ?? "",
             capabilities: body["capabilities"] ?? ["pull"],
             repository_prefix: body["repository_prefix"] ?? null,
-            encrypted_credential: "***MASKED***",
             created_at: now,
             updated_at: now,
           };
@@ -1212,6 +1223,9 @@ export function startFakeGateway(): FakeGateway {
         req.method === "POST"
       ) {
         const body = (await req.json()) as Record<string, unknown>;
+        registryBodies.push(body);
+        const invalid = missingCredential(body);
+        if (invalid) return invalid;
         if (body["registry_url"] === "https://bad.example.com") {
           return Response.json({ success: false, message: "DNS lookup failed", latency_ms: 0 });
         }
@@ -1232,8 +1246,10 @@ export function startFakeGateway(): FakeGateway {
             const row = registryCreds.get(id);
             if (!row) return new Response("not found", { status: 404 });
             const body = (await req.json()) as Record<string, unknown>;
-            const updated = { ...row, ...body, updated_at: new Date().toISOString() };
-            if ("encrypted_credential" in updated) updated["encrypted_credential"] = "***MASKED***";
+            registryBodies.push(body);
+            const fields = { ...body };
+            delete fields["credential"]; // stored encrypted, never echoed back
+            const updated = { ...row, ...fields, updated_at: new Date().toISOString() };
             registryCreds.set(id, updated);
             return Response.json(updated);
           }
@@ -1457,6 +1473,7 @@ export function startFakeGateway(): FakeGateway {
     token: TOKEN,
     automationKey: AUTOMATION_KEY,
     deployRevokes,
+    registryBodies,
     stop: () => {
       void server.stop();
     },

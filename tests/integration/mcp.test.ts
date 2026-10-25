@@ -244,7 +244,7 @@ test("list_repo_branches returns branches with default marker", async () => {
   }
 });
 
-test("get_registry_cred returns the seeded credential (password masked)", async () => {
+test("get_registry_cred returns the seeded credential without any secret field", async () => {
   const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
   const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
   await new Promise((r) => setTimeout(r, 500));
@@ -264,8 +264,9 @@ test("get_registry_cred returns the seeded credential (password masked)", async 
     });
     const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
     expect(result.isError).not.toBe(true);
-    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { encrypted_credential?: string };
-    expect(parsed.encrypted_credential).toBe("***MASKED***");
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    expect(parsed["name"]).toBe("dockerhub-main");
+    expect(Object.keys(parsed).filter((k) => k.includes("credential"))).toEqual([]);
   } finally {
     proc.kill();
   }
@@ -292,16 +293,19 @@ test("create_registry_cred creates a new credential", async () => {
           name: "mcp-test-cred",
           registry_type: "docker",
           registry_url: "https://index.docker.io/v1/",
-          encrypted_credential: "test-pw",
+          credential: "test-pw",
           username: "test-user",
         },
       },
     });
     const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
     expect(result.isError).not.toBe(true);
-    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { id?: string; encrypted_credential?: string };
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { id?: string };
     expect(parsed.id).toBeDefined();
-    expect(parsed.encrypted_credential).toBe("***MASKED***");
+    expect(result.content[0]?.text).not.toContain("test-pw");
+    expect(gw.registryBodies).toHaveLength(1);
+    expect(gw.registryBodies[0]).toMatchObject({ credential: "test-pw" });
+    expect(gw.registryBodies[0]).not.toHaveProperty("encrypted_credential");
   } finally {
     proc.kill();
   }
@@ -327,7 +331,7 @@ test("test_registry_cred good URL returns success:true", async () => {
         arguments: {
           registry_type: "docker",
           registry_url: "https://index.docker.io/v1/",
-          encrypted_credential: "test-pw",
+          credential: "test-pw",
         },
       },
     });
@@ -360,7 +364,7 @@ test("test_registry_cred bad URL returns success:false (NOT isError)", async () 
         arguments: {
           registry_type: "docker",
           registry_url: "https://bad.example.com",
-          encrypted_credential: "test-pw",
+          credential: "test-pw",
         },
       },
     });
@@ -369,6 +373,35 @@ test("test_registry_cred bad URL returns success:false (NOT isError)", async () 
     const parsed = JSON.parse(result.content[0]?.text ?? "{}") as { success?: boolean; message?: string };
     expect(parsed.success).toBe(false);
     expect(parsed.message).toContain("DNS lookup failed");
+  } finally {
+    proc.kill();
+  }
+});
+
+test("update_registry_cred rotates the secret as credential and never returns it", async () => {
+  const env = { ...process.env, REOCLO_CONFIG_DIR: tmp, REOCLO_CACHE_DIR: join(tmp, "cache") };
+  const proc = spawn("bun", ["run", "src/index.ts", "mcp"], { env, stdio: ["pipe", "pipe", "ignore"] });
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    });
+    const resp = await sendRpc(proc, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "update_registry_cred",
+        arguments: { credential_id: "33333333-3333-3333-3333-333333333333", credential: "rotated-pw" },
+      },
+    });
+    const result = resp.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).not.toContain("rotated-pw");
+    expect(gw.registryBodies).toEqual([{ credential: "rotated-pw" }]);
   } finally {
     proc.kill();
   }

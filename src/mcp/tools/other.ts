@@ -140,26 +140,26 @@ export function registerOtherTools(
 
   server.tool(
     "create_registry_cred",
-    "Create a container registry credential.",
+    "Create a container registry credential. The credential value is sent once and never returned.",
     {
       ...ctx.orgParam,
       name: z.string().min(1).describe("Human-readable name (e.g. 'dockerhub-prod')"),
       registry_type: RegistryTypeSchema.describe("Registry kind"),
       registry_url: z.url().describe("Registry URL"),
-      encrypted_credential: z.string().min(1).describe(
-        "The credential/password value. Sensitive — treat as such and do not echo back to the user.",
+      credential: z.string().min(1).describe(
+        "The credential/password value. Sensitive: it is sent once to be stored and never returned by any tool; do not echo it back to the user.",
       ),
       username: z.string().optional().describe("Registry username, if applicable"),
       description: z.string().optional().describe("Description"),
     },
-    async ({ name, registry_type, registry_url, encrypted_credential, username, description, ...args }) => {
+    async ({ name, registry_type, registry_url, credential, username, description, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {
           name,
           registry_type,
           registry_url,
-          encrypted_credential,
+          credential,
         };
         if (username !== undefined) body["username"] = username;
         if (description !== undefined) body["description"] = description;
@@ -176,7 +176,7 @@ export function registerOtherTools(
 
   server.tool(
     "update_registry_cred",
-    "Update fields of an existing container registry credential.",
+    "Update fields of an existing container registry credential. A new credential value is sent once and never returned.",
     {
       ...ctx.orgParam,
       credential_id: z.string().min(1).describe("Registry credential id"),
@@ -184,11 +184,11 @@ export function registerOtherTools(
       registry_url: z.url().optional().describe("New URL"),
       username: z.string().optional().describe("New username"),
       description: z.string().optional().describe("New description"),
-      encrypted_credential: z.string().min(1).optional().describe(
-        "New credential/password value. Sensitive — treat as such.",
+      credential: z.string().min(1).optional().describe(
+        "New credential/password value. Sensitive: it is sent once to be stored and never returned; do not echo it back to the user.",
       ),
     },
-    async ({ credential_id, name, registry_url, username, description, encrypted_credential, ...args }) => {
+    async ({ credential_id, name, registry_url, username, description, credential, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {};
@@ -196,7 +196,7 @@ export function registerOtherTools(
         if (registry_url !== undefined) body["registry_url"] = registry_url;
         if (username !== undefined) body["username"] = username;
         if (description !== undefined) body["description"] = description;
-        if (encrypted_credential !== undefined) body["encrypted_credential"] = encrypted_credential;
+        if (credential !== undefined) body["credential"] = credential;
         const updated = await client.patch(
           `/tenants/${tenantId}/registry-credentials/${credential_id}`,
           body,
@@ -215,18 +215,18 @@ export function registerOtherTools(
       ...ctx.orgParam,
       registry_type: RegistryTypeSchema.describe("Registry kind"),
       registry_url: z.url().describe("Registry URL"),
-      encrypted_credential: z.string().min(1).describe(
-        "The credential/password to test. Sensitive — treat as such.",
+      credential: z.string().min(1).describe(
+        "The credential/password to test. Sensitive: it is sent once for this check and never returned; do not echo it back to the user.",
       ),
       username: z.string().optional().describe("Registry username, if applicable"),
     },
-    async ({ registry_type, registry_url, encrypted_credential, username, ...args }) => {
+    async ({ registry_type, registry_url, credential, username, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const body: Record<string, unknown> = {
           registry_type,
           registry_url,
-          encrypted_credential,
+          credential,
         };
         if (username !== undefined) body["username"] = username;
         const result = await client.post(

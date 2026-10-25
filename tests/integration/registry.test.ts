@@ -29,12 +29,12 @@ test("registry ls lists seeded credentials", async () => {
   expect(ls.stdout.toString()).toContain("dockerhub-main");
 });
 
-test("registry get shows credential (password masked)", async () => {
-  const got = await $`bun run src/index.ts registry get 33333333-3333-3333-3333-333333333333`
+test("registry get shows the credential record without any secret field", async () => {
+  const got = await $`bun run src/index.ts -o json registry get 33333333-3333-3333-3333-333333333333`
     .env(env()).quiet();
-  const out = got.stdout.toString();
-  expect(out).toContain("dockerhub-main");
-  expect(out).toContain("MASKED");
+  const row = JSON.parse(got.stdout.toString()) as Record<string, unknown>;
+  expect(row["name"]).toBe("dockerhub-main");
+  expect(Object.keys(row).filter((k) => k.includes("credential"))).toEqual([]);
 });
 
 test("registry rm --yes deletes the credential", async () => {
@@ -126,4 +126,28 @@ test("registry create without --push leaves the default pull-only capability", a
     --name ghcr-pull --type private --url https://ghcr.io --password-stdin`.env(env()).quiet();
   const row = JSON.parse(created.stdout.toString()) as Record<string, unknown>;
   expect(row["capabilities"]).toEqual(["pull"]);
+});
+
+test("registry create sends the secret as credential and never reads it back", async () => {
+  const created = await $`echo -n "s3cret" | bun run src/index.ts -o json registry create \
+    --name ghcr-main --type private --url https://ghcr.io --username bot --password-stdin`.env(env()).quiet();
+  expect(gw.registryBodies).toHaveLength(1);
+  expect(gw.registryBodies[0]).toMatchObject({ credential: "s3cret" });
+  expect(gw.registryBodies[0]).not.toHaveProperty("encrypted_credential");
+  expect(created.stdout.toString()).not.toContain("s3cret");
+});
+
+test("registry update rotates the secret as credential and never reads it back", async () => {
+  const updated = await $`echo -n "rotated" | bun run src/index.ts -o json registry update \
+    33333333-3333-3333-3333-333333333333 --password-stdin`.env(env()).quiet();
+  expect(gw.registryBodies).toEqual([{ credential: "rotated" }]);
+  expect(updated.stdout.toString()).not.toContain("rotated");
+});
+
+test("registry test sends the secret as credential", async () => {
+  await $`echo -n "pw" | bun run src/index.ts registry test \
+    --type docker --url 'https://index.docker.io/v1/' --username acme --password-stdin`.env(env()).quiet();
+  expect(gw.registryBodies).toHaveLength(1);
+  expect(gw.registryBodies[0]).toMatchObject({ credential: "pw" });
+  expect(gw.registryBodies[0]).not.toHaveProperty("encrypted_credential");
 });
