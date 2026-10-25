@@ -90,3 +90,18 @@ describe("deepMerge (apps config set)", () => {
     expect(deepMerge({ x: 5 }, { x: { a: 1 } })).toEqual({ x: { a: 1 } });
   });
 })
+
+describe("apps config set build placement flags", () => {
+  test("has --build-placement, --push-credential and --push-repository", () => {
+    const program = new Command().name("reoclo");
+    registerApps(program);
+    const set = program.commands
+      .find((c) => c.name() === "apps")!
+      .commands.find((c) => c.name() === "config")!
+      .commands.find((c) => c.name() === "set")!;
+    const longs = set.options.map((o) => o.long);
+    for (const flag of ["--build-placement", "--push-credential", "--push-repository"]) {
+      expect(longs).toContain(flag);
+    }
+  });
+});

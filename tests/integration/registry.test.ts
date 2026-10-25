@@ -111,3 +111,19 @@ test("registry test --type bogus exits non-zero", async () => {
     .env(env()).nothrow().quiet();
   expect(r.exitCode).not.toBe(0);
 });
+
+test("registry create --push --repository-prefix sends the push capability and prefix", async () => {
+  const created = await $`echo -n "s3cret" | bun run src/index.ts -o json registry create \
+    --name ghcr-push --type private --url https://ghcr.io --username bot \
+    --push --repository-prefix ghcr.io/acme/ --password-stdin`.env(env()).quiet();
+  const row = JSON.parse(created.stdout.toString()) as Record<string, unknown>;
+  expect(row["capabilities"]).toEqual(["pull", "push"]);
+  expect(row["repository_prefix"]).toBe("ghcr.io/acme/");
+});
+
+test("registry create without --push leaves the default pull-only capability", async () => {
+  const created = await $`echo -n "s3cret" | bun run src/index.ts -o json registry create \
+    --name ghcr-pull --type private --url https://ghcr.io --password-stdin`.env(env()).quiet();
+  const row = JSON.parse(created.stdout.toString()) as Record<string, unknown>;
+  expect(row["capabilities"]).toEqual(["pull"]);
+});

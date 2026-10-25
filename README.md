@@ -21,6 +21,8 @@ Commands:
   whoami                  show the current identity
   servers                 manage servers
   apps                    manage applications
+  build-pools             manage build pools (groups of build servers)
+  builds                  build history on build servers
   deployments             deployment history
   logs                    tail or query application logs
   env                     application environment variables
@@ -143,6 +145,37 @@ reoclo proxy reconcile web1
 # Restrict who can reach a server's domains by source IP (managed proxy only)
 reoclo proxy allowlist web1 --cloudflare --allow 203.0.113.0/24
 reoclo domains access app.example.com --inherit
+```
+
+## Build on dedicated build servers
+
+A server's role says what it is for: `runtime` (the default), `build`, or `both`.
+Build servers join a pool, and an app builds on a pool instead of its own server.
+A pool-built image is pushed to a registry, so the app needs a push target.
+
+```bash
+# Make a server a builder and group it into a pool (--server is repeatable)
+reoclo servers set-role build1 build
+reoclo build-pools create --name builders --server build1 --max-concurrent 2
+
+# A registry credential that may push, limited to one repository prefix
+reoclo registry create --name ghcr-push --type private --url https://ghcr.io \
+  --username bot --push --repository-prefix ghcr.io/acme/ --password-stdin
+
+# Build an app on the pool and push the image to that registry
+reoclo apps config set stack --build-placement pool:<pool-id> \
+  --push-credential <credential-id> --push-repository ghcr.io/acme/stack
+# Back to building on the app's own server
+reoclo apps config set stack --build-placement target
+
+# Watch and stop builds (--status filters the fetched page)
+reoclo builds ls --app stack --status building
+reoclo builds logs <build-id>
+reoclo builds cancel <build-id>
+
+reoclo build-pools ls
+reoclo build-pools set builders --max-concurrent 4
+reoclo build-pools rm builders --yes
 ```
 
 `reoclo exec` waits for the command to finish: `--timeout <seconds>` (default 600) is both the command timeout and the basis for how long the CLI waits for the answer.

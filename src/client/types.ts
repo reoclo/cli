@@ -28,6 +28,7 @@ export interface Server {
   public_ip: string | null;
   status: "online" | "offline" | "unknown";
   runner_version?: string | null;
+  role?: "runtime" | "build" | "both";
   connection_type: "runner" | "ssh";
   cpu_cores?: number;
   ram_mb?: number;

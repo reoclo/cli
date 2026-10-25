@@ -164,6 +164,52 @@ export function startFakeGateway(): FakeGateway {
     deploy: { replicas: 1, container_port: 3000, host_port: 8080, env: { FOO: "1" } },
   });
 
+  const serverRoles = new Map<string, string>();
+  const SEED_POOL_ID = "44444444-4444-4444-4444-444444444444";
+  const buildPools = new Map<string, Record<string, unknown>>();
+  buildPools.set(SEED_POOL_ID, {
+    id: SEED_POOL_ID,
+    tenant_id: TENANT_ID,
+    name: "pool-a",
+    mode: "persistent",
+    server_ids: ["00000000-0000-0000-0000-00000000bbbb"],
+    max_concurrent_builds: 2,
+    in_flight: 0,
+    created_at: "2026-05-19T00:00:00Z",
+    updated_at: "2026-05-19T00:00:00Z",
+  });
+  const buildRow = (id: string, status: string, applicationId: string): Record<string, unknown> => ({
+    id,
+    tenant_id: TENANT_ID,
+    application_id: applicationId,
+    group_id: null,
+    deployment_id: "dep-1",
+    pool_id: SEED_POOL_ID,
+    builder_server_id: null,
+    status,
+    platform: "linux/amd64",
+    commit_sha: "abcdef1234567890",
+    image_ref: null,
+    digest: null,
+    images: {},
+    created_at: "2026-05-19T00:00:00Z",
+    started_at: null,
+    completed_at: null,
+    duration_seconds: status === "succeeded" ? 42 : null,
+    error_code: null,
+    cancel_requested: false,
+    requested_by: null,
+    queue_position: status === "queued" ? 1 : null,
+  });
+  const builds = new Map<string, Record<string, unknown>>();
+  for (const row of [
+    buildRow("55555555-0000-0000-0000-000000000001", "succeeded", "00000000-0000-0000-0000-00000000cccc"),
+    buildRow("55555555-0000-0000-0000-000000000002", "failed", "00000000-0000-0000-0000-00000000cccc"),
+    buildRow("55555555-0000-0000-0000-000000000003", "queued", "00000000-0000-0000-0000-00000000dddd"),
+  ]) {
+    builds.set(String(row["id"]), row);
+  }
+
   let nextId = 1;
 
   // External-deploy two-token state (per gateway instance).
@@ -300,8 +346,14 @@ export function startFakeGateway(): FakeGateway {
         new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)$`),
       );
       if (srvMatch) {
+        const sid = srvMatch[1] ?? "";
+        if (req.method === "PATCH") {
+          const patch = (await req.json()) as { role?: string };
+          if (patch.role !== undefined) serverRoles.set(sid, patch.role);
+        }
         return Response.json({
-          id: srvMatch[1] ?? "",
+          role: serverRoles.get(sid) ?? "runtime",
+          id: sid,
           name: "srv-1",
           hostname: "srv-1.local",
           public_ip: "1.1.1.1",
@@ -1049,6 +1101,80 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({ success: true, message: "reboot job queued", job_id: "job-1" });
       }
 
+      // /mcp/tenants/{tid}/build-pools/  (paginated list + create)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/build-pools/`) {
+        if (req.method === "GET") {
+          const skip = Number(url.searchParams.get("skip") ?? "0");
+          const limit = Number(url.searchParams.get("limit") ?? "20");
+          const all = [...buildPools.values()];
+          return Response.json({ items: all.slice(skip, skip + limit), total: all.length, skip, limit });
+        }
+        if (req.method === "POST") {
+          const body = (await req.json()) as Record<string, unknown>;
+          const id = `pool-${nextId++}`;
+          const now = new Date().toISOString();
+          const row = {
+            id,
+            tenant_id: TENANT_ID,
+            in_flight: 0,
+            max_concurrent_builds: 1,
+            ...body,
+            created_at: now,
+            updated_at: now,
+          };
+          buildPools.set(id, row);
+          return Response.json(row, { status: 201 });
+        }
+      }
+
+      // /mcp/tenants/{tid}/build-pools/{id}  (get | patch | delete)
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/build-pools\/([^/]+)$/);
+        if (m) {
+          const id = m[1] ?? "";
+          const row = buildPools.get(id);
+          if (!row) return new Response("not found", { status: 404 });
+          if (req.method === "GET") return Response.json(row);
+          if (req.method === "PATCH") {
+            const updated = { ...row, ...((await req.json()) as Record<string, unknown>) };
+            buildPools.set(id, updated);
+            return Response.json(updated);
+          }
+          if (req.method === "DELETE") {
+            buildPools.delete(id);
+            return new Response(null, { status: 204 });
+          }
+        }
+      }
+
+      // /mcp/tenants/{tid}/builds/  (paginated list, ?application_id=)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/builds/`) {
+        const skip = Number(url.searchParams.get("skip") ?? "0");
+        const limit = Number(url.searchParams.get("limit") ?? "20");
+        const app = url.searchParams.get("application_id");
+        const all = [...builds.values()].filter((b) => app === null || b["application_id"] === app);
+        return Response.json({ items: all.slice(skip, skip + limit), total: all.length, skip, limit });
+      }
+
+      // /mcp/tenants/{tid}/builds/{id}[/logs|/cancel]
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/builds\/([^/]+)(?:\/(logs|cancel))?$/);
+        if (m) {
+          const id = m[1] ?? "";
+          const row = builds.get(id);
+          if (!row) return new Response("not found", { status: 404 });
+          if (m[2] === undefined && req.method === "GET") return Response.json(row);
+          if (m[2] === "logs" && req.method === "GET") {
+            return Response.json({ lines: ["step 1/2 : FROM node:22", "step 2/2 : COPY . ."] });
+          }
+          if (m[2] === "cancel" && req.method === "POST") {
+            const updated = { ...row, status: "cancelled", cancel_requested: true, queue_position: null };
+            builds.set(id, updated);
+            return Response.json(updated);
+          }
+        }
+      }
+
       // /mcp/tenants/{tid}/registry-credentials   (list + create)
       if (
         url.pathname === `/mcp/tenants/${TENANT_ID}/registry-credentials` ||
@@ -1069,6 +1195,8 @@ export function startFakeGateway(): FakeGateway {
             registry_url: body["registry_url"],
             username: body["username"] ?? "",
             description: body["description"] ?? "",
+            capabilities: body["capabilities"] ?? ["pull"],
+            repository_prefix: body["repository_prefix"] ?? null,
             encrypted_credential: "***MASKED***",
             created_at: now,
             updated_at: now,

@@ -117,6 +117,8 @@ export function registerRegistry(program: Command): void {
     .requiredOption("--url <url>", "registry URL")
     .option("--username <u>", "registry username")
     .option("--description <d>", "description")
+    .option("--push", "also allow pushing images (adds the push capability, for build servers)")
+    .option("--repository-prefix <prefix>", "only repositories under this prefix may use the credential")
     .option("--password-stdin", "read password from stdin")
     .action(
       async (opts: {
@@ -125,6 +127,8 @@ export function registerRegistry(program: Command): void {
         url: string;
         username?: string;
         description?: string;
+        push?: boolean;
+        repositoryPrefix?: string;
         passwordStdin?: boolean;
       }) => {
         const registryType = RegistryTypeSchema.parse(opts.type);
@@ -142,6 +146,8 @@ export function registerRegistry(program: Command): void {
         };
         if (opts.username !== undefined) body["username"] = opts.username;
         if (opts.description !== undefined) body["description"] = opts.description;
+        if (opts.push) body["capabilities"] = ["pull", "push"];
+        if (opts.repositoryPrefix !== undefined) body["repository_prefix"] = opts.repositoryPrefix;
         const r = await ctx.client.post<Record<string, unknown> & { id: string }>(
           `/tenants/${tid}/registry-credentials`,
           body,
