@@ -178,6 +178,25 @@ reoclo build-pools set builders --max-concurrent 4
 reoclo build-pools rm builders --yes
 ```
 
+An ephemeral pool creates a Hetzner server for a build and deletes it afterwards. It needs an organization Hetzner credential and a monthly net budget. New builders stop when the budget is reached.
+
+```bash
+# Price a builder before creating the pool (server plus IPv4, net and gross)
+reoclo build-pools estimate --cloud-credential hetzner-main --location fsn1 --server-type cx33
+
+reoclo build-pools create --name burst --mode ephemeral --cloud-credential hetzner-main \
+  --location fsn1 --server-type cx33 --fallback-type cpx22 --budget 25
+# Idle builders go near the end of the billed hour by default; or immediate, or ttl:<minutes>
+reoclo build-pools set burst --idle-policy ttl:15 --max-lifetime 90 --budget 40
+
+# Month to date, forecast and budget usage; the builders and what they cost so far
+reoclo build-pools costs burst
+reoclo build-pools builders burst
+
+# Compare a monthly Hetzner consumption statement with the estimates (admins only)
+reoclo build-pools reconcile --file statement.csv --cloud-credential hetzner-main --month 2026-09
+```
+
 `reoclo exec` waits for the command to finish: `--timeout <seconds>` (default 600) is both the command timeout and the basis for how long the CLI waits for the answer.
 
 ## Tunnels
