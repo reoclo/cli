@@ -291,7 +291,7 @@ test("create_registry_cred creates a new credential", async () => {
         name: "create_registry_cred",
         arguments: {
           name: "mcp-test-cred",
-          registry_type: "docker",
+          registry_type: "docker_hub",
           registry_url: "https://index.docker.io/v1/",
           credential: "test-pw",
           username: "test-user",
@@ -329,7 +329,7 @@ test("test_registry_cred good URL returns success:true", async () => {
       params: {
         name: "test_registry_cred",
         arguments: {
-          registry_type: "docker",
+          registry_type: "docker_hub",
           registry_url: "https://index.docker.io/v1/",
           credential: "test-pw",
         },
@@ -362,7 +362,7 @@ test("test_registry_cred bad URL returns success:false (NOT isError)", async () 
       params: {
         name: "test_registry_cred",
         arguments: {
-          registry_type: "docker",
+          registry_type: "docker_hub",
           registry_url: "https://bad.example.com",
           credential: "test-pw",
         },

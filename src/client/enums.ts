@@ -25,9 +25,30 @@ export const LOG_LEVELS = ["debug", "info", "warn", "error", "fatal"] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 export const LogLevelSchema = z.enum(LOG_LEVELS);
 
-export const REGISTRY_TYPES = ["docker", "ecr", "private"] as const;
+/** Registry kinds, exactly as the API's `RegistryType` enum names them. */
+export const REGISTRY_TYPES = [
+  "docker_hub",
+  "ghcr",
+  "aws_ecr",
+  "google_artifact_registry",
+  "azure_acr",
+  "harbor",
+  "generic",
+] as const;
 export type RegistryType = (typeof REGISTRY_TYPES)[number];
 export const RegistryTypeSchema = z.enum(REGISTRY_TYPES);
+
+/** Short names older CLI versions documented, mapped to the API's names. */
+const REGISTRY_TYPE_ALIASES: Readonly<Record<string, RegistryType>> = {
+  docker: "docker_hub",
+  ecr: "aws_ecr",
+  private: "generic",
+};
+
+/** Parse a `--type` value, accepting the API names and the older short names. */
+export function parseRegistryType(value: string): RegistryType {
+  return RegistryTypeSchema.parse(REGISTRY_TYPE_ALIASES[value] ?? value);
+}
 
 /** What a server is used for: running apps, building images, or both. */
 export const SERVER_ROLES = ["runtime", "build", "both"] as const;

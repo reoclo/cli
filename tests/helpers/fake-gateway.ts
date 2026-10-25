@@ -117,7 +117,7 @@ export function startFakeGateway(): FakeGateway {
     id: "33333333-3333-3333-3333-333333333333",
     tenant_id: TENANT_ID,
     name: "dockerhub-main",
-    registry_type: "docker",
+    registry_type: "docker_hub",
     registry_url: "https://index.docker.io/v1/",
     username: "acme-bot",
     description: "Primary Docker Hub creds",

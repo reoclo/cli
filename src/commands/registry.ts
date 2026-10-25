@@ -11,7 +11,7 @@ import {
   requireAutomationKey,
   requireServerUuid,
 } from "../ci/automation-client";
-import { RegistryTypeSchema } from "../client/enums";
+import { REGISTRY_TYPES, parseRegistryType } from "../client/enums";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
 import { readSecret } from "../util/secret";
@@ -113,7 +113,7 @@ export function registerRegistry(program: Command): void {
   g.command("create")
     .description("create a registry credential")
     .requiredOption("--name <name>", "human-readable name")
-    .requiredOption("--type <type>", "registry type (docker|ecr|private)")
+    .requiredOption("--type <type>", `registry type (${REGISTRY_TYPES.join("|")})`)
     .requiredOption("--url <url>", "registry URL")
     .option("--username <u>", "registry username")
     .option("--description <d>", "description")
@@ -131,7 +131,7 @@ export function registerRegistry(program: Command): void {
         repositoryPrefix?: string;
         passwordStdin?: boolean;
       }) => {
-        const registryType = RegistryTypeSchema.parse(opts.type);
+        const registryType = parseRegistryType(opts.type);
         const password = await readSecret({
           fromStdin: Boolean(opts.passwordStdin),
           promptLabel: "registry password",
@@ -197,7 +197,7 @@ export function registerRegistry(program: Command): void {
 
   g.command("test")
     .description("test a registry connection (ad-hoc)")
-    .requiredOption("--type <type>", "registry type (docker|ecr|private)")
+    .requiredOption("--type <type>", `registry type (${REGISTRY_TYPES.join("|")})`)
     .requiredOption("--url <url>", "registry URL")
     .option("--username <u>", "registry username")
     .option("--password-stdin", "read password from stdin")
@@ -208,7 +208,7 @@ export function registerRegistry(program: Command): void {
         username?: string;
         passwordStdin?: boolean;
       }) => {
-        const registryType = RegistryTypeSchema.parse(opts.type);
+        const registryType = parseRegistryType(opts.type);
         const fmt = resolveFormat(globalOutput(program));
         const password = await readSecret({
           fromStdin: Boolean(opts.passwordStdin),
