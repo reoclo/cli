@@ -21,6 +21,8 @@ export interface FakeGateway {
   automationKey: string;
   /** Session ids passed to DELETE /external-deploy/session/{id} (revoke). */
   deployRevokes: string[];
+  /** Every Relocate mutation the CLI sent: path suffix and JSON body. */
+  relocationRequests: Array<{ path: string; body: Record<string, unknown> }>;
   stop: () => void;
 }
 
@@ -30,6 +32,8 @@ export function startFakeGateway(): FakeGateway {
   const monitors = new Map<string, Record<string, unknown>>();
   const statusPages = new Map<string, Record<string, unknown>>();
   const incidents = new Map<string, Record<string, unknown>>();
+  const relocations = new Map<string, Record<string, unknown>>();
+  const relocationRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
   const incidentUpdates = new Map<string, Array<Record<string, unknown>>>();
   const scheduledOps = new Map<string, Record<string, unknown>>();
   const scheduledRuns = new Map<string, Array<Record<string, unknown>>>();
@@ -698,6 +702,47 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/application-groups/`) {
+        return Response.json([{ id: "00000000-0000-0000-0000-00000000dddd", slug: "files", name: "files", kind: "compose" }]);
+      }
+
+      // Relocate: plan creates a run that waits for an explicit start; actions record their bodies.
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/relocations`) {
+        if (req.method === "GET") return Response.json({ items: [...relocations.values()], total: relocations.size, skip: 0, limit: 100 });
+        const body = (await req.json()) as Record<string, unknown>;
+        relocationRequests.push({ path: "plan", body });
+        const id = `00000000-0000-0000-0000-${String(nextId++).padStart(12, "0")}`;
+        const run = {
+          id, state: "planned", revision: 1, target_server_id: body.target_server_id, source_server_ids: [],
+          plan_revision: 1, plan_hash: "a".repeat(64), plan_expires_at: null, blockers: [], pause_reason: null,
+          error_code: null, dns_switch_started_at: null, rollback_until: null, created_at: "2026-01-01T00:00:00Z",
+          permitted_actions: ["plan", "run"], record_plan_hash: null,
+        };
+        relocations.set(id, run);
+        return Response.json(run, { status: 202 });
+      }
+      const relocationMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/relocations/([^/]+)(?:/([a-z-]+))?$`),
+      );
+      if (relocationMatch) {
+        const run = relocations.get(relocationMatch[1] ?? "");
+        if (!run) return Response.json({ detail: "Relocation not found" }, { status: 404 });
+        const action = relocationMatch[2];
+        if (action === undefined) return Response.json(run);
+        if (action === "events") {
+          const after = Number(url.searchParams.get("after") ?? "0");
+          const events = [1, 2].map((sequence) => ({ sequence, phase: "planned", kind: "state", code: "planned", message: `event ${sequence}`, created_at: "2026-01-01T00:00:00Z" }));
+          const items = events.filter((e) => e.sequence > after);
+          return Response.json({ items, next_after: items.at(-1)?.sequence ?? after });
+        }
+        const body = (await req.json()) as Record<string, unknown>;
+        relocationRequests.push({ path: action, body });
+        if (body.revision !== run.revision) return Response.json({ detail: "plan_stale" }, { status: 409 });
+        const next = { ...run, revision: Number(run.revision) + 1, state: action === "run" ? "preparing" : run.state, permitted_actions: [] };
+        relocations.set(relocationMatch[1] ?? "", next);
+        return Response.json(next, { status: 202 });
+      }
+
       // /mcp/tenants/{tid}/incidents/  (collection, WITH trailing slash)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/incidents/`) {
         if (req.method === "GET") {
@@ -1329,6 +1374,7 @@ export function startFakeGateway(): FakeGateway {
     token: TOKEN,
     automationKey: AUTOMATION_KEY,
     deployRevokes,
+    relocationRequests,
     stop: () => {
       void server.stop();
     },

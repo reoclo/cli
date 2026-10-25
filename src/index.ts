@@ -19,6 +19,7 @@ import { registerVerifiedDomains } from "./commands/verified-domains";
 import { registerMonitors } from "./commands/monitors";
 import { registerStatusPages } from "./commands/status-pages";
 import { registerIncidents } from "./commands/incidents";
+import { registerRelocate } from "./commands/relocate";
 import { registerRepos } from "./commands/repos";
 import { registerProviders } from "./commands/providers";
 import { registerRegistry } from "./commands/registry";
@@ -137,6 +138,7 @@ if (import.meta.main) {
   registerApi(program);
   registerGroups(program);
   registerProxy(program);
+  registerRelocate(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
