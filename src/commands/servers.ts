@@ -8,6 +8,8 @@ import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { promptYesNo } from "../ui/prompt";
 import { registerServersPower } from "./servers-power";
+import { SERVER_ROLES } from "../client/enums";
+import { parseEnum } from "../util/parse-flag";
 
 const SERVER_CONTAINER_STATES = ["created", "restarting", "running", "paused", "exited", "dead"];
 
@@ -83,6 +85,28 @@ export function registerServers(program: Command): void {
         });
 
         printMutation(program, updated as unknown as Record<string, unknown>, `✓ slug updated: ${before.slug} → ${updated.slug}`);
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
+
+  withCompletion(
+    g
+      .command("set-role <idOrSlug> <role>")
+      .description(`set what a server is used for: ${SERVER_ROLES.join(", ")}`)
+      .action(async (idOrSlug: string, rawRole: string) => {
+        const role = parseEnum(rawRole, SERVER_ROLES, "role");
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const id = await resolveServer(ctx.client, tid, idOrSlug);
+
+        const before = await ctx.client.get<Server>(`/tenants/${tid}/servers/${id}`);
+        const updated = await ctx.client.patch<Server>(`/tenants/${tid}/servers/${id}`, { role });
+
+        printMutation(
+          program,
+          updated as unknown as Record<string, unknown>,
+          `✓ role updated: ${before.role ?? "runtime"} → ${updated.role ?? role}`,
+        );
       }),
     { args: [{ slot: 0, resource: "servers" }] },
   );

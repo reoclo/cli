@@ -43,6 +43,8 @@ import { registerSync } from "./commands/sync";
 import { registerApi } from "./commands/api";
 import { registerGroups } from "./commands/groups";
 import { registerProxy } from "./commands/proxy";
+import { registerBuildPools } from "./commands/build-pools";
+import { registerBuilds } from "./commands/builds";
 import {
   bootstrap,
   setGlobalProfileOverride,
@@ -137,6 +139,8 @@ if (import.meta.main) {
   registerApi(program);
   registerGroups(program);
   registerProxy(program);
+  registerBuildPools(program);
+  registerBuilds(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs

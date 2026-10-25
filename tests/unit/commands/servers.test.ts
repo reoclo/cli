@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
 import { registerServers } from "../../../src/commands/servers";
-import { getRequiredCapability } from "../../../src/client/command-meta";
+import { getCompletionSpec, getRequiredCapability } from "../../../src/client/command-meta";
 
 describe("reoclo servers", () => {
   test("set-slug subcommand is registered", () => {
@@ -49,4 +49,20 @@ test("servers containers is gated by container:read", () => {
   const g = p.commands.find((c) => c.name() === "servers")!;
   const ctr = g.commands.find((c) => c.name() === "containers")!;
   expect(getRequiredCapability(ctr)).toBe("container:read");
+});
+
+test("servers set-role takes a server and a role, completing the server", () => {
+  const p = new Command();
+  registerServers(p);
+  const setRole = p.commands.find((c) => c.name() === "servers")!.commands.find((c) => c.name() === "set-role")!;
+  expect(setRole.usage()).toContain("idOrSlug");
+  expect(setRole.usage()).toContain("role");
+  expect(getCompletionSpec(setRole)?.args).toEqual([{ slot: 0, resource: "servers" }]);
+});
+
+test("servers set-role rejects an unknown role with exit 2 before any request", async () => {
+  const p = new Command();
+  registerServers(p);
+  const err = await p.parseAsync(["node", "reoclo", "servers", "set-role", "web1", "bogus"]).catch((e: unknown) => e);
+  expect((err as { exitCode?: number }).exitCode).toBe(2);
 });

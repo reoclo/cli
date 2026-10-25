@@ -12,6 +12,7 @@ import type { Application, PaginatedResponse } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { parseSetFlags } from "../util/parse-set";
+import { assertPushTarget, parseBuildPlacement } from "../util/build-placement";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -384,6 +385,9 @@ export function registerApps(program: Command): void {
       .option("--container-port <n>", "container port (numeric)")
       .option("--host-port <n>", "host port (numeric)")
       .option("--replicas <n>", "replica count (numeric)")
+      .option("--build-placement <placement>", "where images build: target (the app's server) or pool:<pool-id>")
+      .option("--push-credential <id>", "registry credential (with push capability) that receives built images")
+      .option("--push-repository <repo>", "registry-qualified repository to push to, without tag (for example ghcr.io/acme/web)")
       .option(
         "--env <KEY=VAL>",
         "env var (repeatable)",
@@ -403,6 +407,9 @@ export function registerApps(program: Command): void {
             containerPort?: string;
             hostPort?: string;
             replicas?: string;
+            buildPlacement?: string;
+            pushCredential?: string;
+            pushRepository?: string;
             env?: string[];
             set?: string[];
           },
@@ -435,6 +442,12 @@ export function registerApps(program: Command): void {
             setPath(["deploy", "host_port"], Number(opts.hostPort));
           if (opts.replicas !== undefined)
             setPath(["deploy", "replicas"], Number(opts.replicas));
+          if (opts.buildPlacement !== undefined)
+            setPath(["build", "placement"], parseBuildPlacement(opts.buildPlacement));
+          if (opts.pushCredential !== undefined)
+            setPath(["build", "push_target", "registry_credential_id"], opts.pushCredential);
+          if (opts.pushRepository !== undefined)
+            setPath(["build", "push_target", "repository"], opts.pushRepository);
           if (opts.env && opts.env.length > 0) {
             const envMap: Record<string, string> = {};
             for (const kv of opts.env) {
@@ -483,6 +496,13 @@ export function registerApps(program: Command): void {
             { build: current.build ?? {}, deploy: current.deploy ?? {} },
             cfg,
           );
+          if (
+            opts.buildPlacement !== undefined ||
+            opts.pushCredential !== undefined ||
+            opts.pushRepository !== undefined
+          ) {
+            assertPushTarget(merged["build"]);
+          }
           const r = await ctx.client.patch<Record<string, unknown>>(
             `/tenants/${tid}/applications/${aid}/config`,
             merged,

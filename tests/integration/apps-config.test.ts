@@ -64,3 +64,39 @@ test("apps config get -o yaml dumps yaml", async () => {
   const r = await $`bun run src/index.ts -o yaml apps config get ${APP_ID}`.env(env()).quiet();
   expect(r.stdout.toString()).toContain("buildpack: node");
 });
+
+const POOL_PLACEMENT = "pool:44444444-4444-4444-4444-444444444444";
+const PUSH_CREDENTIAL = "33333333-3333-3333-3333-333333333333";
+
+test("apps config set --build-placement pool with a push target stores both", async () => {
+  const r = await $`bun run src/index.ts apps config set ${APP_ID} --build-placement ${POOL_PLACEMENT} --push-credential ${PUSH_CREDENTIAL} --push-repository ghcr.io/acme/web`
+    .env(env()).quiet();
+  expect(r.stdout.toString()).toContain("✓ config updated");
+  const g = await $`bun run src/index.ts -o json apps config get ${APP_ID}`.env(env()).quiet();
+  const cfg = JSON.parse(g.stdout.toString()) as { build: Record<string, unknown> };
+  expect(cfg.build["placement"]).toBe(POOL_PLACEMENT);
+  expect(cfg.build["push_target"]).toEqual({
+    registry_credential_id: PUSH_CREDENTIAL,
+    repository: "ghcr.io/acme/web",
+  });
+  expect(cfg.build["buildpack"]).toBe("node");
+});
+
+test("apps config set --build-placement pool without a push target exits 2", async () => {
+  const r = await $`bun run src/index.ts apps config set ${APP_ID} --build-placement ${POOL_PLACEMENT}`
+    .env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("--push-credential");
+});
+
+test("apps config set --build-placement with a malformed value exits 2", async () => {
+  const r = await $`bun run src/index.ts apps config set ${APP_ID} --build-placement pool:nope`
+    .env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("target or pool:<pool-id>");
+});
+
+test("apps config set --build-placement target needs no push target", async () => {
+  const r = await $`bun run src/index.ts apps config set ${APP_ID} --build-placement target`.env(env()).quiet();
+  expect(r.stdout.toString()).toContain("✓ config updated");
+});

@@ -80,3 +80,16 @@ describe("resolveAuthMode", () => {
     expect(() => resolveAuthMode("", "user", "", "")).toThrow(/access_token, registry_url/);
   });
 });
+
+describe("registry create build-server flags", () => {
+  test("create has --push and --repository-prefix", () => {
+    const program = new Command().name("reoclo");
+    registerRegistry(program);
+    const create = program.commands
+      .find((c) => c.name() === "registry")!
+      .commands.find((c) => c.name() === "create")!;
+    const longs = create.options.map((o) => o.long);
+    expect(longs).toContain("--push");
+    expect(longs).toContain("--repository-prefix");
+  });
+});
