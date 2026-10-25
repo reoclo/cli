@@ -40,6 +40,14 @@ export interface HttpClientOptions {
 
 const CONNECTION_RETRIES = 2;
 
+/** A request body sent as-is with its own content type instead of as JSON. */
+export class RawBody {
+  constructor(
+    readonly data: string | Blob,
+    readonly contentType: string,
+  ) {}
+}
+
 export class HttpClient {
   private readonly prefix: string;
   private currentToken: string;
@@ -119,6 +127,9 @@ export class HttpClient {
   del<T>(path: string): Promise<T> {
     return this.request<T>("DELETE", path);
   }
+  postRaw<T>(path: string, data: string | Blob, contentType: string): Promise<T> {
+    return this.request<T>("POST", path, new RawBody(data, contentType));
+  }
 
   private async doFetch(method: string, path: string, body?: unknown, token?: string): Promise<Response> {
     // Build the request BEFORE sending. url()/headers()/JSON.stringify are our
@@ -132,13 +143,14 @@ export class HttpClient {
     // escaped unwrapped as a generic exit 1. (Bun 1.4 renamed it TypeError;
     // the names keep moving, the semantics of fetch() do not.)
     const url = this.url(path);
+    const raw = body instanceof RawBody ? body : null;
     const init: RequestInit = {
       method,
       headers: {
         ...this.headers(token),
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(raw ? { "Content-Type": raw.contentType } : body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: raw ? raw.data : body !== undefined ? JSON.stringify(body) : undefined,
     };
 
     return sendWithRetry(url, init, {

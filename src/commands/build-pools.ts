@@ -8,8 +8,16 @@ import { isUuid, resolveServer } from "../client/resolve";
 import type { PaginatedResponse } from "../client/types";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { promptYesNo } from "../ui/prompt";
-import { badUsage, parseIntFlag } from "../util/parse-flag";
+import { badUsage, parseEnum, parseIntFlag } from "../util/parse-flag";
 import { parseLimit, parseOffset } from "../util/parse-limit";
+import {
+  addEphemeralOptions,
+  ephemeralFields,
+  formatMinor,
+  hasEphemeralFlags,
+  type EphemeralFlags,
+} from "../util/ephemeral-pool";
+import { registerBuildPoolCosts, resolveCloudCredential } from "./build-pools-costs";
 
 const HARD_LIMIT = 100;
 const MAX_CONCURRENT_RANGE = { min: 1, max: 16 } as const;
@@ -23,6 +31,20 @@ interface BuildPool {
   in_flight: number;
   created_at: string;
   updated_at: string;
+  server_type?: string | null;
+  location?: string | null;
+  monthly_budget_cents?: number | null;
+  budget_currency?: string;
+}
+
+type PoolFlags = EphemeralFlags & { name?: string; server: string[]; maxConcurrent?: string; mode?: string };
+
+async function ephemeralBody(client: HttpClient, tenantId: string, opts: PoolFlags): Promise<Record<string, unknown>> {
+  const body = ephemeralFields(opts);
+  if (opts.cloudCredential !== undefined) {
+    body["cloud_credential_id"] = await resolveCloudCredential(client, tenantId, opts.cloudCredential);
+  }
+  return body;
 }
 
 const collect = (val: string, prev: string[]): string[] => [...prev, val];
@@ -73,7 +95,12 @@ export function registerBuildPools(program: Command): void {
       const res = await ctx.client.get<PaginatedResponse<BuildPool>>(
         `/tenants/${tid}/build-pools/?skip=${skip}&limit=${limit}`,
       );
-      const rows = res.items.map((p) => ({ ...p, builders: p.server_ids.length }));
+      const rows = res.items.map((p) => ({
+        ...p,
+        builders: p.mode === "ephemeral" ? "-" : p.server_ids.length,
+        type: p.mode === "ephemeral" ? `${p.server_type ?? ""} ${p.location ?? ""}`.trim() : "-",
+        budget: typeof p.monthly_budget_cents === "number" ? formatMinor(p.monthly_budget_cents, p.budget_currency ?? "EUR") : "-",
+      }));
       printList(
         rows as unknown as Array<Record<string, unknown>>,
         [
@@ -81,6 +108,8 @@ export function registerBuildPools(program: Command): void {
           { key: "name", label: "NAME" },
           { key: "mode", label: "MODE" },
           { key: "builders", label: "BUILDERS" },
+          { key: "type", label: "TYPE" },
+          { key: "budget", label: "BUDGET" },
           { key: "max_concurrent_builds", label: "MAX CONCURRENT" },
           { key: "in_flight", label: "IN FLIGHT" },
         ],
@@ -100,25 +129,36 @@ export function registerBuildPools(program: Command): void {
     });
 
   withCompletion(
-    g
-      .command("create")
-      .description("create a build pool from build or both servers")
-      .requiredOption("--name <name>", "pool name")
-      .option("--server <idOrSlug>", "build server to add (repeatable, at least one)", collect, [] as string[])
-      .option("--max-concurrent <n>", "builds that may run at once (1-16, default 1)")
-      .action(async (opts: { name: string; server: string[]; maxConcurrent?: string }) => {
-        if (opts.server.length === 0) throw badUsage("at least one --server is required");
+    addEphemeralOptions(
+      g
+        .command("create")
+        .description("create a persistent pool from build servers, or an ephemeral Hetzner pool")
+        .requiredOption("--name <name>", "pool name")
+        .option("--mode <mode>", "persistent (default) or ephemeral")
+        .option("--server <idOrSlug>", "persistent: build server to add (repeatable, at least one)", collect, [] as string[])
+        .option("--max-concurrent <n>", "builds that may run at once (1-16, default 1)"),
+    ).action(async (opts: PoolFlags & { name: string }) => {
+        const mode = parseEnum(opts.mode ?? "persistent", ["persistent", "ephemeral"] as const, "--mode");
+        if (mode === "ephemeral") {
+          if (opts.server.length > 0) throw badUsage("--server is for persistent pools; ephemeral builders are created on demand");
+          for (const [flag, value] of [["--cloud-credential", opts.cloudCredential], ["--location", opts.location], ["--server-type", opts.serverType], ["--budget", opts.budget]] as const) {
+            if (value === undefined) throw badUsage(`${flag} is required for an ephemeral pool`);
+          }
+        } else {
+          if (opts.server.length === 0) throw badUsage("at least one --server is required");
+          if (hasEphemeralFlags(opts)) throw badUsage("ephemeral flags need --mode ephemeral");
+        }
         const maxConcurrent =
           opts.maxConcurrent === undefined
             ? undefined
             : parseIntFlag(opts.maxConcurrent, "--max-concurrent", MAX_CONCURRENT_RANGE.min, MAX_CONCURRENT_RANGE.max);
+        const fields = ephemeralFields(opts);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
-        const body: Record<string, unknown> = {
-          name: opts.name,
-          mode: "persistent",
-          server_ids: await resolveServerIds(ctx.client, tid, opts.server),
-        };
+        const body: Record<string, unknown> =
+          mode === "ephemeral"
+            ? { name: opts.name, mode, provider: "hetzner", ...fields, ...(await ephemeralBody(ctx.client, tid, opts)) }
+            : { name: opts.name, mode, server_ids: await resolveServerIds(ctx.client, tid, opts.server) };
         if (maxConcurrent !== undefined) body["max_concurrent_builds"] = maxConcurrent;
         const pool = await ctx.client.post<BuildPool>(`/tenants/${tid}/build-pools/`, body);
         printMutation(
@@ -131,25 +171,27 @@ export function registerBuildPools(program: Command): void {
   );
 
   withCompletion(
-    g
-      .command("set <idOrName>")
-      .description("update a build pool (--server replaces the whole builder list)")
-      .option("--name <name>", "new name")
-      .option("--server <idOrSlug>", "build server (repeatable; replaces the current list)", collect, [] as string[])
-      .option("--max-concurrent <n>", "builds that may run at once (1-16)")
-      .action(
-        async (idOrName: string, opts: { name?: string; server: string[]; maxConcurrent?: string }) => {
+    addEphemeralOptions(
+      g
+        .command("set <idOrName>")
+        .description("update a build pool (--server replaces the whole builder list)")
+        .option("--name <name>", "new name")
+        .option("--server <idOrSlug>", "persistent: build server (repeatable; replaces the current list)", collect, [] as string[])
+        .option("--max-concurrent <n>", "builds that may run at once (1-16)"),
+    ).action(
+        async (idOrName: string, opts: PoolFlags) => {
           const maxConcurrent =
             opts.maxConcurrent === undefined
               ? undefined
               : parseIntFlag(opts.maxConcurrent, "--max-concurrent", MAX_CONCURRENT_RANGE.min, MAX_CONCURRENT_RANGE.max);
-          if (opts.name === undefined && opts.server.length === 0 && maxConcurrent === undefined) {
+          if (opts.name === undefined && opts.server.length === 0 && maxConcurrent === undefined && !hasEphemeralFlags(opts)) {
             throw badUsage("no fields to update");
           }
+          ephemeralFields(opts);
           const ctx = await bootstrap();
           const tid = await requireTenantId(ctx);
           const id = await resolveBuildPool(ctx.client, tid, idOrName);
-          const body: Record<string, unknown> = {};
+          const body: Record<string, unknown> = await ephemeralBody(ctx.client, tid, opts);
           if (opts.name !== undefined) body["name"] = opts.name;
           if (opts.server.length > 0) body["server_ids"] = await resolveServerIds(ctx.client, tid, opts.server);
           if (maxConcurrent !== undefined) body["max_concurrent_builds"] = maxConcurrent;
@@ -181,4 +223,6 @@ export function registerBuildPools(program: Command): void {
       await ctx.client.del<void>(`/tenants/${tid}/build-pools/${id}`);
       process.stdout.write(`✓ build pool removed: ${idOrName}\n`);
     });
+
+  registerBuildPoolCosts(g, program);
 }

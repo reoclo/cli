@@ -23,6 +23,8 @@ export interface FakeGateway {
   deployRevokes: string[];
   /** JSON bodies the registry-credential write routes (create, update, test) received. */
   registryBodies: Array<Record<string, unknown>>;
+  /** Statement uploads: content type, query string and raw body. */
+  statementUploads: Array<{ contentType: string; search: string; body: string }>;
   stop: () => void;
 }
 
@@ -166,6 +168,7 @@ export function startFakeGateway(): FakeGateway {
   });
 
   const serverRoles = new Map<string, string>();
+  const statementUploads: Array<{ contentType: string; search: string; body: string }> = [];
   const SEED_POOL_ID = "44444444-4444-4444-4444-444444444444";
   const buildPools = new Map<string, Record<string, unknown>>();
   buildPools.set(SEED_POOL_ID, {
@@ -1136,6 +1139,55 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
+      // Ephemeral pool cost routes.
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/cloud-credentials`) {
+        return Response.json([{ id: "66666666-6666-6666-6666-666666666666", label: "hetzner-main", provider: "hetzner", scope: "tenant" }]);
+      }
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/build-costs/estimate`) {
+        return Response.json({
+          pool_id: url.searchParams.get("pool_id"), server_type: url.searchParams.get("server_type") ?? "cx33", location: "fsn1",
+          currency: "EUR", rate_scale: 1000000, hourly_net_scaled_minor_units: 1440000, hourly_gross_scaled_minor_units: 1713600,
+          pricing_snapshot_id: "77777777-7777-7777-7777-777777777777", pricing_snapshot_at: "2026-10-24T03:00:00Z",
+          price_source: "hetzner_snapshot", quoted_at: "2026-10-25T12:00:00Z",
+          server_hourly_net_scaled_minor_units: 1360000, ipv4_hourly_net_scaled_minor_units: 80000,
+        });
+      }
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/build-costs`) {
+        const net = url.searchParams.get("pool_id") ? 2100 : 4600;
+        return Response.json({
+          tenant_id: TENANT_ID, pool_id: url.searchParams.get("pool_id"), month: "2026-10", as_of: "2026-10-25T12:00:00Z",
+          forecast_method: "elapsed_month_cost_rate",
+          currencies: [{ currency: "EUR", net_minor_units: net, gross_minor_units: Math.round(net * 1.19), forecast_net_minor_units: net * 2,
+            forecast_gross_minor_units: null, builder_count: 4, incomplete_builders: 1, pricing_snapshot_ids: [] }],
+        });
+      }
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/build-costs/reconciliations` && req.method === "POST") {
+        statementUploads.push({ contentType: req.headers.get("content-type") ?? "", search: url.search, body: await req.text() });
+        return Response.json({
+          id: "rec", tenant_id: TENANT_ID, cloud_credential_id: url.searchParams.get("cloud_credential_id"), month: url.searchParams.get("month"),
+          currency: "EUR", created_at: "2026-10-25T12:00:00Z",
+          matches: [{ builder_id: "b", pool_id: SEED_POOL_ID, provider_server_id: "4711", currency: "EUR", rows: [2], estimated_net_minor_units: 120,
+            statement_net_minor_units: 150, net_difference_minor_units: 30, net_difference_scaled_minor_units: 30000000,
+            estimated_gross_minor_units: null, statement_gross_minor_units: null, gross_difference_minor_units: null,
+            gross_difference_scaled_minor_units: null, rate_scale: 1000000, estimate_incomplete: false, pricing_snapshot_id: null }],
+          unmatched_lines: [{ row: 3, provider_server_id: "9", resource_type: "volume", currency: "EUR", net_scaled_minor_units: 50000000,
+            gross_scaled_minor_units: null, rate_scale: 1000000, reason: "not_a_server" }],
+        }, { status: 201 });
+      }
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/build-pools\/([^/]+)\/builders$/);
+        if (m) {
+          const builder = (id: string, state: string, created: string) => ({
+            id, pool_id: m[1], server_id: id, provider_server_id: "4711", state, server_type: "cx33", created_at: created,
+            provisioned_at: created, deleted_at: null, idle_since: null, max_lifetime_minutes: 120, error_code: null,
+            estimated_cost_cents: 3, location: "fsn1", cost: { currency: "EUR", net_minor_units: 3, gross_minor_units: 4, billed_hours: 2, incomplete: true },
+          });
+          const old = new Date(Date.now() - 180 * 60_000).toISOString();
+          const fresh = new Date(Date.now() - 20 * 60_000).toISOString();
+          return Response.json({ items: [builder("old-builder", "busy", old), builder("fresh-builder", "ready", fresh)], total: 2, skip: 0, limit: 20 });
+        }
+      }
+
       // /mcp/tenants/{tid}/build-pools/{id}  (get | patch | delete)
       {
         const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/build-pools\/([^/]+)$/);
@@ -1474,6 +1526,7 @@ export function startFakeGateway(): FakeGateway {
     automationKey: AUTOMATION_KEY,
     deployRevokes,
     registryBodies,
+    statementUploads,
     stop: () => {
       void server.stop();
     },
