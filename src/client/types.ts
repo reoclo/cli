@@ -62,6 +62,15 @@ export interface Deployment {
   finished_at?: string;
 }
 
+/** Answer of the deployment cancel endpoints (app deployment and group deployment). */
+export interface DeploymentCancelResult {
+  id: string;
+  /** Status after the request: "cancelled" is immediate, anything else means the running step is being stopped (the step replacing services finishes first). */
+  status: string;
+  cancel_requested_at: string;
+  message: string;
+}
+
 export interface Repository {
   id: string;
   tenant_id: string;
