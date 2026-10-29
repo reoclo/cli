@@ -25,6 +25,8 @@ export interface FakeGateway {
   registryBodies: Array<Record<string, unknown>>;
   /** Statement uploads: content type, query string and raw body. */
   statementUploads: Array<{ contentType: string; search: string; body: string }>;
+  /** Paths of the deployment cancel endpoints that were POSTed, in order. */
+  cancelRequests: string[];
   stop: () => void;
 }
 
@@ -214,6 +216,56 @@ export function startFakeGateway(): FakeGateway {
     builds.set(String(row["id"]), row);
   }
 
+  // Deployment cancel fixtures. Stack "stack-a": run #4 finished, #3 running, #2 pending, #1 failed.
+  // Stack "stack-idle": its only run finished. Cancel follows the API contract:
+  // 409 when finished, "cancelled" at once when not started, otherwise the status is unchanged.
+  const cancelRequests: string[] = [];
+  const groupDeployments = new Map<string, Array<Record<string, unknown>>>([
+    [
+      "88888888-0000-0000-0000-000000000001",
+      [
+        { id: "99999999-0000-0000-0000-000000000004", deployment_number: 4, status: "succeeded" },
+        { id: "99999999-0000-0000-0000-000000000003", deployment_number: 3, status: "running" },
+        { id: "99999999-0000-0000-0000-000000000002", deployment_number: 2, status: "pending" },
+        { id: "99999999-0000-0000-0000-000000000001", deployment_number: 1, status: "failed" },
+      ],
+    ],
+    [
+      "88888888-0000-0000-0000-000000000002",
+      [{ id: "99999999-0000-0000-0000-000000000011", deployment_number: 1, status: "succeeded" }],
+    ],
+  ]);
+  const appDeployments = new Map<string, Record<string, unknown>>([
+    [
+      "aaaaaaaa-0000-0000-0000-000000000001",
+      { id: "aaaaaaaa-0000-0000-0000-000000000001", application_id: "00000000-0000-0000-0000-00000000cccc", status: "building" },
+    ],
+    [
+      "aaaaaaaa-0000-0000-0000-000000000002",
+      { id: "aaaaaaaa-0000-0000-0000-000000000002", application_id: "00000000-0000-0000-0000-00000000cccc", status: "succeeded" },
+    ],
+    [
+      "aaaaaaaa-0000-0000-0000-000000000003",
+      { id: "aaaaaaaa-0000-0000-0000-000000000003", application_id: "00000000-0000-0000-0000-00000000dddd", status: "queued" },
+    ],
+  ]);
+  const cancelOutcome = (row: Record<string, unknown>): Response => {
+    const status = String(row["status"]);
+    if (["succeeded", "failed", "cancelled", "partial"].includes(status)) {
+      return Response.json({ detail: "Deployment already finished" }, { status: 409 });
+    }
+    const immediate = status === "pending" || status === "queued";
+    row["status"] = immediate ? "cancelled" : status;
+    return Response.json({
+      id: row["id"],
+      status: row["status"],
+      cancel_requested_at: "2026-10-29T12:00:00Z",
+      message: immediate
+        ? "Deployment cancelled."
+        : "Cancel requested. The worker will stop at its next step.",
+    });
+  };
+
   let nextId = 1;
 
   // External-deploy two-token state (per gateway instance).
@@ -393,6 +445,57 @@ export function startFakeGateway(): FakeGateway {
           skip: 0,
           limit: 200,
         });
+      }
+
+      // GET /mcp/tenants/{tid}/application-groups/   (list)
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/application-groups/` && req.method === "GET") {
+        return Response.json([
+          { id: "88888888-0000-0000-0000-000000000001", name: "Stack A", slug: "stack-a", kind: "compose", server_id: "00000000-0000-0000-0000-00000000bbbb" },
+          { id: "88888888-0000-0000-0000-000000000002", name: "Stack Idle", slug: "stack-idle", kind: "compose", server_id: "00000000-0000-0000-0000-00000000bbbb" },
+        ]);
+      }
+
+      // GET /mcp/tenants/{tid}/application-groups/{gid}/deployments   (list, newest first)
+      // POST /mcp/tenants/{tid}/application-groups/{gid}/deployments/{gdid}/cancel
+      {
+        const m = url.pathname.match(
+          /^\/mcp\/tenants\/[^/]+\/application-groups\/([^/]+)\/deployments(?:\/([^/]+)\/cancel)?$/,
+        );
+        if (m) {
+          const runs = groupDeployments.get(m[1] ?? "");
+          if (!runs) return new Response("not found", { status: 404 });
+          if (m[2] === undefined && req.method === "GET") {
+            return Response.json({ items: runs, total: runs.length });
+          }
+          if (m[2] !== undefined && req.method === "POST") {
+            cancelRequests.push(url.pathname.replace("/mcp", ""));
+            const row = runs.find((r) => r["id"] === m[2]);
+            if (!row) return Response.json({ detail: "Group deployment not found" }, { status: 404 });
+            return cancelOutcome(row);
+          }
+        }
+      }
+
+      // GET /mcp/tenants/{tid}/applications/{app_id}/deployments/{dep_id}   (cancel fixtures)
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/applications\/([^/]+)\/deployments\/([^/]+)$/);
+        const row = m ? appDeployments.get(m[2] ?? "") : undefined;
+        if (m && row && req.method === "GET") {
+          return row["application_id"] === m[1]
+            ? Response.json(row)
+            : Response.json({ detail: "Deployment not found" }, { status: 404 });
+        }
+      }
+
+      // POST /mcp/tenants/{tid}/deployments/{dep_id}/cancel
+      {
+        const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/deployments\/([^/]+)\/cancel$/);
+        if (m && req.method === "POST") {
+          cancelRequests.push(url.pathname.replace("/mcp", ""));
+          const row = appDeployments.get(m[1] ?? "");
+          if (!row) return Response.json({ detail: "Deployment not found" }, { status: 404 });
+          return cancelOutcome(row);
+        }
       }
 
       // POST /mcp/tenants/{tid}/applications/{app_id}/deploy
@@ -1527,6 +1630,7 @@ export function startFakeGateway(): FakeGateway {
     deployRevokes,
     registryBodies,
     statementUploads,
+    cancelRequests,
     stop: () => {
       void server.stop();
     },

@@ -9,7 +9,8 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { requireCapability } from "../client/command-meta";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
+import type { DeploymentCancelResult } from "../client/types";
 import { parseLimit } from "../util/parse-limit";
 
 export interface GroupRead {
@@ -137,6 +138,17 @@ export function matchGroupDeployment(
   const n = Number(ref);
   if (!Number.isInteger(n)) return undefined;
   return items.find((d) => d.deployment_number === n);
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The run `groups cancel` targets when none is named: the newest one that
+ *  has not reached a terminal status. Highest deployment number wins, so the
+ *  result does not depend on the order the API lists runs in. */
+export function newestRunning(items: GroupDeploymentRead[]): GroupDeploymentRead | undefined {
+  return items
+    .filter((d) => !TERMINAL_GROUP_STATUSES.has(d.status))
+    .sort((a, b) => b.deployment_number - a.deployment_number)[0];
 }
 
 export function memberForService(
@@ -417,6 +429,53 @@ export function registerGroups(program: Command): void {
         }
       }
     });
+
+  const cancelCmd = g
+    .command("cancel <group> [numberOrId]")
+    .description(
+      "cancel a running group deployment (by number or ID; default: the newest one still running)",
+    )
+    .action(async (ref: string, dref: string | undefined) => {
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      const base = `/tenants/${tid}/application-groups/${group.id}/deployments`;
+
+      let id: string;
+      let label: string;
+      if (dref !== undefined && UUID_RE.test(dref)) {
+        id = dref;
+        label = `group deployment ${dref}`;
+      } else {
+        const res = await ctx.client.get<PaginatedGroupDeployments>(`${base}?limit=100`);
+        const target =
+          dref === undefined ? newestRunning(res.items) : matchGroupDeployment(res.items, dref);
+        if (!target) {
+          const latest = res.items[0];
+          const e = new Error(
+            dref === undefined
+              ? `no running deployment in group '${group.slug}'${
+                  latest ? ` (latest: #${latest.deployment_number} ${latest.status})` : ""
+                }`
+              : `deployment '${dref}' not found in group '${group.slug}' (latest: #${
+                  latest?.deployment_number ?? "none"
+                })`,
+          ) as Error & { exitCode: number };
+          e.exitCode = dref === undefined ? 1 : 5;
+          throw e;
+        }
+        id = target.id;
+        label = `group deployment #${target.deployment_number}`;
+      }
+
+      const result = await ctx.client.post<DeploymentCancelResult>(`${base}/${id}/cancel`);
+      printMutation(
+        program,
+        result as unknown as Record<string, unknown>,
+        `✓ cancel requested for ${label} (status: ${result.status})\n${result.message}`,
+      );
+    });
+  requireCapability(cancelCmd, "app:deploy");
 
   const deployCmd = g
     .command("deploy <group>")

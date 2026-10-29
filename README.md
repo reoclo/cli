@@ -147,6 +147,23 @@ reoclo proxy allowlist web1 --cloudflare --allow 203.0.113.0/24
 reoclo domains access app.example.com --inherit
 ```
 
+## Stop a running deployment
+
+Cancelling asks the API to stop the deployment. If it had not started, or its worker is gone, it is cancelled at once. Otherwise the step that is running is stopped (on an SSH server, once it ends), except the step that replaces running services, which finishes first; the status stays as it was until then. A deployment that already finished answers 409 and the command exits 1.
+
+```bash
+# A stack's newest run that is still running; or pick one by its number (the N column) or ID
+reoclo groups cancel my-stack
+reoclo groups cancel my-stack 12
+
+# One app deployment by ID (--app only checks that it belongs to that app)
+reoclo deployments cancel <deployment-id>
+reoclo deployments cancel <deployment-id> --app web
+
+# Print the API answer: id, status, cancel_requested_at, message
+reoclo -o json groups cancel my-stack 12
+```
+
 ## Build on dedicated build servers
 
 A server's role says what it is for: `runtime` (the default), `build`, or `both`.

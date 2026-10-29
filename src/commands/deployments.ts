@@ -2,9 +2,9 @@
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
-import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
-import type { Deployment } from "../client/types";
-import { withCompletion } from "../client/command-meta";
+import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
+import type { Deployment, DeploymentCancelResult } from "../client/types";
+import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { parseLimit, parseOffset } from "../util/parse-limit";
 
@@ -143,6 +143,35 @@ export function registerDeployments(program: Command): void {
       }),
     { args: [{ slot: 0, resource: "deployments" }], flags: { "--app": "apps" } },
   );
+
+  const cancelCmd = g
+    .command("cancel <id>")
+    .description("cancel a running deployment (the step replacing services finishes first)")
+    .option("--app <idOrSlug>", "(optional) application the deployment must belong to")
+    .action(async (id: string, opts: { app?: string }) => {
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      if (opts.app) {
+        // The cancel route is tenant-scoped. Reading the deployment through the
+        // app-scoped route first fails (404) when it belongs to another app, so
+        // --app cannot cancel the wrong deployment.
+        const appId = await resolveApp(ctx.client, tid, opts.app);
+        await ctx.client.get<Deployment>(`/tenants/${tid}/applications/${appId}/deployments/${id}`);
+      }
+      const result = await ctx.client.post<DeploymentCancelResult>(
+        `/tenants/${tid}/deployments/${id}/cancel`,
+      );
+      printMutation(
+        program,
+        result as unknown as Record<string, unknown>,
+        `✓ cancel requested for deployment ${result.id} (status: ${result.status})\n${result.message}`,
+      );
+    });
+  requireCapability(cancelCmd, "app:deploy");
+  withCompletion(cancelCmd, {
+    args: [{ slot: 0, resource: "deployments" }],
+    flags: { "--app": "apps" },
+  });
 
   interface DeploymentStage {
     name: string;

@@ -7,6 +7,7 @@ import {
   orphanedMembers,
   matchGroupDeployment,
   memberForService,
+  newestRunning,
   serviceRows,
   stageRows,
   type GroupDeploymentRead,
@@ -44,6 +45,24 @@ describe("matchGroupDeployment", () => {
   test("non-integer refs do not match numbers", () => {
     expect(matchGroupDeployment(DEPLOYMENTS, "3.5")).toBeUndefined();
     expect(matchGroupDeployment(DEPLOYMENTS, "latest")).toBeUndefined();
+  });
+});
+
+describe("newestRunning", () => {
+  const RUNS: GroupDeploymentRead[] = [
+    { id: "gd-4", deployment_number: 4, status: "succeeded" },
+    { id: "gd-2", deployment_number: 2, status: "pending" },
+    { id: "gd-3", deployment_number: 3, status: "running" },
+    { id: "gd-1", deployment_number: 1, status: "partial" },
+  ];
+
+  test("picks the highest-numbered run that is not terminal, whatever the list order", () => {
+    expect(newestRunning(RUNS)?.id).toBe("gd-3");
+  });
+
+  test("returns undefined when every run is terminal", () => {
+    expect(newestRunning([RUNS[0]!, RUNS[3]!])).toBeUndefined();
+    expect(newestRunning([])).toBeUndefined();
   });
 });
 
