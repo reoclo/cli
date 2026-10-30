@@ -42,6 +42,7 @@ export interface Application {
   name: string;
   server_id: string;
   repository_id: string | null;
+  group_id?: string | null;
   current_deployment_id: string | null;
   created_at: string;
   /**
@@ -182,4 +183,118 @@ export interface SyncStatusResponse {
   started_at: string | null;
   completed_at: string | null;
   error: string | null;
+}
+
+export type DetectedBuildPack = "dockerfile" | "docker_compose" | "docker_image";
+
+export interface DetectedPort {
+  container_port: number;
+  protocol: "tcp" | "udp";
+}
+
+export interface DetectedService {
+  service_id: string;
+  name: string;
+  suggested_slug: string;
+  base_directory: string;
+  build_pack: DetectedBuildPack;
+  dockerfile_path: string | null;
+  build_context: string | null;
+  compose_file_path: string | null;
+  compose_service: string | null;
+  container_port: number | null;
+  ports: DetectedPort[];
+  image: string | null;
+  health_check_type: string | null;
+  health_check_value: string | null;
+  environment_literal_keys: string[];
+  build_arg_keys: string[];
+  profiles: string[];
+  task_label: boolean;
+  depends_on: string[];
+  detected_files: string[];
+  source: "dockerfile" | "compose" | "image";
+}
+
+export interface SkippedService {
+  name: string;
+  reason: string;
+  compose_service?: string | null;
+}
+
+export interface DetectedDeploymentConfig {
+  path: string;
+  label: string;
+  base_directory?: string | null;
+  valid: boolean;
+  validation_error?: string | null;
+  matched_application_id?: string | null;
+}
+
+export interface ManualConfigResult {
+  requested_path: string;
+  path: string;
+  status: "ok" | "not_found" | "invalid";
+  kind?: "compose" | "deployment_config" | null;
+  error?: string | null;
+}
+
+export interface RepoScanResponse {
+  repository_id: string;
+  ref: string;
+  commit_sha: string;
+  compose_files: string[];
+  services: DetectedService[];
+  skipped_services: SkippedService[];
+  deployment_configs: DetectedDeploymentConfig[];
+  manual_configs: ManualConfigResult[];
+}
+
+export interface WizardServiceCreate {
+  action: "create";
+  name: string;
+  slug?: string;
+  server_id: string;
+  base_directory: string;
+  build_pack: DetectedBuildPack;
+  dockerfile_path?: string;
+  compose_file_path?: string;
+  compose_service?: string;
+  container_port: number;
+  deploy_branch: string | null;
+  auto_deploy: boolean;
+  linked_container_name: string | null;
+  docker_image: string | null;
+}
+
+export interface WizardCreateRequest {
+  repository_id: string;
+  group_name: string | null;
+  group_description: string;
+  services: WizardServiceCreate[];
+  secret_project_bindings: never[];
+  deploy_as_stack: boolean;
+  deploy_branch: string | null;
+}
+
+export interface WizardCreateResponse {
+  group: { id: string; name: string; slug: string; kind: string } | null;
+  created: Array<{ id: string; name: string; slug: string; status: string }>;
+  adopted: Array<{ id: string; name: string; slug: string; status: string }>;
+  skipped: Array<{ name: string; reason: string }>;
+}
+
+export interface GitHubInstallation {
+  installation_id: number;
+  account_login: string;
+  status?: string;
+  repo_selection: "all" | "selected";
+  selected_repo_ids: number[];
+}
+
+export interface GitHubAvailableRepo {
+  id: number;
+  full_name: string;
+  private: boolean;
+  archived: boolean;
 }

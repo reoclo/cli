@@ -8,9 +8,21 @@
 
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
-import { requireCapability } from "../client/command-meta";
-import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
-import type { DeploymentCancelResult } from "../client/types";
+import { requireCapability, withCompletion } from "../client/command-meta";
+import {
+  globalOutput,
+  printList,
+  printMutation,
+  printObject,
+  resolveFormat,
+  type OutputFormat,
+} from "../ui/output";
+import { defaultIo, realSleep, silentIo, type WaitDeps } from "../ui/deploy-io";
+import type { ApiClient } from "../client/api-client";
+import { EXIT } from "../client/exit-codes";
+import { resolveRepo, resolveServer } from "../client/resolve";
+import { createStack, exitError, type CreateStackResult } from "../client/repo-deploy";
+import type { DeploymentCancelResult, Repository } from "../client/types";
 import { parseLimit } from "../util/parse-limit";
 
 export interface GroupRead {
@@ -19,6 +31,8 @@ export interface GroupRead {
   slug: string;
   kind: string;
   server_id: string;
+  repository_id?: string | null;
+  deploy_branch?: string | null;
   auto_deploy?: boolean;
   compose_file_path?: string | null;
   application_count?: number;
@@ -214,6 +228,164 @@ async function resolveGroup(
   return found;
 }
 
+export interface StackTrigger {
+  total: number;
+  triggered: number;
+  skipped: number;
+  group_deployment_id?: string | null;
+}
+
+export interface StackDeployOptions {
+  forceRecreate?: boolean;
+  wait?: boolean;
+  waitTimeoutSeconds: number;
+  fmt: OutputFormat;
+  /** Print nothing; the caller reports the returned result itself. */
+  quiet?: boolean;
+}
+
+export interface StackDeployResult {
+  trigger: StackTrigger;
+  /** The finished group deployment; null when not waited for. */
+  finished: GroupDeploymentRead | null;
+}
+
+/** The text lines that report a stack the wizard just created, including the
+ *  services it skipped. */
+export function stackCreatedLines(r: CreateStackResult): string[] {
+  const group = r.response.group;
+  const lines = [
+    `✓ created stack ${group?.slug ?? ""} (id: ${r.groupId}) with ${r.response.created.length} service(s) from ${r.composeFile}`,
+  ];
+  const seen = new Set<string>();
+  const skipped = [
+    ...r.scan.skipped_services.map((s) => ({ name: s.name, reason: s.reason })),
+    ...r.response.skipped,
+  ];
+  for (const s of skipped) {
+    const line = `skipped ${s.name}: ${s.reason}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+}
+
+export interface StacksCreateFlags {
+  composeFile?: string;
+  branch?: string;
+  name?: string;
+  deploy?: boolean;
+  wait?: boolean;
+  waitTimeout: string;
+}
+
+export async function runStacksCreate(
+  client: ApiClient,
+  tid: string,
+  target: { repositoryId: string; repositoryName: string; serverId: string },
+  flags: StacksCreateFlags,
+  fmt: OutputFormat,
+  deps: WaitDeps = {},
+): Promise<void> {
+  if (flags.wait && !flags.deploy) throw exitError("--wait needs --deploy", EXIT.MISUSE);
+  const io = deps.io ?? defaultIo;
+  const created = await createStack(client, tid, {
+    ...target,
+    composeFile: flags.composeFile,
+    branch: flags.branch,
+    name: flags.name,
+  });
+  const createdObject = created.response as unknown as Record<string, unknown>;
+  const lines = stackCreatedLines(created);
+  const deployOpts = { wait: flags.wait, waitTimeoutSeconds: Number(flags.waitTimeout), fmt };
+  if (fmt === "text") {
+    for (const line of lines) io.line(line);
+    if (flags.deploy) await deployStack(client, tid, created.groupId, deployOpts, deps);
+    return;
+  }
+  if (!flags.deploy) {
+    io.object(createdObject, fmt);
+    return;
+  }
+  let deployment: StackDeployResult | null = null;
+  let failure: Error | null = null;
+  try {
+    deployment = await deployStack(
+      client,
+      tid,
+      created.groupId,
+      { ...deployOpts, quiet: true },
+      deps,
+    );
+  } catch (e) {
+    failure = e instanceof Error ? e : new Error(String(e));
+  }
+  io.object({ ...createdObject, deployment, deployment_error: failure?.message ?? null }, fmt);
+  if (failure) throw failure;
+}
+
+/** Trigger Deploy All for a stack and, with `wait`, poll until it reaches a
+ *  terminal status. Throws exit code 12 on timeout and 1 when the deployment
+ *  does not succeed. Shared by `stacks deploy`, `stacks create --deploy` and `up`. */
+export async function deployStack(
+  client: ApiClient,
+  tid: string,
+  groupId: string,
+  opts: StackDeployOptions,
+  deps: WaitDeps = {},
+): Promise<StackDeployResult> {
+  const io = opts.quiet ? silentIo : (deps.io ?? defaultIo);
+  const sleep = deps.sleep ?? realSleep;
+  const now = deps.now ?? Date.now;
+  const { fmt } = opts;
+  const trigger = await client.post<StackTrigger>(
+    `/tenants/${tid}/application-groups/${groupId}/deploy`,
+    opts.forceRecreate ? { force_recreate: true } : undefined,
+  );
+  io.object(trigger as unknown as Record<string, unknown>, fmt);
+
+  const gdId = trigger.group_deployment_id;
+  if (!opts.wait || !gdId) return { trigger, finished: null };
+
+  const timeoutMs = opts.waitTimeoutSeconds * 1000;
+  const startedAt = now();
+  const seen = new Map<string, string>();
+  const base = `/tenants/${tid}/application-groups/${groupId}/deployments/${gdId}`;
+  for (;;) {
+    if (now() - startedAt > timeoutMs) {
+      throw exitError(
+        `timed out after ${opts.waitTimeoutSeconds}s waiting for group deployment ${gdId}`,
+        12,
+      );
+    }
+    await sleep(5000);
+    const d = await client.get<GroupDeploymentRead>(base);
+    for (const s of d.stages ?? []) {
+      const name = s.name ?? "";
+      const status = s.status ?? "";
+      if (name && seen.get(name) !== status) {
+        seen.set(name, status);
+        if (fmt === "text") {
+          const dur = s.duration_ms ? ` (${fmtDurationMs(s.duration_ms)})` : "";
+          io.line(`stage ${name}: ${status}${dur}`);
+        }
+      }
+    }
+    if (TERMINAL_GROUP_STATUSES.has(d.status)) {
+      if (fmt === "text") {
+        io.line(`deployment #${d.deployment_number}: ${d.status}`);
+      } else {
+        io.object(d, fmt);
+      }
+      if (d.status !== "succeeded") {
+        throw exitError(d.error_message ?? `group deployment finished ${d.status}`, 1);
+      }
+      return { trigger, finished: d };
+    }
+  }
+}
+
 function deploymentSummary(d: GroupDeploymentRead): Record<string, unknown> {
   return {
     n: d.deployment_number,
@@ -262,6 +434,47 @@ export function registerGroups(program: Command): void {
         fmt,
       );
     });
+
+  const createCmd = g
+    .command("create")
+    .description("create a stack from a compose file in a linked repository")
+    .requiredOption("--repo <nameOrId>", "linked repository (owner/name, slug or id)")
+    .requiredOption("--server <nameOrId>", "server the stack runs on")
+    .option("--compose-file <path>", "compose file to deploy (needed when the repository has several)")
+    .option("--branch <branch>", "branch to scan and deploy (default: the repository's default branch)")
+    .option("--name <name>", "stack name (default: the repository name)")
+    .option("--deploy", "deploy the stack after creating it")
+    .option("--wait", "wait for the deployment to finish (needs --deploy)")
+    .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
+    .action(
+      async (opts: {
+        repo: string;
+        server: string;
+        composeFile?: string;
+        branch?: string;
+        name?: string;
+        deploy?: boolean;
+        wait?: boolean;
+        waitTimeout: string;
+      }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const repositoryId = await resolveRepo(ctx.client, tid, opts.repo);
+        const serverId = await resolveServer(ctx.client, tid, opts.server);
+        const repository = await ctx.client.get<Repository>(
+          `/tenants/${tid}/repositories/${repositoryId}`,
+        );
+        await runStacksCreate(
+          ctx.client,
+          tid,
+          { repositoryId, repositoryName: repository.name, serverId },
+          opts,
+          fmt,
+        );
+      },
+    );
+  withCompletion(createCmd, { flags: { "--repo": "repos", "--server": "servers" } });
 
   g.command("get <group>")
     .description("show one definition group (id or slug)")
@@ -495,61 +708,12 @@ export function registerGroups(program: Command): void {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
-        const result = await ctx.client.post<{
-          total: number;
-          triggered: number;
-          skipped: number;
-          group_deployment_id?: string | null;
-        }>(
-          `/tenants/${tid}/application-groups/${group.id}/deploy`,
-          opts.forceRecreate ? { force_recreate: true } : undefined,
-        );
-        printObject(result, fmt);
-
-        const gdId = result.group_deployment_id;
-        if (!opts.wait || !gdId) return;
-
-        const timeoutMs = Number(opts.waitTimeout) * 1000;
-        const startedAt = Date.now();
-        const seen = new Map<string, string>();
-        const base = `/tenants/${tid}/application-groups/${group.id}/deployments/${gdId}`;
-        for (;;) {
-          if (Date.now() - startedAt > timeoutMs) {
-            const e = new Error(
-              `timed out after ${opts.waitTimeout}s waiting for group deployment ${gdId}`,
-            ) as Error & { exitCode: number };
-            e.exitCode = 12;
-            throw e;
-          }
-          await new Promise((r) => setTimeout(r, 5000));
-          const d = await ctx.client.get<GroupDeploymentRead>(base);
-          for (const s of d.stages ?? []) {
-            const name = s.name ?? "";
-            const status = s.status ?? "";
-            if (name && seen.get(name) !== status) {
-              seen.set(name, status);
-              if (fmt === "text") {
-                const dur = s.duration_ms ? ` (${fmtDurationMs(s.duration_ms)})` : "";
-                console.log(`stage ${name}: ${status}${dur}`);
-              }
-            }
-          }
-          if (TERMINAL_GROUP_STATUSES.has(d.status)) {
-            if (fmt === "text") {
-              console.log(`deployment #${d.deployment_number}: ${d.status}`);
-            } else {
-              printObject(d, fmt);
-            }
-            if (d.status !== "succeeded") {
-              const e = new Error(
-                d.error_message ?? `group deployment finished ${d.status}`,
-              ) as Error & { exitCode: number };
-              e.exitCode = 1;
-              throw e;
-            }
-            return;
-          }
-        }
+        await deployStack(ctx.client, tid, group.id, {
+          forceRecreate: opts.forceRecreate,
+          wait: opts.wait,
+          waitTimeoutSeconds: Number(opts.waitTimeout),
+          fmt,
+        });
       },
     );
   requireCapability(deployCmd, "app:deploy");
