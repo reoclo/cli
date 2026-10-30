@@ -3,11 +3,21 @@ import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp, resolveRepo, resolveServer } from "../client/resolve";
 import type { HttpClient } from "../client/http";
+import type { ApiClient } from "../client/api-client";
+import { exitError } from "../client/repo-deploy";
+import { defaultIo, realSleep, silentIo, type WaitDeps } from "../ui/deploy-io";
 import { EXIT } from "../client/exit-codes";
 import { listProjects } from "../client/secrets";
 import { parseEnum } from "../util/parse-flag";
 import { resolveProjectId } from "./secrets";
-import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
+import {
+  globalOutput,
+  printList,
+  printMutation,
+  printObject,
+  resolveFormat,
+  type OutputFormat,
+} from "../ui/output";
 import type { Application, PaginatedResponse } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
@@ -112,6 +122,129 @@ export async function buildAppCreateBody(
   return body;
 }
 
+export interface AppDeployOptions {
+  ref?: string;
+  forceRecreate?: boolean;
+  wait?: boolean;
+  /** Give up waiting after this many seconds (exit code 12). Unbounded when unset. */
+  timeoutSeconds?: number;
+  /** Print nothing; the caller reports the returned result itself. */
+  quiet?: boolean;
+}
+
+export interface AppDeployResult {
+  deployment: { id: string; status?: string };
+  /** The terminal status reached while waiting; null when not waited for. */
+  finalStatus: string | null;
+}
+
+export function isFailedDeployStatus(status: string | null): boolean {
+  return status === "failed" || status === "cancelled";
+}
+
+/** Trigger an app deployment and, with `wait`, poll every 3s until it succeeds,
+ *  fails or is cancelled. Shared by `apps deploy`, `apps create --deploy` and `up`. */
+export async function deployApp(
+  client: ApiClient,
+  tid: string,
+  appId: string,
+  opts: AppDeployOptions,
+  deps: WaitDeps = {},
+): Promise<AppDeployResult> {
+  const io = opts.quiet ? silentIo : (deps.io ?? defaultIo);
+  const sleep = deps.sleep ?? realSleep;
+  const now = deps.now ?? Date.now;
+
+  const body: Record<string, unknown> = {};
+  if (opts.ref) body["ref"] = opts.ref;
+  if (opts.forceRecreate) body["force_recreate"] = true;
+
+  const dep = await client.post<{ id: string; status?: string }>(
+    `/tenants/${tid}/applications/${appId}/deploy`,
+    body,
+  );
+  io.line(`✓ deployment ${dep.id} queued (status: ${dep.status ?? "?"})`);
+
+  if (!opts.wait) return { deployment: dep, finalStatus: null };
+
+  const start = now();
+  for (;;) {
+    if (opts.timeoutSeconds !== undefined && now() - start > opts.timeoutSeconds * 1000) {
+      throw exitError(
+        `timed out after ${opts.timeoutSeconds}s waiting for deployment ${dep.id}`,
+        12,
+      );
+    }
+    await sleep(3000);
+    const cur = await client.get<{ status: string }>(
+      `/tenants/${tid}/applications/${appId}/deployments/${dep.id}`,
+    );
+    const elapsed = Math.round((now() - start) / 1000);
+    io.raw(`\r  status: ${cur.status}   (${elapsed}s)        `);
+    if (cur.status === "succeeded") {
+      io.raw("\n✓ succeeded\n");
+      return { deployment: dep, finalStatus: cur.status };
+    }
+    if (isFailedDeployStatus(cur.status)) {
+      io.raw(`\n✗ ${cur.status}\n`);
+      return { deployment: dep, finalStatus: cur.status };
+    }
+  }
+}
+
+/** Turn a failed or cancelled deploy result into an exit-1 error. */
+export function assertDeploySucceeded(result: AppDeployResult): void {
+  if (isFailedDeployStatus(result.finalStatus)) {
+    throw exitError(`deployment ${result.deployment.id} ${result.finalStatus}`, EXIT.GENERIC);
+  }
+}
+
+export interface AppCreateDeployFlags {
+  ref?: string;
+  wait?: boolean;
+  waitTimeout: string;
+}
+
+/** The `apps create --deploy` tail: report the created app, deploy it, and with
+ *  `wait` follow the deployment. Non-text output is one object holding both. */
+export async function reportCreatedAndDeploy(
+  client: ApiClient,
+  tid: string,
+  app: Application,
+  flags: AppCreateDeployFlags,
+  fmt: OutputFormat,
+  deps: WaitDeps = {},
+): Promise<void> {
+  const io = deps.io ?? defaultIo;
+  const deployOpts = {
+    ref: flags.ref,
+    wait: flags.wait,
+    timeoutSeconds: flags.wait ? Number(flags.waitTimeout) : undefined,
+  };
+  if (fmt === "text") {
+    io.line(`✓ created application ${app.slug} (id: ${app.id})`);
+    assertDeploySucceeded(await deployApp(client, tid, app.id, deployOpts, deps));
+    return;
+  }
+  let deployment: AppDeployResult | null = null;
+  let failure: Error | null = null;
+  try {
+    deployment = await deployApp(client, tid, app.id, { ...deployOpts, quiet: true }, deps);
+    assertDeploySucceeded(deployment);
+  } catch (e) {
+    failure = e instanceof Error ? e : new Error(String(e));
+  }
+  io.object(
+    {
+      application: app,
+      deployment,
+      deployment_error: failure?.message ?? null,
+    },
+    fmt,
+  );
+  if (failure) throw failure;
+}
+
 export function registerApps(program: Command): void {
   const g = program.command("apps").description("manage applications");
 
@@ -177,17 +310,38 @@ export function registerApps(program: Command): void {
       (val: string, prev: string[]) => [...prev, val],
       [] as string[],
     )
-    .action(async (opts: AppCreateFlags) => {
-      const ctx = await bootstrap();
-      const tid = await requireTenantId(ctx);
-      const body = await buildAppCreateBody(ctx.client, tid, opts);
-      const app = await ctx.client.post<Application>(`/tenants/${tid}/applications/`, body);
-      printMutation(
-        program,
-        app as unknown as Record<string, unknown>,
-        `✓ created application ${app.slug} (id: ${app.id})`,
-      );
-    });
+    .option("--deploy", "deploy the application after creating it")
+    .option("--wait", "wait for the deployment to finish (needs --deploy)")
+    .option("--ref <git-ref>", "branch, tag, or SHA to deploy (needs --deploy)")
+    .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
+    .action(
+      async (
+        opts: AppCreateFlags & {
+          deploy?: boolean;
+          wait?: boolean;
+          ref?: string;
+          waitTimeout: string;
+        },
+      ) => {
+        if (!opts.deploy && (opts.wait || opts.ref !== undefined)) {
+          throw misuse("--wait and --ref need --deploy");
+        }
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const body = await buildAppCreateBody(ctx.client, tid, opts);
+        const app = await ctx.client.post<Application>(`/tenants/${tid}/applications/`, body);
+        if (!opts.deploy) {
+          printMutation(
+            program,
+            app as unknown as Record<string, unknown>,
+            `✓ created application ${app.slug} (id: ${app.id})`,
+          );
+          return;
+        }
+        await reportCreatedAndDeploy(ctx.client, tid, app, opts, fmt);
+      },
+    );
 
   withCompletion(
     g
@@ -232,40 +386,8 @@ export function registerApps(program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const appId = await resolveApp(ctx.client, tid, idOrSlug);
-
-      const body: Record<string, unknown> = {};
-      if (opts.ref) body["ref"] = opts.ref;
-      if (opts.forceRecreate) body["force_recreate"] = true;
-
-      interface DeployResponse {
-        id: string;
-        status?: string;
-      }
-      const dep = await ctx.client.post<DeployResponse>(
-        `/tenants/${tid}/applications/${appId}/deploy`,
-        body,
-      );
-      console.log(`✓ deployment ${dep.id} queued (status: ${dep.status ?? "?"})`);
-
-      if (!opts.wait) return;
-
-      let done = false;
-      const start = Date.now();
-      while (!done) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const cur = await ctx.client.get<{ status: string }>(
-          `/tenants/${tid}/applications/${appId}/deployments/${dep.id}`,
-        );
-        const elapsed = Math.round((Date.now() - start) / 1000);
-        process.stdout.write(`\r  status: ${cur.status}   (${elapsed}s)        `);
-        if (cur.status === "succeeded") {
-          process.stdout.write("\n✓ succeeded\n");
-          done = true;
-        } else if (cur.status === "failed" || cur.status === "cancelled") {
-          process.stdout.write(`\n✗ ${cur.status}\n`);
-          process.exit(1);
-        }
-      }
+      const result = await deployApp(ctx.client, tid, appId, opts);
+      if (isFailedDeployStatus(result.finalStatus)) process.exit(1);
     });
 
   withCompletion(

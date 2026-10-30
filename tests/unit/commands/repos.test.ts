@@ -4,13 +4,13 @@ import { registerRepos } from "../../../src/commands/repos";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 
 describe("repos command group", () => {
-  test("registers ls, get, branches subcommands", () => {
+  test("registers ls, get, branches, scan and link subcommands", () => {
     const program = new Command().name("reoclo");
     registerRepos(program);
     const group = program.commands.find((c) => c.name() === "repos");
     expect(group).toBeDefined();
     const names = group!.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["branches", "get", "ls"]);
+    expect(names).toEqual(["branches", "get", "link", "ls", "scan"]);
   });
 
   test("repos get has withCompletion(slot 0 → repos)", () => {

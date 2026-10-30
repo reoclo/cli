@@ -21,6 +21,9 @@ Commands:
   whoami                  show the current identity
   servers                 manage servers
   apps                    manage applications
+  up                      deploy a linked repository (creates its stack or app on the first run)
+  repos                   mirrored git repositories: scan, link, list
+  stacks                  definition groups: create and deploy compose stacks
   build-pools             manage build pools (groups of build servers)
   builds                  build history on build servers
   deployments             deployment history
@@ -146,6 +149,43 @@ reoclo proxy reconcile web1
 reoclo proxy allowlist web1 --cloudflare --allow 203.0.113.0/24
 reoclo domains access app.example.com --inherit
 ```
+
+## Deploy a linked repository
+
+`reoclo up` deploys a repository that is linked to Reoclo. Run it in a checkout (it reads the `origin` remote) or pass `--repo owner/name`. It finds the stack or application that already deploys the repository and deploys it. On the first run it creates one, so `--server` is needed once. A repository with a compose file becomes a stack; a repository with a single Dockerfile becomes an application (`--service` picks one when there are several).
+
+It waits for the deployment by default and exits 1 if the deployment fails, or 12 if `--wait-timeout` (default 600 seconds) runs out first. `--no-wait` returns right after the deployment is triggered.
+
+```bash
+# First run in a project folder: creates the stack or app on web1, then deploys it
+reoclo up --server web1
+
+# Every later run deploys what the first run created
+reoclo up
+
+# Another repository, branch and compose file; recreate containers even if nothing changed
+reoclo up --repo acme/web --branch staging --compose-file deploy/compose.staging.yml --force-recreate
+```
+
+The pieces `up` is built from are available on their own:
+
+```bash
+# Make a connected provider mirror a repository (GitHub selection or Gitea sync), then wait for it
+reoclo repos link acme/web
+reoclo repos link acme/web --no-wait
+
+# Show what a repository can deploy at a ref: compose files, services, ports, images
+reoclo repos scan acme/web --ref staging
+reoclo repos scan acme/web --config deploy/compose.prod.yml
+
+# One stack per compose file, the same as the dashboard's deploy as stack
+reoclo stacks create --repo acme/web --server web1 --compose-file deploy/compose.yml --deploy --wait
+
+# Create an application and deploy it in one step
+reoclo apps create --name web --server web1 --repo acme/web --deploy --wait --ref main
+```
+
+`repos link` needs an organization admin. Stacks need the definition groups feature to be on for your organization; the API's message is shown when it is not.
 
 ## Stop a running deployment
 
