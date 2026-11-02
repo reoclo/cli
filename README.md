@@ -281,7 +281,23 @@ reoclo tunnel describe <tunnel-id>
 reoclo tunnel close <tunnel-id>
 ```
 
-Tunnels survive transient runner reconnects: if the runner disconnects briefly, the CLI parks the session and resumes once the runner is back.
+Tunnels survive transient runner reconnects: if the runner disconnects briefly, the CLI parks the session and resumes once the runner is back. If the CLI itself loses its connection, it reconnects with backoff and gives up after `--reconnect-deadline` seconds (default 300).
+
+Large transfers are fine. The CLI sends stream data in frames of at most 64 KiB, so a big upload through a tunnel no longer closes the connection.
+
+### Concurrent tunnel limit
+
+Each user and each organization can hold a limited number of open tunnels at once. When you hit the limit, the tunnel exits instead of retrying, with a message such as:
+
+```
+tunnel: max concurrent tunnels per user reached (4). Run `reoclo tunnel ls` to see open tunnels and `reoclo tunnel close <id>` to free one.
+```
+
+(The defaults are 4 per user and 32 per organization. The number in the message is your current limit, and the organization form reads "per tenant".) Run `reoclo tunnel ls --active` to see what is open, then `reoclo tunnel close <tunnel-id>` to free a slot.
+
+### Closing stale sessions
+
+`reoclo tunnel close` also cleans up a session that no gateway holds any more, for example after a crash. The command reports that the session "had no live connection" and marks it closed. If the session was seen on a gateway within the last few minutes it is left open and the command asks you to try again shortly.
 
 ## Output formats
 
