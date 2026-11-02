@@ -5,6 +5,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { resolveApp } from "../client/resolve";
 import { requireCapability } from "../client/command-meta";
 import { EXIT } from "../client/exit-codes";
+import { ApiError } from "../client/errors";
 import type { KeyType } from "../client/routing";
 import {
   listProjects,
@@ -17,12 +18,18 @@ import {
   createProject,
   duplicateProject,
   updateProject,
+  detachSecret,
+  getSecretUsage,
+  type SecretOrigin,
+  type SecretRead,
+  type SecretUsage,
   type SecretProjectCreate,
   type SecretProjectDuplicate,
   type SecretProjectRead,
   type SecretProjectUpdate,
 } from "../client/secrets";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
+import { confirmOrExit } from "../ui/prompt";
 import { bitwardenSource, type BitwardenDeps } from "../secrets/sources/bitwarden";
 import { onepasswordSource } from "../secrets/sources/onepassword";
 import { runCommand } from "../secrets/sources/exec";
@@ -207,6 +214,111 @@ export function assertProjectNameAvailable(
   }
 }
 
+const SECRET_ORIGINS: readonly SecretOrigin[] = ["manual", "bitwarden", "onepassword"];
+const SYNCED_ORIGINS = ["bitwarden", "onepassword"] as const;
+type SyncedOrigin = (typeof SYNCED_ORIGINS)[number];
+
+/** A secret from a server that predates syncing has no `source`; it is manual. */
+export function secretOrigin(secret: Pick<SecretRead, "source">): SecretOrigin {
+  return secret.source ?? "manual";
+}
+
+/** Validate `secrets ls --source <name>`. */
+export function parseSourceFilter(input: string): SecretOrigin {
+  const found = SECRET_ORIGINS.find((o) => o === input);
+  if (!found) {
+    throw misuse(`invalid --source '${input}' (one of ${SECRET_ORIGINS.join(", ")})`);
+  }
+  return found;
+}
+
+/** Validate `secrets detach --source <name>`: only synced sources can be detached. */
+export function parseDetachSource(input: string): SyncedOrigin {
+  const found = SYNCED_ORIGINS.find((o) => o === input);
+  if (!found) {
+    throw misuse(`invalid --source '${input}' (one of ${SYNCED_ORIGINS.join(", ")})`);
+  }
+  return found;
+}
+
+/** Keep only secrets from `source`; no filter keeps everything. */
+export function filterBySource(rows: SecretRead[], source?: SecretOrigin): SecretRead[] {
+  if (source === undefined) return rows;
+  return rows.filter((r) => secretOrigin(r) === source);
+}
+
+/** Text-table rows for `secrets ls`: SOURCE, SYNC and LAST SYNCED beside the key. */
+export function secretTableRows(rows: SecretRead[]): Array<Record<string, unknown>> {
+  return rows.map((r) => ({
+    key: r.key,
+    current_version: r.current_version,
+    source: secretOrigin(r),
+    sync_status: r.sync_status ?? "-",
+    last_synced_at: r.last_synced_at ?? "-",
+  }));
+}
+
+export type DetachPlan = { mode: "one"; key: string } | { mode: "all"; source: SyncedOrigin };
+
+/** Work out what `secrets detach` was asked to do, refusing ambiguous flag mixes. */
+export function planDetach(
+  key: string | undefined,
+  opts: { all?: boolean; source?: string },
+): DetachPlan {
+  if (opts.all) {
+    if (key !== undefined) throw misuse("pass a key or --all, not both");
+    if (opts.source === undefined) {
+      throw misuse("--all needs --source <bitwarden|onepassword>");
+    }
+    return { mode: "all", source: parseDetachSource(opts.source) };
+  }
+  if (opts.source !== undefined) throw misuse("--source only works with --all");
+  if (key === undefined) throw misuse("pass a key, or --all --source <bitwarden|onepassword>");
+  return { mode: "one", key };
+}
+
+/** The API refuses to delete a synced secret (409). Keep its reason and say how to proceed. */
+export function syncConflictError(err: ApiError, key: string, project: string): ApiError {
+  return new ApiError(
+    err.status,
+    err.message,
+    err.path,
+    `run \`reoclo secrets detach ${key} --project ${project}\` or pass --detach`,
+  );
+}
+
+export function usageTableRows(usages: SecretUsage[]): Array<Record<string, unknown>> {
+  return usages.map((u) => ({
+    kind: u.kind,
+    name: u.name,
+    via: u.via,
+    env_var: u.env_var ?? "-",
+  }));
+}
+
+/** One line per usage, for the `secrets rm` warning. */
+export function describeUsages(usages: SecretUsage[]): string[] {
+  return usages.map((u) => {
+    const env = u.env_var ? `, ${u.env_var}` : "";
+    return `  ${u.kind} ${u.name} (${u.via}${env})`;
+  });
+}
+
+/** Usages of a secret, or none when the server has no usage endpoint (404). */
+async function usagesOrNone(
+  ctx: Awaited<ReturnType<typeof bootstrap>>,
+  tid: string,
+  pid: string,
+  secretId: string,
+): Promise<SecretUsage[]> {
+  try {
+    return (await getSecretUsage(ctx.client, tid, pid, secretId)).usages;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return [];
+    throw e;
+  }
+}
+
 const DESCRIPTION_COLUMN_MAX = 60;
 
 /** Flatten a free-text cell for the aligned text table: collapse whitespace
@@ -365,17 +477,24 @@ export function registerSecrets(program: Command): void {
       .command("ls")
       .description("list secret keys in a project")
       .requiredOption("--project <name>", "project name or id")
-      .action(async (opts: { project: string }) => {
+      .option("--source <name>", "only secrets from this source (manual, bitwarden, onepassword)")
+      .action(async (opts: { project: string; source?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
+        const source = opts.source === undefined ? undefined : parseSourceFilter(opts.source);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
-        const rows = await listSecrets(ctx.client, tid, pid);
+        const rows = filterBySource(await listSecrets(ctx.client, tid, pid), source);
         printList(
-          rows as unknown as Array<Record<string, unknown>>,
+          fmt === "text"
+            ? secretTableRows(rows)
+            : (rows as unknown as Array<Record<string, unknown>>),
           [
             { key: "key", label: "KEY" },
             { key: "current_version", label: "VERSION" },
+            { key: "source", label: "SOURCE" },
+            { key: "sync_status", label: "SYNC" },
+            { key: "last_synced_at", label: "LAST SYNCED" },
           ],
           fmt,
         );
@@ -434,9 +553,11 @@ export function registerSecrets(program: Command): void {
   requireCapability(
     g
       .command("rm <key>")
-      .description("delete a secret")
+      .description("delete a secret; lists the apps and stacks that use it first")
       .requiredOption("--project <name>", "project name or id")
-      .action(async (key: string, opts: { project: string }) => {
+      .option("--detach", "for a synced secret, detach it from its source first, then delete it")
+      .option("--yes", "skip confirmation prompt")
+      .action(async (key: string, opts: { project: string; detach?: boolean; yes?: boolean }) => {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
@@ -445,10 +566,134 @@ export function registerSecrets(program: Command): void {
           const m = `secret not found: ${key}`;
           throw new Error(m);
         }
-        await deleteSecret(ctx.client, tid, secret.id);
+        const usages = await usagesOrNone(ctx, tid, pid, secret.id);
+        if (usages.length > 0) {
+          process.stderr.write(`${key} is used by:\n${describeUsages(usages).join("\n")}\n`);
+        }
+        await confirmOrExit(
+          usages.length > 0
+            ? `delete secret ${key} although ${usages.length} app(s) or stack(s) use it? [y/N]: `
+            : `delete secret ${key}? [y/N]: `,
+          opts.yes,
+        );
+        const synced = secretOrigin(secret) !== "manual";
+        if (opts.detach && synced) {
+          await detachSecret(ctx.client, tid, secret.id);
+          process.stderr.write(`✓ detached ${key}\n`);
+        }
+        try {
+          await deleteSecret(ctx.client, tid, secret.id);
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 409 && synced) {
+            throw syncConflictError(e, key, opts.project);
+          }
+          throw e;
+        }
         process.stderr.write(`✓ deleted ${key}\n`);
       }),
     "secret:write",
+  );
+
+  requireCapability(
+    g
+      .command("detach [key]")
+      .description("stop syncing a secret from Bitwarden or 1Password; the value stays in Reoclo")
+      .requiredOption("--project <name>", "project name or id")
+      .option("--all", "detach every secret in the project from --source")
+      .option("--source <name>", "with --all: bitwarden or onepassword")
+      .option("--yes", "skip confirmation prompt")
+      .action(
+        async (
+          key: string | undefined,
+          opts: { project: string; all?: boolean; source?: string; yes?: boolean },
+        ) => {
+          const plan = planDetach(key, opts);
+          const ctx = await bootstrap();
+          const tid = await requireTenantId(ctx);
+          const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
+          const rows = await listSecrets(ctx.client, tid, pid);
+
+          if (plan.mode === "one") {
+            const secret = rows.find((s) => s.key === plan.key);
+            if (!secret) {
+              const m = `secret not found: ${plan.key}`;
+              throw new Error(m);
+            }
+            const origin = secretOrigin(secret);
+            if (origin === "manual") {
+              process.stderr.write(`${plan.key} is already detached (source: manual)\n`);
+              return;
+            }
+            await confirmOrExit(
+              `detach ${plan.key} from ${origin}? It keeps its value and stops syncing. [y/N]: `,
+              opts.yes,
+            );
+            await detachSecret(ctx.client, tid, secret.id);
+            process.stderr.write(`✓ detached ${plan.key}\n`);
+            return;
+          }
+
+          const targets = filterBySource(rows, plan.source);
+          if (targets.length === 0) {
+            process.stderr.write(`no ${plan.source} secrets in ${opts.project}\n`);
+            return;
+          }
+          await confirmOrExit(
+            `detach ${targets.length} ${plan.source} secret(s) in ${opts.project}? They keep their values and stop syncing. [y/N]: `,
+            opts.yes,
+          );
+          let done = 0;
+          try {
+            for (const secret of targets) {
+              await detachSecret(ctx.client, tid, secret.id);
+              done += 1;
+            }
+          } catch (e) {
+            process.stderr.write(`detached ${done} of ${targets.length} before the error\n`);
+            throw e;
+          }
+          process.stderr.write(`✓ detached ${done} secret(s)\n`);
+        },
+      ),
+    "secret:write",
+  );
+
+  requireCapability(
+    g
+      .command("usage <key>")
+      .description("show the apps and stacks that use a secret")
+      .requiredOption("--project <name>", "project name or id")
+      .action(async (key: string, opts: { project: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const pid = resolveProjectId(await listProjects(ctx.client, tid), opts.project);
+        const secret = (await listSecrets(ctx.client, tid, pid)).find((s) => s.key === key);
+        if (!secret) {
+          const m = `secret not found: ${key}`;
+          throw new Error(m);
+        }
+        const res = await getSecretUsage(ctx.client, tid, pid, secret.id);
+        if (fmt !== "text") {
+          printObject(res as unknown as Record<string, unknown>, fmt);
+          return;
+        }
+        if (res.usages.length === 0) {
+          process.stdout.write(`${key} is not used by any application or stack\n`);
+          return;
+        }
+        printList(
+          usageTableRows(res.usages),
+          [
+            { key: "kind", label: "KIND" },
+            { key: "name", label: "NAME" },
+            { key: "via", label: "VIA" },
+            { key: "env_var", label: "ENV VAR" },
+          ],
+          fmt,
+        );
+      }),
+    "secret_project:read",
   );
 
   requireCapability(

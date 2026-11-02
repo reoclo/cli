@@ -150,6 +150,55 @@ reoclo proxy allowlist web1 --cloudflare --allow 203.0.113.0/24
 reoclo domains access app.example.com --inherit
 ```
 
+## Secrets from Bitwarden and 1Password, and safe deletes
+
+`secrets ls` shows where each secret comes from and whether it is in sync. `--source` filters by origin (`manual`, `bitwarden`, `onepassword`). With `-o json` the rows are the API's, filtered but otherwise unchanged.
+
+```bash
+reoclo secrets ls --project prod
+# KEY          VERSION  SOURCE    SYNC    LAST SYNCED
+# DB_PASSWORD  3        bitwarden synced  2026-11-01T09:12:44Z
+# SENTRY_DSN   1        manual    -       -
+reoclo secrets ls --project prod --source bitwarden
+
+# Who reads this secret? Applications and stacks, by env reference or project binding
+reoclo secrets usage DB_PASSWORD --project prod
+
+# Stop syncing one secret; the value stays in Reoclo and becomes a manual secret
+reoclo secrets detach DB_PASSWORD --project prod
+
+# Detach every secret from one source (--all needs --source)
+reoclo secrets detach --all --source bitwarden --project prod --yes
+```
+
+`secrets detach` asks before it changes anything (`--yes` skips the prompt) and reports how many secrets it detached. A manual secret is already detached, so the command says so and makes no API call.
+
+`secrets rm` lists the applications and stacks that use the secret and asks you to confirm. A synced secret cannot be deleted until it is detached: pass `--detach` to detach and delete in one step, or run `secrets detach` first.
+
+```bash
+reoclo secrets rm DB_PASSWORD --project prod --detach
+```
+
+Every command that deletes something asks first and takes `--yes` to skip the prompt: `monitors rm`, `secrets rm`, `channels delete`, `schedule rm`, `providers rm`, `env rm`, `status-pages rm` and `profile rm`, alongside the ones that already did. Without a terminal and without `--yes` a delete aborts with exit code 1 instead of waiting for input.
+
+## Monitors and health checks
+
+Creating a monitor for a URL that already has one fails and points at the existing monitor. A paused monitor is resumed instead of recreated.
+
+```bash
+reoclo monitors create --name api --url https://api.example.com
+# Error: A monitor for this URL already exists: api (paused, id 5f1c...)
+#   It is paused. Resume it with `reoclo monitors resume 5f1c...`
+```
+
+`apps config set --health-check` sets the deploy health check. The spec is `http:/path`, `tcp`, `command:<cmd>` or `none`. It goes through the same merge and PATCH as the other `apps config set` flags, so the rest of the config is kept.
+
+```bash
+reoclo apps config set web --health-check http:/healthz
+reoclo apps config set web --health-check tcp
+reoclo apps config set web --health-check none
+```
+
 ## Deploy a linked repository
 
 `reoclo up` deploys a repository that is linked to Reoclo. Run it in a checkout (it reads the `origin` remote) or pass `--repo owner/name`. It finds the stack or application that already deploys the repository and deploys it. On the first run it creates one, so `--server` is needed once. A repository with a compose file becomes a stack; a repository with a single Dockerfile becomes an application (`--service` picks one when there are several).

@@ -42,7 +42,7 @@ test("schedule create → ls → get → update → rm", async () => {
     .env(env()).quiet();
   expect(updated.stdout.toString()).toContain("✓ scheduled operation updated:");
 
-  const removed = await $`bun run src/index.ts schedule rm ${id}`.env(env()).quiet();
+  const removed = await $`bun run src/index.ts schedule rm ${id} --yes`.env(env()).quiet();
   expect(removed.stdout.toString()).toContain("✓ scheduled operation removed:");
 });
 

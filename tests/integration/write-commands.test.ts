@@ -44,7 +44,7 @@ test("env set + ls + rm round-trip", async () => {
   expect(out).toContain("FOO");
   expect(out).toContain("BAZ");
 
-  await $`bun run src/index.ts env rm --app app-1 FOO`.env(baseEnv()).quiet();
+  await $`bun run src/index.ts env rm --app app-1 FOO --yes`.env(baseEnv()).quiet();
 
   const lsAfter = await $`bun run src/index.ts env ls --app app-1`.env(baseEnv()).quiet();
   const outAfter = lsAfter.stdout.toString();

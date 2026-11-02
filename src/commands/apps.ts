@@ -23,6 +23,7 @@ import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { parseSetFlags } from "../util/parse-set";
 import { assertPushTarget, parseBuildPlacement } from "../util/build-placement";
+import { parseHealthCheck } from "../util/health-check";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -511,6 +512,10 @@ export function registerApps(program: Command): void {
       .option("--push-credential <id>", "registry credential (with push capability) that receives built images")
       .option("--push-repository <repo>", "registry-qualified repository to push to, without tag (for example ghcr.io/acme/web)")
       .option(
+        "--health-check <spec>",
+        "health check: http:/path, tcp, command:<cmd> or none",
+      )
+      .option(
         "--env <KEY=VAL>",
         "env var (repeatable)",
         (val: string, prev?: string[]) => [...(prev ?? []), val],
@@ -532,6 +537,7 @@ export function registerApps(program: Command): void {
             buildPlacement?: string;
             pushCredential?: string;
             pushRepository?: string;
+            healthCheck?: string;
             env?: string[];
             set?: string[];
           },
@@ -570,6 +576,12 @@ export function registerApps(program: Command): void {
             setPath(["build", "push_target", "registry_credential_id"], opts.pushCredential);
           if (opts.pushRepository !== undefined)
             setPath(["build", "push_target", "repository"], opts.pushRepository);
+          if (opts.healthCheck !== undefined) {
+            const hc = parseHealthCheck(opts.healthCheck);
+            setPath(["deploy", "health_check", "type"], hc.type);
+            if (hc.http_path !== undefined) setPath(["deploy", "health_check", "http_path"], hc.http_path);
+            if (hc.command !== undefined) setPath(["deploy", "health_check", "command"], hc.command);
+          }
           if (opts.env && opts.env.length > 0) {
             const envMap: Record<string, string> = {};
             for (const kv of opts.env) {

@@ -1,6 +1,7 @@
 // src/commands/channels.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
@@ -212,7 +213,9 @@ export function registerChannels(program: Command): void {
       .command("delete <id>")
       .description("delete a notification channel")
       .option("--force", "also strip references from alert routing")
-      .action(async (id: string, opts: { force?: boolean }) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (id: string, opts: { force?: boolean; yes?: boolean }) => {
+        await confirmOrExit(`delete notification channel ${id}? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const qs = opts.force ? "?force=true" : "";

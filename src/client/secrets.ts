@@ -6,10 +6,32 @@ export interface SecretProjectRead {
   description?: string | null;
 }
 
+/** Where a secret's value comes from. `manual` secrets are not synced. */
+export type SecretOrigin = "manual" | "bitwarden" | "onepassword";
+
 export interface SecretRead {
   id: string;
   key: string;
   current_version: number;
+  /** Absent on servers that predate secret syncing; treat as `manual`. */
+  source?: SecretOrigin;
+  sync_status?: "synced" | "orphaned" | null;
+  last_synced_at?: string | null;
+}
+
+export interface SecretUsage {
+  kind: "application" | "stack";
+  id: string;
+  name: string;
+  via: "env_reference" | "project_binding";
+  env_var: string | null;
+}
+
+export interface SecretUsageResponse {
+  secret_id: string;
+  project_id: string;
+  key: string;
+  usages: SecretUsage[];
 }
 
 export interface AccessibleProject {
@@ -136,6 +158,23 @@ export function patchSecret(
 
 export function deleteSecret(c: HttpClient, tid: string, secretId: string): Promise<void> {
   return c.del<void>(`/tenants/${tid}/secrets/${secretId}`);
+}
+
+/** Stop syncing a secret from Bitwarden or 1Password. The value stays in Reoclo. */
+export function detachSecret(c: HttpClient, tid: string, secretId: string): Promise<SecretRead> {
+  return c.post<SecretRead>(`/tenants/${tid}/secrets/${secretId}/detach`);
+}
+
+/** The apps and stacks that read this secret. 404 on servers without the endpoint. */
+export function getSecretUsage(
+  c: HttpClient,
+  tid: string,
+  projectId: string,
+  secretId: string,
+): Promise<SecretUsageResponse> {
+  return c.get<SecretUsageResponse>(
+    `/tenants/${tid}/secret-projects/${projectId}/secrets/${secretId}/usage`,
+  );
 }
 
 // ---------------------------------------------------------------------------

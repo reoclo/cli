@@ -43,6 +43,6 @@ test("status-pages create → ls → update → rm", async () => {
     .env(env()).quiet();
   expect(got.stdout.toString()).toContain("true");
 
-  const removed = await $`bun run src/index.ts status-pages rm ${id}`.env(env()).quiet();
+  const removed = await $`bun run src/index.ts status-pages rm ${id} --yes`.env(env()).quiet();
   expect(removed.stdout.toString()).toContain("✓ status page removed:");
 });
