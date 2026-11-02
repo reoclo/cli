@@ -48,6 +48,8 @@ export interface TunnelSessionRead {
 export interface TunnelCloseResponse {
   requested: boolean;
   gateway_found: boolean;
+  /** Set by servers that close a stale session record when no gateway holds the tunnel. */
+  db_closed?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -546,10 +548,18 @@ Examples:
             throw err;
           }
 
-          process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
-          if (!result.gateway_found) {
+          if (result.gateway_found) {
+            process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
+          } else if (result.db_closed) {
+            process.stdout.write(`tunnel: ${tunnelId} had no live connection; marked it closed\n`);
+          } else if (result.db_closed === false) {
             process.stdout.write(
-              "tunnel: note — gateway-ws had no live tunnel for this session; the audit record may be stale\n",
+              `tunnel: ${tunnelId} was seen on a gateway in the last few minutes, so it was left open; try again shortly\n`,
+            );
+          } else {
+            process.stdout.write(`tunnel: close requested for ${tunnelId}\n`);
+            process.stdout.write(
+              "tunnel: note: no gateway had a live tunnel for this session; the record may be stale\n",
             );
           }
         } catch (err) {
