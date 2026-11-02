@@ -7,6 +7,7 @@ import type { McpRegistrationContext } from "../mcp/tools/context";
 import type { HttpClient } from "../client/http";
 import { startTokenRefreshLoop, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { loadConfig } from "../config/store";
+import { jwtExpiresAt } from "../auth/renew";
 
 export interface McpBootstrapResult {
   ctx: ResolvedContext;
@@ -78,10 +79,16 @@ export function registerMcp(program: Command): void {
       // `ctx.accessTokenExpiresAt`, because this same bootstrap() call may
       // already have performed a proactive refresh, and the in-memory profile
       // snapshot bootstrap captured isn't re-read. Using the stale value would
-      // make the loop redundantly refresh once more right at startup.
+      // make the loop redundantly refresh once more right at startup. An
+      // --org token is minted in memory and never stored, so its expiry comes
+      // from the token itself: the profile's expiry says nothing about it.
       let stopRefresh: (() => void) | undefined;
       if (ctx.refresh) {
-        const initialExpiresAt = (await loadConfig()).profiles[ctx.profileName]?.access_token_expires_at;
+        const expiresAtOf = ctx.orgSwitched
+          ? (token: string): Promise<string | undefined> => Promise.resolve(jwtExpiresAt(token))
+          : async (): Promise<string | undefined> =>
+              (await loadConfig()).profiles[ctx.profileName]?.access_token_expires_at;
+        const initialExpiresAt = await expiresAtOf(ctx.token);
         stopRefresh = startTokenRefreshLoop({
           refresh: ctx.refresh,
           // ctx.token is only the bootstrap-time snapshot used to seed the
@@ -90,7 +97,7 @@ export function registerMcp(program: Command): void {
           // onToken pushes into the client.
           initialToken: ctx.token,
           onToken: (t) => ctx.client.updateToken(t),
-          getExpiresAt: async () => (await loadConfig()).profiles[ctx.profileName]?.access_token_expires_at,
+          getExpiresAt: expiresAtOf,
           initialExpiresAt,
           skewMs: PROACTIVE_SKEW_MS,
           now: () => Date.now(),

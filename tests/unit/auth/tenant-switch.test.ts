@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mintTenantSwitchToken, TenantSwitchError } from "../../../src/auth/tenant-switch";
+import {
+  mintTenantSwitchToken,
+  orgSwitchRefresh,
+  TenantSwitchError,
+} from "../../../src/auth/tenant-switch";
 import { NetworkError } from "../../../src/client/errors";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -146,5 +150,56 @@ describe("mintTenantSwitchToken", () => {
       expect(text).not.toContain("very-secret-access");
       expect(text).not.toContain("minted");
     });
+  });
+});
+
+describe("orgSwitchRefresh", () => {
+  const FRESH = new Date(Date.now() + 3_600_000).toISOString();
+
+  function renewer(mint: (profileToken: string) => Promise<string>, refreshed: string[]) {
+    return orgSwitchRefresh({
+      readProfileToken: () => Promise.resolve("profile-1"),
+      readProfileExpiresAt: () => Promise.resolve(FRESH),
+      refreshProfile: (current) => {
+        refreshed.push(current);
+        return Promise.resolve("profile-2");
+      },
+      mint,
+    });
+  }
+
+  test("a 403 (org no longer granted) propagates without refreshing the profile", async () => {
+    const refreshed: string[] = [];
+    const renew = renewer(() => Promise.reject(new TenantSwitchError("forbidden", 403)), refreshed);
+    const err = await renew("org-1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TenantSwitchError);
+    expect(refreshed).toEqual([]);
+  });
+
+  test("a 5xx or a network failure is transient: null, so the caller keeps its 401", async () => {
+    const refreshed: string[] = [];
+    const on5xx = renewer(() => Promise.reject(new TenantSwitchError("down", 503)), refreshed);
+    const onNetwork = renewer(
+      () => Promise.reject(new NetworkError("POST https://auth.reoclo.com/oauth/token failed")),
+      refreshed,
+    );
+    expect(await on5xx("org-1")).toBeNull();
+    expect(await onNetwork("org-1")).toBeNull();
+    expect(refreshed).toEqual([]);
+  });
+
+  test("a transient profile refresh failure yields null without minting", async () => {
+    const minted: string[] = [];
+    const renew = orgSwitchRefresh({
+      readProfileToken: () => Promise.resolve(undefined),
+      readProfileExpiresAt: () => Promise.resolve(undefined),
+      refreshProfile: () => Promise.resolve(null),
+      mint: (t) => {
+        minted.push(t);
+        return Promise.resolve("org-2");
+      },
+    });
+    expect(await renew("org-1")).toBeNull();
+    expect(minted).toEqual([]);
   });
 });

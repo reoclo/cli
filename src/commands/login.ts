@@ -149,10 +149,9 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   await saveProfile(profileName, baseProfile);
 
   // Persist the access token via the resolved store (file → config.json,
-  // keyring → OS keyring). The refresh token only flows through `store.set`
-  // for keyring stores; for FileStore it isn't persisted at all because
-  // bootstrap's refresh callback only fires when `refresh_token_ref` is set
-  // — file-only users re-run `reoclo login` when the access token expires.
+  // keyring → OS keyring). The refresh token goes to the keyring under
+  // `refresh_token_ref`, or inline as `refresh_token` in the 0600 config.json
+  // below. Without it a host with no keyring needed a new login every hour.
   await store.set(profileName, tokens.access_token);
   if (store.kind === "keyring") {
     await store.set(refreshTokenKey(profileName), tokens.refresh_token);
@@ -176,6 +175,7 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
     const cfg = await loadConfig();
     const storedToken = cfg.profiles[profileName]?.token;
     if (storedToken) oauthProfile.token = storedToken;
+    oauthProfile.refresh_token = tokens.refresh_token;
   }
 
   await saveProfile(profileName, oauthProfile);

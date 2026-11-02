@@ -1,4 +1,5 @@
 // src/config/paths.ts
+import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -18,8 +19,22 @@ export function configDir(): string {
     const base = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
     return join(base, "reoclo");
   }
-  const xdg = process.env.XDG_CONFIG_HOME;
-  return xdg ? join(xdg, "reoclo") : join(homedir(), ".reoclo");
+  return posixConfigDir(homedir(), process.env.XDG_CONFIG_HOME);
+}
+
+/** The config directory on macOS and Linux, given the home and XDG_CONFIG_HOME. */
+export function posixConfigDir(home: string, xdgConfigHome: string | undefined): string {
+  if (xdgConfigHome) return join(xdgConfigHome, "reoclo");
+  // XDG_CONFIG_HOME is usually exported by an interactive shell's rc file only,
+  // so launchd jobs, cron and agent subprocesses run without it and lost a login
+  // saved under ~/.config/reoclo. Keep ~/.reoclo when it holds a config, else
+  // follow an existing ~/.config/reoclo one.
+  const legacy = join(home, ".reoclo");
+  const xdgDefault = join(home, ".config", "reoclo");
+  if (!existsSync(join(legacy, "config.json")) && existsSync(join(xdgDefault, "config.json"))) {
+    return xdgDefault;
+  }
+  return legacy;
 }
 
 export function cacheDir(): string {

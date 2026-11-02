@@ -26,6 +26,8 @@ export interface ProfileRecord {
   // OAuth device-flow fields (absent for API-key profiles)
   auth_kind?: "api-key" | "oauth";
   refresh_token_ref?: string;        // keyring entry name for the refresh token
+  refresh_token?: string;            // the refresh token itself, kept inline when no
+                                     // keyring stores it (config.json is 0600)
   access_token_expires_at?: string;  // ISO timestamp
   oauth_client_id?: string;          // "reoclo-cli"
   oauth_auth_url?: string;           // "https://auth.reoclo.com"

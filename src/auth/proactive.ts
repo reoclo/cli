@@ -55,7 +55,9 @@ export async function applyProactiveRefresh(
 export interface TokenRefreshLoopDeps {
   refresh: (currentToken: string) => Promise<string | null>;
   onToken: (token: string) => void;
-  getExpiresAt: () => Promise<string | undefined>;
+  /** Expiry of the token the loop now holds (passed in, for tokens whose
+   *  expiry is read from the token itself rather than from storage). */
+  getExpiresAt: (currentToken: string) => Promise<string | undefined>;
   initialToken: string;
   initialExpiresAt: string | undefined;
   skewMs: number;
@@ -108,7 +110,7 @@ export function startTokenRefreshLoop(deps: TokenRefreshLoopDeps): () => void {
       if (fresh) {
         currentToken = fresh;
         deps.onToken(fresh);
-        expiresAt = await deps.getExpiresAt();
+        expiresAt = await deps.getExpiresAt(fresh);
       } else {
         // Transient failure (network/5xx/429/timeout): onExpiry never ran, so
         // getExpiresAt() would still return the same near-expiry that made

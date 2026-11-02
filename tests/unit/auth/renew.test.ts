@@ -1,6 +1,6 @@
 // tests/unit/auth/renew.test.ts
 import { describe, expect, test } from "bun:test";
-import { jwtExp, RENEW_SUBPROTOCOL } from "../../../src/auth/renew";
+import { jwtExp, jwtSid, RENEW_SUBPROTOCOL } from "../../../src/auth/renew";
 
 function base64url(input: string): string {
   return Buffer.from(input, "utf8")
@@ -13,6 +13,19 @@ function base64url(input: string): string {
 function buildJwt(payload: unknown, header: unknown = { alg: "none", typ: "JWT" }): string {
   return `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}.sig`;
 }
+
+describe("jwtSid", () => {
+  test("decodes the session id from a well-formed JWT", () => {
+    expect(jwtSid(buildJwt({ sid: "sess-1", exp: 1 }))).toBe("sess-1");
+  });
+
+  test("returns undefined when sid is missing, empty or not a string", () => {
+    expect(jwtSid(buildJwt({ exp: 1 }))).toBeUndefined();
+    expect(jwtSid(buildJwt({ sid: "" }))).toBeUndefined();
+    expect(jwtSid(buildJwt({ sid: 42 }))).toBeUndefined();
+    expect(jwtSid("garbage")).toBeUndefined();
+  });
+});
 
 describe("jwtExp", () => {
   test("decodes exp from a well-formed JWT", () => {
