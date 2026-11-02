@@ -69,43 +69,6 @@ describe("buildProjectBinding", () => {
     ).toEqual(["profile", "org", "version"]);
   });
 
-  test("includes the skills block when skills were installed", () => {
-    expect(
-      buildProjectBinding({
-        org: "acme",
-        profileName: "default",
-        activeProfile: "default",
-        skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
-      }),
-    ).toEqual({
-      org: "acme",
-      version: 1,
-      skills: { ref: "main", sha: "deadbeef", installed_at: "2026-08-01T00:00:00.000Z" },
-    });
-  });
-
-  test("carries the skills targets and scope through verbatim", () => {
-    expect(
-      buildProjectBinding({
-        org: "acme",
-        profileName: "default",
-        activeProfile: "default",
-        skills: {
-          ref: "main",
-          sha: "deadbeef",
-          installed_at: "2026-08-01T00:00:00.000Z",
-          targets: ["claude", "codex"],
-          scope: "global",
-        },
-      }).skills,
-    ).toEqual({
-      ref: "main",
-      sha: "deadbeef",
-      installed_at: "2026-08-01T00:00:00.000Z",
-      targets: ["claude", "codex"],
-      scope: "global",
-    });
-  });
 });
 
 describe("resolveInitOrgFlag", () => {

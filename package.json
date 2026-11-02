@@ -1,6 +1,6 @@
 {
   "name": "@reoclo/cli",
-  "version": "0.93.1",
+  "version": "0.94.0",
   "description": "Reoclo command-line interface",
   "license": "MIT",
   "bin": {
@@ -16,7 +16,9 @@
     "test": "bun test",
     "lint": "eslint",
     "format": "prettier --write src tests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "skills:sync": "bun run scripts/sync-skills.ts",
+    "skills:check": "bun run scripts/sync-skills.ts --check"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
