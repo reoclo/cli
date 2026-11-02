@@ -4,6 +4,7 @@
 // restarts, commands, reboots) and inspect their run history.
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
@@ -281,7 +282,9 @@ Examples:
     g
       .command("rm <id>")
       .description("delete a scheduled operation")
-      .action(async (id: string) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (id: string, opts: { yes?: boolean }) => {
+        await confirmOrExit(`delete scheduled operation ${id}? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/scheduled-operations/${id}`);

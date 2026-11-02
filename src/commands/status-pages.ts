@@ -1,6 +1,7 @@
 // src/commands/status-pages.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { withCompletion } from "../client/command-meta";
 import type { HttpClient } from "../client/http";
 import {
@@ -300,7 +301,9 @@ export function registerStatusPages(program: Command): Command {
     g
       .command("rm <page>")
       .description("delete a status page and everything on it")
-      .action(async (page: string) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (page: string, opts: { yes?: boolean }) => {
+        await confirmOrExit(`delete status page ${page} and everything on it? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const sp = await resolveStatusPage(ctx.client, tid, page);

@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { appUrl, gatewayUrl } from "../lib/urls";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { withCompletion } from "../client/command-meta";
 import { resolveProvider } from "../client/resolve";
 import { PermissionError } from "../client/errors";
@@ -401,7 +402,9 @@ export function registerProviders(program: Command): void {
   withCompletion(
     g.command("rm <provider>")
       .description("delete a tenant-scoped provider")
-      .action(async (ref: string) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (ref: string, opts: { yes?: boolean }) => {
+        await confirmOrExit(`delete provider ${ref}? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const id = await resolveProvider(ctx.client, tid, ref);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseChoice } from "../../../src/ui/prompt";
+import { confirmAction, parseChoice } from "../../../src/ui/prompt";
 
 describe("parseChoice", () => {
   test("an empty answer uses the default", () => {
@@ -20,5 +20,25 @@ describe("parseChoice", () => {
 
   test("non-numeric input falls back to the default", () => {
     expect(parseChoice("abc", 3, 2)).toBe(2);
+  });
+});
+
+describe("confirmAction", () => {
+  function withStdinTty<T>(isTTY: boolean | undefined, fn: () => Promise<T>): Promise<T> {
+    const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: isTTY, configurable: true });
+    return fn().finally(() => {
+      if (original) Object.defineProperty(process.stdin, "isTTY", original);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    });
+  }
+
+  test("--yes confirms without asking", async () => {
+    expect(await withStdinTty(false, () => confirmAction("delete x? ", true))).toBe(true);
+  });
+
+  test("without a TTY and without --yes it declines instead of waiting", async () => {
+    expect(await withStdinTty(false, () => confirmAction("delete x? ", false))).toBe(false);
+    expect(await withStdinTty(undefined, () => confirmAction("delete x? "))).toBe(false);
   });
 });

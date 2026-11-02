@@ -2,6 +2,7 @@
 import type { Command } from "commander";
 import { appUrl } from "../lib/urls";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { resolveApp } from "../client/resolve";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
 import { requireCapability, withCompletion } from "../client/command-meta";
@@ -80,7 +81,9 @@ export function registerEnv(program: Command): void {
       .description("remove an env var")
       .requiredOption("--app <idOrSlug>", "application id or slug")
       .argument("<key>", "the env var key to remove")
-      .action(async (key: string, opts: { app: string }) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (key: string, opts: { app: string; yes?: boolean }) => {
+        await confirmOrExit(`remove env var ${key} from ${opts.app}? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const appId = await resolveApp(ctx.client, tid, opts.app);

@@ -1,7 +1,9 @@
 // src/commands/monitors.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { confirmOrExit } from "../ui/prompt";
 import { withCompletion } from "../client/command-meta";
+import { ApiError } from "../client/errors";
 import { cacheList } from "../completion/populate";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
@@ -47,6 +49,23 @@ export function parseHeaderFlag(input: string): {
   const name = idx > 0 ? input.slice(0, idx).trim() : "";
   if (!name) throw new Error(`invalid --header '${input}' (use "Name: value")`);
   return { name, value: input.slice(idx + 1).trim(), is_secret: false };
+}
+
+const DUPLICATE_MONITOR_PREFIX = "A monitor for this URL already exists";
+
+/** The API refuses a second monitor for the same URL with
+ *  `A monitor for this URL already exists: <name> (<status>, id <id>)`.
+ *  Returns the next step for that detail, or null for any other 400. */
+export function duplicateMonitorHint(detail: string): string | null {
+  if (!detail.startsWith(DUPLICATE_MONITOR_PREFIX)) return null;
+  const m = detail.match(/\(([^(),]+),\s*id\s+([^\s)]+)\)\s*$/);
+  if (!m) return null;
+  const status = (m[1] ?? "").trim();
+  const id = m[2] ?? "";
+  if (status === "paused") {
+    return `It is paused. Resume it with \`reoclo monitors resume ${id}\``;
+  }
+  return `Update it with \`reoclo monitors update ${id}\``;
 }
 
 /** Collect a repeatable option into an array (commander reducer). */
@@ -137,7 +156,16 @@ export function registerMonitors(program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const body = buildMonitorBody(opts);
-      const m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors`, body);
+      let m: Monitor;
+      try {
+        m = await ctx.client.post<Monitor>(`/tenants/${tid}/monitors`, body);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 400) {
+          const hint = duplicateMonitorHint(e.message);
+          if (hint) throw new ApiError(e.status, e.message, e.path, hint);
+        }
+        throw e;
+      }
       printMutation(program, m as unknown as Record<string, unknown>, `✓ monitor created: ${m.id}`);
     });
 
@@ -199,7 +227,9 @@ export function registerMonitors(program: Command): void {
     g
       .command("rm <id>")
       .description("delete a monitor")
-      .action(async (id: string) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (id: string, opts: { yes?: boolean }) => {
+        await confirmOrExit(`delete monitor ${id}? [y/N]: `, opts.yes);
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         await ctx.client.del<void>(`/tenants/${tid}/monitors/${id}`);

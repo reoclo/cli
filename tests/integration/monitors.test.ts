@@ -43,7 +43,7 @@ test("monitors create → ls → get → pause → resume → rm", async () => {
   const resumed = await $`bun run src/index.ts monitors resume ${id}`.env(env()).quiet();
   expect(resumed.stdout.toString()).toContain("✓ monitor resumed:");
 
-  const removed = await $`bun run src/index.ts monitors rm ${id}`.env(env()).quiet();
+  const removed = await $`bun run src/index.ts monitors rm ${id} --yes`.env(env()).quiet();
   expect(removed.stdout.toString()).toContain("✓ monitor removed:");
 });
 
@@ -59,4 +59,17 @@ test("monitors create → update → get reflects changes", async () => {
 
   const got = await $`bun run src/index.ts monitors get ${id}`.env(env()).quiet();
   expect(got.stdout.toString()).toContain("updated-name");
+});
+
+test("monitors rm without --yes aborts when stdin is not a terminal, and deletes nothing", async () => {
+  const created = await $`bun run src/index.ts monitors create --name keep --url https://example.com`
+    .env(env()).quiet();
+  const id = created.stdout.toString().trim().split(": ")[1]!;
+
+  const r = await $`bun run src/index.ts monitors rm ${id}`.env(env()).nothrow().quiet();
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr.toString()).toContain("aborted (pass --yes to confirm non-interactively)");
+
+  const got = await $`bun run src/index.ts monitors get ${id}`.env(env()).quiet();
+  expect(got.stdout.toString()).toContain("keep");
 });

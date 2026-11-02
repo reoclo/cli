@@ -1,5 +1,6 @@
 // src/commands/profile.ts
 import type { Command } from "commander";
+import { confirmOrExit } from "../ui/prompt";
 import { loadConfig, deleteProfile, setActiveProfile, type ProfileRecord } from "../config/store";
 import { withCompletion } from "../client/command-meta";
 import { resolveProfileName } from "../config/profile-resolve";
@@ -133,7 +134,9 @@ export function registerProfile(program: Command): void {
     g
       .command("rm <name>")
       .description("remove a profile")
-      .action(async (name: string) => {
+      .option("--yes", "skip confirmation prompt")
+      .action(async (name: string, opts: { yes?: boolean }) => {
+        await confirmOrExit(`remove profile ${name}? [y/N]: `, opts.yes);
         await deleteProfile(name);
         console.log(`✓ removed: ${name}`);
       }),

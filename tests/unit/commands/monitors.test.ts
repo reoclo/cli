@@ -6,6 +6,7 @@ import {
   parseMethod,
   parseHeaderFlag,
   buildMonitorBody,
+  duplicateMonitorHint,
 } from "../../../src/commands/monitors";
 
 function monitorsCmd(): Command {
@@ -134,5 +135,33 @@ describe("buildMonitorBody", () => {
 
   test("empty opts → empty body", () => {
     expect(buildMonitorBody({})).toEqual({});
+  });
+});
+
+describe("duplicateMonitorHint", () => {
+  test("points at monitors update with the extracted id", () => {
+    const hint = duplicateMonitorHint(
+      "A monitor for this URL already exists: api (active, id 5f1c0d2e-1111-2222-3333-444455556666)",
+    );
+    expect(hint).toBe("Update it with `reoclo monitors update 5f1c0d2e-1111-2222-3333-444455556666`");
+  });
+
+  test("a paused monitor is resumed instead", () => {
+    const hint = duplicateMonitorHint(
+      "A monitor for this URL already exists: api (paused, id abc123)",
+    );
+    expect(hint).toBe("It is paused. Resume it with `reoclo monitors resume abc123`");
+  });
+
+  test("a name with parentheses still parses", () => {
+    const hint = duplicateMonitorHint(
+      "A monitor for this URL already exists: api (eu) (active, id abc123)",
+    );
+    expect(hint).toContain("monitors update abc123");
+  });
+
+  test("other 400s get no hint", () => {
+    expect(duplicateMonitorHint("url must be http or https")).toBeNull();
+    expect(duplicateMonitorHint("A monitor for this URL already exists: api")).toBeNull();
   });
 });

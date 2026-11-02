@@ -31,6 +31,21 @@ export async function promptYesNo(question: string): Promise<boolean> {
   });
 }
 
+/** True when the action may go ahead: `--yes` was passed, or the user answered
+ *  yes on the TTY. Without a TTY and without `--yes` it is false, never a hang. */
+export async function confirmAction(question: string, yes?: boolean): Promise<boolean> {
+  if (yes) return true;
+  return promptYesNo(question);
+}
+
+/** Gate a destructive command: returns when confirmed, otherwise prints the
+ *  standard abort message and exits 1. */
+export async function confirmOrExit(question: string, yes?: boolean): Promise<void> {
+  if (await confirmAction(question, yes)) return;
+  process.stderr.write("aborted (pass --yes to confirm non-interactively)\n");
+  process.exit(1);
+}
+
 /** Present a numbered menu and return the chosen 0-based index. Returns
  *  `defaultIndex` immediately when stdin is not a TTY. `labels` is rendered
  *  1-based; the default option is marked. */
