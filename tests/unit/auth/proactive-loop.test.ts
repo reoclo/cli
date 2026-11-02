@@ -40,6 +40,30 @@ test("startTokenRefreshLoop refreshes at expiry-skew and re-arms from the new ex
   stop();
 });
 
+test("startTokenRefreshLoop reads the next expiry for the token it just received", async () => {
+  // An --org token is never stored, so its expiry can only come from the token.
+  const timers: Array<() => void> = [];
+  const askedFor: string[] = [];
+  const stop = startTokenRefreshLoop({
+    refresh: () => Promise.resolve("tok-1"),
+    onToken: () => {},
+    getExpiresAt: (token) => {
+      askedFor.push(token);
+      return Promise.resolve(undefined);
+    },
+    initialToken: "tok-0",
+    initialExpiresAt: undefined,
+    skewMs: 120_000,
+    now: () => 0,
+    setTimer: (fn) => { timers.push(fn); return timers.length - 1; },
+    clearTimer: () => {},
+  });
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  await timers[0]!();
+  expect(askedFor).toEqual(["tok-1"]);
+  stop();
+});
+
 test("startTokenRefreshLoop refreshes with the rotated token on cycle 2, not the frozen initial token (regression)", async () => {
   // Guards the fix: the loop now tracks the current token internally (seeded
   // from initialToken, updated on each successful refresh) instead of asking

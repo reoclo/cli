@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { loadConfig, saveProfile } from "../config/store";
-import { resolveStore } from "../config/token-store";
+import { loadConfig, saveProfile, type ProfileRecord } from "../config/store";
+import { storeForProfile } from "../config/token-store";
 import { cacheDir } from "../config/paths";
 import { withFileLock } from "../config/file-lock";
 import { refreshSession, singleFlightRefresh } from "../auth/refresh";
@@ -12,7 +12,8 @@ import { resolveProfileName } from "../config/profile-resolve";
 import { resolveOrgOverride, orgSelectionError } from "../config/org-resolve";
 import { projectOrgFor, readProjectConfig } from "../config/project-config";
 import { setActiveOrg } from "../completion/cache";
-import { mintTenantSwitchToken } from "../auth/tenant-switch";
+import { mintTenantSwitchToken, orgSwitchRefresh } from "../auth/tenant-switch";
+import { jwtExpiresAt } from "../auth/renew";
 import { applyProactiveRefresh, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { EXIT } from "./exit-codes";
 import type { Me } from "./types";
@@ -68,13 +69,18 @@ export interface ResolvedContext {
    * login-org fallback for OAuth profiles.
    */
   authKind?: "oauth" | "api-key";
-  /** Profile access-token expiry (ISO), when known: used by the MCP server to
-   *  schedule proactive refreshes. */
+  /** Expiry (ISO) of {@link token}, when known: used by the MCP server and
+   *  tunnels to schedule proactive refreshes. */
   accessTokenExpiresAt?: string;
-  /** Refresh the PROFILE token (single-flight + locked + persisted), returning
-   *  the fresh token or null on a transient failure. Absent for non-OAuth
-   *  credentials and when an org-override token was minted (that token is fresh
-   *  and must not be refreshed back to the profile's org). */
+  /** True when {@link token} was minted for an org override (tenant_switch).
+   *  It is held in memory only, so its expiry comes from the token itself,
+   *  never from the stored profile. */
+  orgSwitched?: boolean;
+  /** Renew {@link token}, returning the fresh token or null on a transient
+   *  failure. For a profile token this refreshes it (single-flight + locked +
+   *  persisted). For an org-override token it mints a new one for the same org
+   *  from a live profile token, so the client never falls back to the login
+   *  org. Absent for non-OAuth credentials. */
   refresh?: (currentToken: string) => Promise<string | null>;
 }
 
@@ -94,6 +100,18 @@ export function defaultStreamsUrl(apiUrl: string): string {
   const trimmed = apiUrl.replace(/\/$/, "");
   if (trimmed === PROD_API_URL) return PROD_STREAMS_URL;
   return trimmed;
+}
+
+/** A saved profile's access token, read from where its login stored it. */
+async function storedAccessToken(
+  profileName: string,
+  profile: ProfileRecord,
+): Promise<string | undefined> {
+  if (profile.token_ref?.startsWith("keyring:")) {
+    const store = await storeForProfile(profile, profileName);
+    return (await store.get(profileName)) ?? undefined;
+  }
+  return profile.token ?? undefined;
 }
 
 /**
@@ -267,12 +285,70 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   } else if (envAuto) {
     token = envAuto;
   } else if (profile) {
-    if (profile.token_ref?.startsWith("keyring:")) {
-      const store = await resolveStore();
-      token = (await store.get(profileName)) ?? undefined;
-    } else {
-      token = profile.token ?? undefined;
-    }
+    token = await storedAccessToken(profileName, profile);
+  }
+
+  // Build the OAuth refresh callback up front so it's available to BOTH the
+  // org-override probe below and the final client. It refreshes + persists the
+  // PROFILE's token; the final client only attaches it when we haven't minted a
+  // separate org-override token (see orgRefreshCallback).
+  //
+  // profileRefreshCallback refreshes the PROFILE's OAuth token, so it must be
+  // suppressed when a --token / automation key / machine token is the
+  // credential actually in use (they outrank the profile token in the
+  // precedence chain above). Otherwise the proactive or reactive refresh would
+  // swap in an ambient profile's token behind the caller's back: wrong
+  // credential, possibly a different tenant.
+  let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
+  if (
+    !flagToken &&
+    !envCredential &&
+    profile?.auth_kind === "oauth" &&
+    (profile.refresh_token_ref || profile.refresh_token)
+  ) {
+    const capturedProfileName = profileName;
+    const capturedProfile = profile;
+    const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
+    // Refresh is serialized cross-process (file lock) and in-process
+    // (single-flight) so concurrent agents/commands never both spend a rotating
+    // refresh token. refreshSession resolves the key, persists rotated tokens,
+    // returns null on transient failures, and throws ReauthRequiredError when a
+    // re-login is genuinely required (which HttpClient surfaces to the user).
+    profileRefreshCallback = (failedToken: string): Promise<string | null> =>
+      singleFlightRefresh(capturedProfileName, async () => {
+        const store = await storeForProfile(capturedProfile, capturedProfileName);
+        return refreshSession({
+          store,
+          profileName: capturedProfileName,
+          refreshTokenRef: capturedProfile.refresh_token_ref ?? undefined,
+          failedToken,
+          authUrl: capturedProfile.oauth_auth_url ?? defaultAuthUrl(),
+          clientId: capturedProfile.oauth_client_id ?? "reoclo-cli",
+          tenantId: capturedProfile.tenant_id,
+          refreshFn: refreshAccessToken,
+          withLock: (fn) => withFileLock(lockPath, fn),
+          onExpiry: async (expiresAt) => {
+            const updatedCfg = await loadConfig();
+            const existingProfile = updatedCfg.profiles[capturedProfileName];
+            if (existingProfile) {
+              await saveProfile(capturedProfileName, {
+                ...existingProfile,
+                access_token_expires_at: expiresAt,
+              });
+            }
+          },
+        });
+      });
+  }
+
+  // The access token can be gone while the refresh token survives (its keyring
+  // entry deleted on its own). Recover with the refresh token instead of asking
+  // for a new login; a missing refresh token throws ReauthRequiredError. This
+  // runs under networkFree too: without a token there is nothing to classify.
+  let recoveredByRefresh = false;
+  if (!token && profileRefreshCallback) {
+    token = (await profileRefreshCallback("")) ?? undefined;
+    recoveredByRefresh = token !== undefined;
   }
 
   if (!token) {
@@ -314,54 +390,6 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     profileEndpoints?.streams_url ??
     defaultStreamsUrl(api);
 
-  // Build the OAuth refresh callback up front so it's available to BOTH the
-  // org-override probe below and the final client. It refreshes + persists the
-  // PROFILE's token; the final client only attaches it when we haven't minted a
-  // separate org-override token (see suppressRefresh).
-  //
-  // profileRefreshCallback refreshes the PROFILE's OAuth token, so it must be
-  // suppressed when a --token / automation key / machine token is the
-  // credential actually in use (they outrank the profile token in the
-  // precedence chain above). Otherwise the proactive or reactive refresh would
-  // swap in an ambient profile's token behind the caller's back: wrong
-  // credential, possibly a different tenant.
-  let profileRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
-  if (!flagToken && !envCredential && profile?.auth_kind === "oauth" && profile.refresh_token_ref) {
-    const capturedProfileName = profileName;
-    const capturedProfile = profile;
-    const lockPath = join(cacheDir(), "locks", `${capturedProfileName}.refresh.lock`);
-    // Refresh is serialized cross-process (file lock) and in-process
-    // (single-flight) so concurrent agents/commands never both spend a rotating
-    // refresh token. refreshSession resolves the key, persists rotated tokens,
-    // returns null on transient failures, and throws ReauthRequiredError when a
-    // re-login is genuinely required (which HttpClient surfaces to the user).
-    profileRefreshCallback = (failedToken: string): Promise<string | null> =>
-      singleFlightRefresh(capturedProfileName, async () => {
-        const store = await resolveStore();
-        return refreshSession({
-          store,
-          profileName: capturedProfileName,
-          refreshTokenRef: capturedProfile.refresh_token_ref ?? undefined,
-          failedToken,
-          authUrl: capturedProfile.oauth_auth_url ?? defaultAuthUrl(),
-          clientId: capturedProfile.oauth_client_id ?? "reoclo-cli",
-          tenantId: capturedProfile.tenant_id,
-          refreshFn: refreshAccessToken,
-          withLock: (fn) => withFileLock(lockPath, fn),
-          onExpiry: async (expiresAt) => {
-            const updatedCfg = await loadConfig();
-            const existingProfile = updatedCfg.profiles[capturedProfileName];
-            if (existingProfile) {
-              await saveProfile(capturedProfileName, {
-                ...existingProfile,
-                access_token_expires_at: expiresAt,
-              });
-            }
-          },
-        });
-      });
-  }
-
   // Per-invocation organization override (`--org` / $REOCLO_ORG / `.reoclo`).
   // Resolves the target org slug -> tenant_id via /auth/me, then mints a token
   // scoped to it through the OAuth tenant_switch grant — in-memory only, never
@@ -379,14 +407,15 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       ? profile.tenant_id
       : undefined;
   let effectiveToken = token;
-  let suppressRefresh = false;
+  let orgSwitched = false;
+  let orgRefreshCallback: ((failedToken: string) => Promise<string | null>) | undefined;
 
   // Proactive refresh: refresh the profile token BEFORE issuing any request (the
   // org-override probe or the final client) when it's within the skew of
   // expiry, so a long-idle session doesn't eat a 401 round-trip. Reuses the
   // profile's single-flight + locked refresh (never double-spends the rotating
   // token).
-  if (!opts.networkFree) {
+  if (!opts.networkFree && !recoveredByRefresh) {
     token = await applyProactiveRefresh(
       token, profile?.access_token_expires_at, profileRefreshCallback, Date.now(), PROACTIVE_SKEW_MS,
     );
@@ -473,15 +502,35 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
       // Only mint a fresh token when actually crossing org boundaries — a
       // tenant_switch back to the profile's own org is unnecessary.
       if (target.tenant_id !== profile.tenant_id) {
-        effectiveToken = await mintTenantSwitchToken({
-          authUrl: profile.oauth_auth_url ?? defaultAuthUrl(),
-          clientId: profile.oauth_client_id ?? "reoclo-cli",
-          currentAccessToken: token,
-          tenantId: target.tenant_id,
-        });
-        // The minted token is fresh and bound to the override org; a 401-driven
-        // refresh would re-bind to the profile's default org, so suppress it.
-        suppressRefresh = true;
+        const targetTenantId = target.tenant_id;
+        const mint = (profileToken: string): Promise<string> =>
+          mintTenantSwitchToken({
+            authUrl: profile.oauth_auth_url ?? defaultAuthUrl(),
+            clientId: profile.oauth_client_id ?? "reoclo-cli",
+            currentAccessToken: profileToken,
+            tenantId: targetTenantId,
+          });
+        effectiveToken = await mint(token);
+        orgSwitched = true;
+        // The minted token is bound to the override org and comes with no
+        // refresh token. The profile's own refresh would re-bind the client to
+        // the login org, so renewing means minting again from a live profile
+        // token. Without this, MCP servers, tunnels and long commands under
+        // --org failed with 401 once the minted token's hour ran out.
+        if (profileRefreshCallback) {
+          const renew = orgSwitchRefresh({
+            readProfileToken: async () => {
+              const stored = (await loadConfig()).profiles[profileName];
+              return stored ? storedAccessToken(profileName, stored) : undefined;
+            },
+            readProfileExpiresAt: async () =>
+              (await loadConfig()).profiles[profileName]?.access_token_expires_at,
+            refreshProfile: profileRefreshCallback,
+            mint,
+          });
+          orgRefreshCallback = (failedToken: string): Promise<string | null> =>
+            singleFlightRefresh(`${profileName}@${targetTenantId}`, () => renew(failedToken));
+        }
       }
     }
   } else if (orgOverride && profile && !flagToken) {
@@ -498,11 +547,12 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // env credential moves to its own org once requireTenantId() resolves it.
   setActiveOrg(profileName, orgOverride);
 
+  const refresh = orgSwitched ? orgRefreshCallback : profileRefreshCallback;
   const client = new HttpClient({
     baseUrl: api,
     token: effectiveToken,
     profile: envCredential ? undefined : profileName,
-    refreshToken: suppressRefresh ? undefined : profileRefreshCallback,
+    refreshToken: refresh,
     mcpSource: opts.mcpSource,
   });
 
@@ -516,7 +566,10 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
     tenantId,
     orgSlug: orgOverride,
     authKind,
-    accessTokenExpiresAt: profile?.access_token_expires_at,
-    refresh: suppressRefresh ? undefined : profileRefreshCallback,
+    accessTokenExpiresAt: orgSwitched
+      ? jwtExpiresAt(effectiveToken)
+      : profile?.access_token_expires_at,
+    orgSwitched,
+    refresh,
   };
 }
