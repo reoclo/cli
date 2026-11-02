@@ -3,7 +3,7 @@ import net from "node:net";
 import dgram from "node:dgram";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
-import { TunnelSession } from "../../../src/client/tunnel-session";
+import { TunnelSession, TUNNEL_DATA_CHUNK_BYTES } from "../../../src/client/tunnel-session";
 
 interface MockGateway {
   url: string;
@@ -779,6 +779,120 @@ describe("TunnelSession — fatal close codes", () => {
 
     await session.stop();
     await gw.stop();
+  });
+});
+
+describe("TunnelSession — frame size and quota", () => {
+  function statusWaiter() {
+    const statuses: { s: string; reason?: string }[] = [];
+    const waiters: { s: string; resolve: () => void }[] = [];
+    return {
+      statuses,
+      onStatus: (s: string, reason?: string) => {
+        statuses.push({ s, reason });
+        for (const w of waiters.filter((x) => x.s === s)) w.resolve();
+      },
+      next: (s: string) =>
+        statuses.some((x) => x.s === s)
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => waiters.push({ s, resolve })),
+    };
+  }
+
+  it("splits a large local upload into tunnel_data frames of at most TUNNEL_DATA_CHUNK_BYTES", async () => {
+    const gw = await startMockGateway();
+    const upload = Buffer.alloc(2 * 1024 * 1024);
+    for (let i = 0; i < upload.length; i++) upload[i] = i % 251;
+    const parts: Buffer[] = [];
+    let total = 0;
+    const allArrived = new Promise<void>((resolve) => {
+      gw.onClientFrame = (msg) => {
+        if (msg.type !== "tunnel_data") return;
+        const part = Buffer.from(msg.data as string, "base64");
+        parts.push(part);
+        total += part.length;
+        if (total === upload.length) resolve();
+      };
+    });
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+    });
+    const ready = await session.start();
+    const client = net.connect(ready.forwards[0]!.boundPort, "127.0.0.1");
+    await new Promise((r) => client.once("connect", r));
+    client.write(upload);
+    await allArrived;
+
+    expect(Math.max(...parts.map((p) => p.length))).toBeLessThanOrEqual(TUNNEL_DATA_CHUNK_BYTES);
+    expect(Buffer.concat(parts).equals(upload)).toBe(true);
+
+    client.destroy();
+    await session.stop();
+    await gw.stop();
+  });
+
+  it("treats 4429 (tunnel quota) as fatal, with a hint, and never reconnects", async () => {
+    const gw = await startMockGateway();
+    const w = statusWaiter();
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+      reconnectDeadlineMs: 30_000,
+      onStatus: w.onStatus,
+    });
+    await session.start();
+
+    gw.closeActiveConnection(4429, "max concurrent tunnels per user reached (4)");
+    await w.next("failed");
+
+    const failed = w.statuses.find((x) => x.s === "failed")!;
+    expect(failed.reason).toContain("max concurrent tunnels per user reached (4)");
+    expect(failed.reason).toContain("reoclo tunnel ls");
+    expect(w.statuses.some((x) => x.s === "reconnecting")).toBe(false);
+    expect(gw.upgradeHeaders.length).toBe(1);
+
+    await session.stop();
+    await gw.stop();
+  });
+
+  it("names the largest data frame and its stream when the gateway closes with 1009", async () => {
+    const gw = await startMockGateway();
+    const w = statusWaiter();
+    const firstData = new Promise<string>((resolve) => {
+      gw.onClientFrame = (msg) => {
+        if (msg.type === "tunnel_data") resolve(msg.stream_id as string);
+      };
+    });
+    const stderr = spyOn(process.stderr, "write").mockImplementation(() => true);
+    const session = new TunnelSession({
+      gatewayUrl: gw.url,
+      token: "test",
+      forwards: [{ localBind: "127.0.0.1", localPort: 0, remoteHost: "x", remotePort: 1, proto: "tcp" }],
+      reconnectDeadlineMs: 30_000,
+      onStatus: w.onStatus,
+    });
+    try {
+      const ready = await session.start();
+      const client = net.connect(ready.forwards[0]!.boundPort, "127.0.0.1");
+      await new Promise((r) => client.once("connect", r));
+      client.write(Buffer.alloc(1000, 1));
+      const streamId = await firstData;
+
+      gw.closeActiveConnection(1009, "message too big");
+      await w.next("reconnecting");
+
+      const logged = stderr.mock.calls.map((c) => String(c[0])).join("");
+      expect(logged).toContain("(1009)");
+      expect(logged).toContain(`1000 bytes on stream ${streamId}`);
+      client.destroy();
+    } finally {
+      stderr.mockRestore();
+      await session.stop();
+      await gw.stop();
+    }
   });
 });
 

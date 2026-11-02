@@ -34,7 +34,24 @@ export type SessionStatus = "connecting" | "active" | "reconnecting" | "closed" 
  *  4502 — runner connection failed (runner offline/unreachable)
  *  4503 — service unavailable (gateway can't serve this tenant right now)
  */
-const FATAL_CLOSE_CODES = new Set<number>([4401, 4403, 4404, 4410, 4501, 4502, 4503]);
+const FATAL_CLOSE_CODES = new Set<number>([4401, 4403, 4404, 4410, 4429, 4501, 4502, 4503]);
+
+/** 4429: the per-user or per-tenant concurrent tunnel limit is reached.
+ *  Retrying cannot free a slot, it only hammers the gateway in a tight loop,
+ *  so it is fatal (in FATAL_CLOSE_CODES) with a hint on how to free one. */
+const CLOSE_QUOTA = 4429;
+
+/** RFC 6455 1009: a frame exceeded the peer's maximum message size. */
+const CLOSE_MESSAGE_TOO_BIG = 1009;
+
+/**
+ * Largest stream payload carried in one tunnel_data frame. Local sockets can
+ * hand us far bigger reads (Bun delivers a whole request body at once), and
+ * the gateway caps a single WebSocket message, so a big upload sent as one
+ * frame closed the whole tunnel with 1009 and reset every stream on it.
+ * base64 adds a third, so 64 KiB of payload is about 87 KiB on the wire.
+ */
+export const TUNNEL_DATA_CHUNK_BYTES = 64 * 1024;
 
 export interface ReverseSpec {
   remoteBind: "127.0.0.1" | "0.0.0.0"; // server-side bind address
@@ -330,6 +347,28 @@ export class TunnelSession {
     }
   }
 
+  /** Send TCP stream bytes as frames of at most TUNNEL_DATA_CHUNK_BYTES each.
+   *  Frames on one WebSocket arrive in order, so the runner reassembles the
+   *  byte stream by writing them as they come. Not for UDP: a datagram must
+   *  stay one frame. */
+  private sendStreamData(streamId: string, buf: Buffer): void {
+    for (let off = 0; off < buf.length; off += TUNNEL_DATA_CHUNK_BYTES) {
+      const chunk = buf.subarray(off, off + TUNNEL_DATA_CHUNK_BYTES);
+      this.noteDataFrame(streamId, chunk.length);
+      this.send({ type: "tunnel_data", stream_id: streamId, data: chunk.toString("base64") });
+    }
+  }
+
+  /** Remember the biggest data frame sent on the current WebSocket, so a 1009
+   *  close can name the stream and size that caused it. */
+  private largestDataFrame: { streamId: string; bytes: number } | null = null;
+
+  private noteDataFrame(streamId: string, bytes: number): void {
+    if (!this.largestDataFrame || bytes > this.largestDataFrame.bytes) {
+      this.largestDataFrame = { streamId, bytes };
+    }
+  }
+
   private addListenWaiter(listenId: string, fn: (msg: Record<string, unknown>) => void): void {
     this.listenWaiters.set(listenId, fn);
   }
@@ -443,12 +482,28 @@ export class TunnelSession {
       for (const s of this.udpListeners) s.close();
       this.tcpListeners = [];
       this.udpListeners = [];
+      if (code === CLOSE_QUOTA) {
+        this.status(
+          "failed",
+          `${reason ?? "too many concurrent tunnels"}. Run \`reoclo tunnel ls\` to see open tunnels and \`reoclo tunnel close <id>\` to free one.`,
+        );
+        return;
+      }
       this.status("failed", reason ?? `connection closed (code ${code})`);
       return;
     }
 
     // Record the start of the first consecutive disconnect only
     if (this.reconnectStartedAt === null) this.reconnectStartedAt = Date.now();
+    if (code === CLOSE_MESSAGE_TOO_BIG) {
+      const big = this.largestDataFrame;
+      process.stderr.write(
+        `tunnel: the gateway closed the connection because a message was too big (1009)${
+          big ? `; largest data frame sent was ${big.bytes} bytes on stream ${big.streamId}` : ""
+        }\n`,
+      );
+    }
+    this.largestDataFrame = null;
     this.status("reconnecting", code !== undefined ? `${code}${reason ? ` ${reason}` : ""}` : undefined);
     this.scheduleReconnect();
   }
@@ -545,7 +600,7 @@ export class TunnelSession {
       port: f.remotePort,
     });
     sock.on("data", (buf: Buffer) => {
-      this.send({ type: "tunnel_data", stream_id: streamId, data: buf.toString("base64") });
+      this.sendStreamData(streamId, buf);
     });
     sock.on("close", () => {
       if (this.streams.delete(streamId)) {
@@ -686,8 +741,8 @@ export class TunnelSession {
         if (spec.proto === "tcp") {
           const sock = net.createConnection({ host: spec.localHost, port: spec.localPort });
           this.streams.set(sid, { proto: "tcp", sock });
-          sock.on("data", (buf) => {
-            this.send({ type: "tunnel_data", stream_id: sid, data: buf.toString("base64") });
+          sock.on("data", (buf: Buffer) => {
+            this.sendStreamData(sid, buf);
           });
           sock.on("close", () => {
             if (this.streams.delete(sid)) {
