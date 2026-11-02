@@ -2,21 +2,24 @@
 //
 // `reoclo init` — bootstrap reoclo into a project in one command: link the
 // directory to an organization (writes `.reoclo`, consumed by bootstrap()'s
-// org-override seam), install the reoclo agent skills for the developer's agent
-// harness(es) (canonical `.agents/skills/` + a Claude Code symlink), and
-// optionally register the reoclo MCP server in `.mcp.json`. Auth is required
-// (run `reoclo login` first); the org to bind comes from the global `--org` flag
-// or an interactive picker over the OAuth-granted orgs.
+// org-override seam), and optionally register the reoclo MCP server in
+// `.mcp.json`. Auth is required (run `reoclo login` first); the org to bind
+// comes from the global `--org` flag or an interactive picker over the
+// OAuth-granted orgs.
+//
+// init no longer installs agent skills: the MCP server serves them as guides
+// (src/mcp/tools/guides.ts), and `reoclo skills install` still installs copies
+// on request. The old skills flags stay accepted, hidden, so existing scripts
+// keep working.
 
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootstrap } from "../client/bootstrap";
 import type { Me, OrgMembership } from "../client/types";
 import { loadConfig } from "../config/store";
 import { PROJECT_CONFIG_VERSION } from "../config/project-config";
-import { HARNESSES, type HarnessId, type Scope } from "../init/harness";
-import { runSkillsInstall } from "../init/flow";
+import { HARNESSES, type HarnessId } from "../init/harness";
 import { mergeMcpServer } from "../init/mcp";
 import { confirmPrompt, isInteractive, selectPrompt } from "../ui/interactive";
 
@@ -31,16 +34,6 @@ interface InitOpts {
   yes?: boolean;
 }
 
-/** The `skills` block recorded in `.reoclo` after an install: which ref/sha, when,
- *  which harness `targets` were installed for, and the install `scope`. */
-export interface SkillsMeta {
-  ref: string;
-  sha?: string;
-  installed_at?: string;
-  targets?: string[];
-  scope?: Scope;
-}
-
 /**
  * Build the `.reoclo` binding to write. An org slug is only meaningful relative
  * to its backend, so when the org was resolved under a NON-active profile (e.g.
@@ -48,26 +41,20 @@ export interface SkillsMeta {
  * binding silently re-resolves the slug against the active profile later (and
  * slugs like "platform" can collide across staging/prod). On the active profile
  * we write only `org`, so the project still floats with the active profile.
- * Every binding also records the `.reoclo` schema `version`, and (when skills
- * were installed) the `skills` block (ref/sha/installed_at plus the harness
- * `targets` and `scope`) so a later `init` or `doctor` can tell whether the
- * installed skills are stale and re-sync the same destinations.
+ * Every binding also records the `.reoclo` schema `version`.
  */
 export function buildProjectBinding(opts: {
   org: string;
   profileName: string;
   activeProfile: string;
-  skills?: SkillsMeta;
 }): {
   profile?: string;
   org: string;
   version: number;
-  skills?: SkillsMeta;
 } {
-  const base = opts.profileName === opts.activeProfile
+  return opts.profileName === opts.activeProfile
     ? { org: opts.org, version: PROJECT_CONFIG_VERSION }
     : { profile: opts.profileName, org: opts.org, version: PROJECT_CONFIG_VERSION };
-  return opts.skills ? { ...base, skills: opts.skills } : base;
 }
 
 /**
@@ -155,13 +142,13 @@ export function resolveInitOrgFlag(
 export function registerInit(program: Command): void {
   program
     .command("init")
-    .description("link this project to an organization and install reoclo skills")
+    .description("link this project to an organization")
     .option("--org <slug>", "organization to link (skips the interactive picker)")
-    .option("--skills <list>", "comma-separated skills to install (default: all)")
-    .option("--no-skills", "skip installing skills")
-    .option("--harness <list>", "comma-separated agent harnesses to install skills for (e.g. claude,codex)")
-    .option("--global", "install skills for all projects (~/.agents/skills)")
-    .option("--project", "install skills for this project only (default)")
+    .addOption(new Option("--skills <list>").hideHelp())
+    .addOption(new Option("--no-skills").hideHelp())
+    .addOption(new Option("--harness <list>").hideHelp())
+    .addOption(new Option("--global").hideHelp())
+    .addOption(new Option("--project").hideHelp())
     .option("--mcp", "register the reoclo MCP server in .mcp.json")
     .option("--force", "overwrite an existing .reoclo without asking")
     .option("-y, --yes", "assume yes for prompts (non-interactive)")
@@ -192,43 +179,22 @@ export function registerInit(program: Command): void {
           selectPrompt("Which organization should this project use?", options, initial),
       });
 
-      // 1. Install skills first, so the installed head SHA is known by the time
-      // the `.reoclo` binding is written below. The flow is harness-aware and
-      // confirm-gated (shared with `reoclo skills install` via runSkillsInstall):
-      // it asks whether to install, for which scope, and which agent harness(es).
-      // Under -y or a non-TTY every prompt no-ops to a safe default (install,
-      // project scope, the detected harnesses) so scripted and CI runs never
-      // block. Explicit flags always win over a prompt.
-      const assumeYes = opts.yes === true;
-      const flagHarness = parseHarnessOption(opts.harness);
-      const { skip, requested } = parseSkillsOption(opts.skills);
-      let skillsMeta: SkillsMeta | undefined;
-      if (skip) {
-        process.stdout.write("• skipped skills (--no-skills)\n");
-      } else {
-        const outcome = await runSkillsInstall({
-          assumeYes,
-          flagHarness,
-          global: opts.global,
-          project: opts.project,
-          requested,
-        });
-        if (outcome.kind === "installed") {
-          // sha may be undefined (best-effort GitHub lookup failed): the skills
-          // block is still written, just without a sha, so a later `doctor` sees
-          // "installed" rather than a false "up to date". `targets`/`scope` let a
-          // later re-sync target the same destinations.
-          skillsMeta = {
-            ref: "main",
-            sha: outcome.sha,
-            installed_at: new Date().toISOString(),
-            targets: outcome.selection,
-            scope: outcome.scope,
-          };
-        }
+      // The skills flags no longer install anything. Say where skills come
+      // from now when one asked for an install; `--no-skills` is already
+      // what happens, so it stays silent.
+      const askedForSkills =
+        typeof opts.skills === "string" ||
+        opts.harness !== undefined ||
+        opts.global === true ||
+        opts.project === true;
+      if (askedForSkills) {
+        process.stdout.write(
+          "• init no longer installs skills: the reoclo MCP server serves them as guides. " +
+            "Run 'reoclo skills install' for copies.\n",
+        );
       }
 
-      // 2. Write the `.reoclo` binding. Pin the profile when the org was
+      // 1. Write the `.reoclo` binding. Pin the profile when the org was
       // resolved under a non-active profile, so the slug doesn't silently
       // re-resolve against the active profile (and a different backend) later.
       const { active_profile: activeProfile } = await loadConfig();
@@ -236,7 +202,6 @@ export function registerInit(program: Command): void {
         org,
         profileName: ctx.profileName,
         activeProfile,
-        skills: skillsMeta,
       });
       const onProfile = binding.profile ? ` on profile '${binding.profile}'` : "";
       const reocloPath = join(process.cwd(), ".reoclo");
@@ -256,7 +221,7 @@ export function registerInit(program: Command): void {
         process.stdout.write(`✓ linked this project to '${org}'${onProfile} (.reoclo)\n`);
       }
 
-      // 3. Optionally register the reoclo MCP server.
+      // 2. Optionally register the reoclo MCP server.
       if (opts.mcp) {
         const mcpPath = join(process.cwd(), ".mcp.json");
         let existing: unknown = null;
@@ -269,6 +234,10 @@ export function registerInit(program: Command): void {
         }
         writeFileSync(mcpPath, `${JSON.stringify(mergeMcpServer(existing), null, 2)}\n`);
         process.stdout.write("✓ registered the reoclo MCP server in .mcp.json\n");
+      } else {
+        process.stdout.write(
+          "• agents read reoclo's guides from its MCP server: 'reoclo init --mcp' registers it in .mcp.json\n",
+        );
       }
 
       process.stdout.write(

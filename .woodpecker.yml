@@ -57,6 +57,21 @@ steps:
         fi
         echo "version-bump: OK ($base -> $new)"
 
+  # The MCP server serves the reoclo/skills text bundled in
+  # src/mcp/tools/guides-content.ts. Fail a PR whose bundle lags the skills
+  # repo's main, so every release carries the current guides. The script
+  # passes with a note when GitHub is unreachable.
+  - name: skills-drift
+    image: oven/bun:1.4.2-slim
+    when:
+      - event: pull_request
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends git ca-certificates
+      # The check needs js-yaml only; skip node-pty's native build.
+      - bun install --frozen-lockfile --ignore-scripts
+      - bun run skills:check
+
   # CI on pull requests + main pushes: the same gate the release runs (per-file
   # unit loop + typecheck + build), minus the publish scripts. Catches breakage
   # (e.g. a bash-ism in packaging/install.sh) before it reaches a release tag.

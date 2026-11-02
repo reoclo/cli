@@ -272,9 +272,8 @@ if (import.meta.main) {
     );
     if (enabled) maybeNotifyUpdate(VERSION);
 
-    // Project-config + skills advisories: at most one throttled stderr line
-    // each, both pointing at 'reoclo init' (it reinstalls skills by default,
-    // so there's no separate skills-only flag to suggest). Gated by the
+    // Project-config advisory: at most one throttled stderr line pointing at
+    // 'reoclo init'. Gated by the
     // same `enabled` predicate as the update notice above (never read .reoclo
     // under an ambient env credential — automation key or machine token —
     // matching bootstrap's CI/agent rule; a still-broken .reoclo — shouldn't
@@ -292,18 +291,15 @@ if (import.meta.main) {
       const cache = readUpdateCache();
       const adv = configAdvisories({
         projectConfig: pc,
-        latestSkillsSha: cache.skills_sha,
         now: Date.now(),
         throttleMs: NOTIFY_THROTTLE_MS,
         configNotifiedAt: cache.config_notified_at,
-        skillsNotifiedAt: cache.skills_notified_at,
       });
       for (const line of adv.lines) process.stderr.write(`${line}\n`);
       if (adv.lines.length > 0) {
         writeUpdateCache({
           ...readUpdateCache(),
           config_notified_at: adv.configNotifiedAt,
-          skills_notified_at: adv.skillsNotifiedAt,
         });
       }
     }
