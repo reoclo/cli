@@ -24,6 +24,9 @@ import { resolveRepo, resolveServer } from "../client/resolve";
 import { createStack, exitError, type CreateStackResult } from "../client/repo-deploy";
 import type { DeploymentCancelResult, Repository } from "../client/types";
 import { parseLimit } from "../util/parse-limit";
+import { badUsage } from "../util/parse-flag";
+import { parseSubmodules, withSubmodules } from "../util/submodules";
+import { groupPath, setSubmodules, setSubmodulesAfterCreate } from "../client/submodules";
 
 export interface GroupRead {
   id: string;
@@ -34,6 +37,7 @@ export interface GroupRead {
   repository_id?: string | null;
   deploy_branch?: string | null;
   auto_deploy?: boolean;
+  submodules?: string | null;
   compose_file_path?: string | null;
   application_count?: number;
   latest_deployment?: {
@@ -275,6 +279,7 @@ export interface StacksCreateFlags {
   composeFile?: string;
   branch?: string;
   name?: string;
+  submodules?: string;
   deploy?: boolean;
   wait?: boolean;
   waitTimeout: string;
@@ -289,6 +294,8 @@ export async function runStacksCreate(
   deps: WaitDeps = {},
 ): Promise<void> {
   if (flags.wait && !flags.deploy) throw exitError("--wait needs --deploy", EXIT.MISUSE);
+  const submodules =
+    flags.submodules === undefined ? undefined : parseSubmodules(flags.submodules);
   const io = deps.io ?? defaultIo;
   const created = await createStack(client, tid, {
     ...target,
@@ -296,6 +303,16 @@ export async function runStacksCreate(
     branch: flags.branch,
     name: flags.name,
   });
+  if (submodules !== undefined) {
+    const slug = created.response.group?.slug ?? created.groupId;
+    await setSubmodulesAfterCreate(
+      client,
+      groupPath(tid, created.groupId),
+      submodules,
+      `stack ${slug}`,
+      `reoclo stacks config set ${slug} --submodules ${submodules}`,
+    );
+  }
   const createdObject = created.response as unknown as Record<string, unknown>;
   const lines = stackCreatedLines(created);
   const deployOpts = { wait: flags.wait, waitTimeoutSeconds: Number(flags.waitTimeout), fmt };
@@ -443,6 +460,7 @@ export function registerGroups(program: Command): void {
     .option("--compose-file <path>", "compose file to deploy (needed when the repository has several)")
     .option("--branch <branch>", "branch to scan and deploy (default: the repository's default branch)")
     .option("--name <name>", "stack name (default: the repository name)")
+    .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive (default off)")
     .option("--deploy", "deploy the stack after creating it")
     .option("--wait", "wait for the deployment to finish (needs --deploy)")
     .option("--wait-timeout <seconds>", "give up waiting after this long (default 600)", "600")
@@ -453,6 +471,7 @@ export function registerGroups(program: Command): void {
         composeFile?: string;
         branch?: string;
         name?: string;
+        submodules?: string;
         deploy?: boolean;
         wait?: boolean;
         waitTimeout: string;
@@ -483,7 +502,27 @@ export function registerGroups(program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
-      printObject(group, fmt);
+      printObject(withSubmodules(group), fmt);
+    });
+
+  const configCmd = g.command("config").description("manage stack settings");
+
+  configCmd
+    .command("set <group>")
+    .description("update stack settings (id or slug)")
+    .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive")
+    .action(async (ref: string, opts: { submodules?: string }) => {
+      if (opts.submodules === undefined) {
+        const e = badUsage("no fields to update");
+        e.exitCode = 4;
+        throw e;
+      }
+      const submodules = parseSubmodules(opts.submodules);
+      const ctx = await bootstrap();
+      const tid = await requireTenantId(ctx);
+      const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
+      const updated = await setSubmodules(ctx.client, groupPath(tid, group.id), submodules);
+      printMutation(program, { ...updated, submodules }, `✓ stack updated: ${group.slug}`);
     });
 
   // No requireCapability: the endpoint needs the applications:delete

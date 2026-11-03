@@ -205,6 +205,25 @@ reoclo apps config set web --health-check tcp
 reoclo apps config set web --health-check none
 ```
 
+## Git submodules on deploy
+
+Deploys do not check out git submodules unless you ask. `--submodules` takes `off` (the default, and what a missing value means), `on` (top-level submodules) or `recursive` (submodules of submodules). Any other value exits 2 and lists the three.
+
+```bash
+# Turn it on for an app, or for a stack (a stack is a definition group)
+reoclo apps config set web --submodules recursive
+reoclo stacks config set my-stack --submodules on
+
+# Set it when creating, before the first deploy
+reoclo apps create --name web --server web1 --repo acme/web --submodules on --deploy
+reoclo stacks create --repo acme/web --server web1 --submodules recursive --deploy
+
+# Back to the default
+reoclo apps config set web --submodules off
+```
+
+`apps get`, `apps config get` and `stacks get` show the current value as `submodules`, `off` when the API returns none. The mode is saved with a PATCH of the application or the stack, apart from the build and deploy config, so `apps config set web --submodules on` alone does not touch the rest of the config. On create, the application or stack is created first and the mode set right after; if that second request fails, the error says what was created and which `config set` command finishes the job. `stacks config set` needs at least one field, so it exits 4 with `no fields to update` when `--submodules` is missing.
+
 ## Deploy a linked repository
 
 `reoclo up` deploys a repository that is linked to Reoclo. Run it in a checkout (it reads the `origin` remote) or pass `--repo owner/name`. It finds the stack or application that already deploys the repository and deploys it. On the first run it creates one, so `--server` is needed once. A repository with a compose file becomes a stack; a repository with a single Dockerfile becomes an application (`--service` picks one when there are several).

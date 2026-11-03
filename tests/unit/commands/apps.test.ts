@@ -105,3 +105,18 @@ describe("apps config set build placement flags", () => {
     }
   });
 });
+
+describe("--submodules flag (REO-576)", () => {
+  function longs(...path: string[]): string[] {
+    const program = new Command().name("reoclo");
+    registerApps(program);
+    let cmd = program.commands.find((c) => c.name() === "apps")!;
+    for (const name of path) cmd = cmd.commands.find((c) => c.name() === name)!;
+    return cmd.options.map((o) => o.long ?? "");
+  }
+
+  test("apps config set and apps create take --submodules", () => {
+    expect(longs("config", "set")).toContain("--submodules");
+    expect(longs("create")).toContain("--submodules");
+  });
+});

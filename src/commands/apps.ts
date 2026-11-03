@@ -24,6 +24,12 @@ import { cacheList } from "../completion/populate";
 import { parseSetFlags } from "../util/parse-set";
 import { assertPushTarget, parseBuildPlacement } from "../util/build-placement";
 import { parseHealthCheck } from "../util/health-check";
+import { parseSubmodules, withSubmodules } from "../util/submodules";
+import {
+  applicationPath,
+  setSubmodules,
+  setSubmodulesAfterCreate,
+} from "../client/submodules";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -59,6 +65,7 @@ export interface AppCreateFlags {
   /** commander sets this from --no-auto-deploy; true unless the flag is given. */
   autoDeploy: boolean;
   bind?: string[];
+  submodules?: string;
 }
 
 function misuse(message: string): Error & { exitCode: number } {
@@ -305,6 +312,7 @@ export function registerApps(program: Command): void {
     .option("--deploy-branch <branch>", "branch that deploys")
     .option("--require-ci", "deploy a push only after its CI checks pass")
     .option("--no-auto-deploy", "do not deploy on push")
+    .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive (default off)")
     .option(
       "--bind <project>",
       "bind a secret project by name or id (repeatable)",
@@ -327,11 +335,22 @@ export function registerApps(program: Command): void {
         if (!opts.deploy && (opts.wait || opts.ref !== undefined)) {
           throw misuse("--wait and --ref need --deploy");
         }
+        const submodules =
+          opts.submodules === undefined ? undefined : parseSubmodules(opts.submodules);
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const body = await buildAppCreateBody(ctx.client, tid, opts);
         const app = await ctx.client.post<Application>(`/tenants/${tid}/applications/`, body);
+        if (submodules !== undefined) {
+          await setSubmodulesAfterCreate(
+            ctx.client,
+            applicationPath(tid, app.id),
+            submodules,
+            `application ${app.slug}`,
+            `reoclo apps config set ${app.slug} --submodules ${submodules}`,
+          );
+        }
         if (!opts.deploy) {
           printMutation(
             program,
@@ -362,10 +381,10 @@ export function registerApps(program: Command): void {
           const { container_origin } = app;
           const rest: Record<string, unknown> = { ...(app as unknown as Record<string, unknown>) };
           delete rest["container_origin"];
-          printObject(rest, fmt);
+          printObject(withSubmodules(rest), fmt);
           if (container_origin) process.stdout.write(`Origin:  ${container_origin}\n`);
         } else {
-          printObject(app as unknown as Record<string, unknown>, fmt);
+          printObject(withSubmodules(app as unknown as Record<string, unknown>), fmt);
         }
       }),
     { args: [{ slot: 0, resource: "apps" }] },
@@ -494,7 +513,11 @@ export function registerApps(program: Command): void {
         const r = await ctx.client.get<Record<string, unknown>>(
           `/tenants/${tid}/applications/${aid}/config`,
         );
-        printObject(r, fmt);
+        if (r["submodules"] === undefined) {
+          const app = await ctx.client.get<Record<string, unknown>>(applicationPath(tid, aid));
+          r["submodules"] = app["submodules"];
+        }
+        printObject(withSubmodules(r), fmt);
       }),
     { args: [{ slot: 0, resource: "apps" }] },
   );
@@ -515,6 +538,7 @@ export function registerApps(program: Command): void {
         "--health-check <spec>",
         "health check: http:/path, tcp, command:<cmd> or none",
       )
+      .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive")
       .option(
         "--env <KEY=VAL>",
         "env var (repeatable)",
@@ -538,10 +562,13 @@ export function registerApps(program: Command): void {
             pushCredential?: string;
             pushRepository?: string;
             healthCheck?: string;
+            submodules?: string;
             env?: string[];
             set?: string[];
           },
         ) => {
+          const submodules =
+            opts.submodules === undefined ? undefined : parseSubmodules(opts.submodules);
           const ctx = await bootstrap();
           const tid = await requireTenantId(ctx);
           const aid = await resolveApp(ctx.client, tid, idOrSlug);
@@ -605,7 +632,7 @@ export function registerApps(program: Command): void {
             setPath(["deploy", "env"], merged);
           }
 
-          if (Object.keys(cfg).length === 0) {
+          if (Object.keys(cfg).length === 0 && submodules === undefined) {
             const e = new Error("no fields to update") as Error & { exitCode: number };
             e.exitCode = 4;
             throw e;
@@ -618,29 +645,39 @@ export function registerApps(program: Command): void {
           // the changes so a partial `--docker-image` / `--set` preserves
           // everything else.
           //
+          // Submodules are not part of the build/deploy slice: they go through the
+          // app's own PATCH, so a --submodules-only call skips the config round trip.
+          //
           // Also: the body is the ApplicationConfigUpdate shape ({build, deploy})
           // directly. It was previously wrapped in `{ config: cfg }`, which the
           // server ignored entirely — every `apps config set` reported success
           // while persisting nothing.
-          const current = await ctx.client.get<{
-            build?: Record<string, unknown>;
-            deploy?: Record<string, unknown>;
-          }>(`/tenants/${tid}/applications/${aid}/config`);
-          const merged = deepMerge(
-            { build: current.build ?? {}, deploy: current.deploy ?? {} },
-            cfg,
-          );
-          if (
-            opts.buildPlacement !== undefined ||
-            opts.pushCredential !== undefined ||
-            opts.pushRepository !== undefined
-          ) {
-            assertPushTarget(merged["build"]);
+          let r: Record<string, unknown> = {};
+          if (Object.keys(cfg).length > 0) {
+            const current = await ctx.client.get<{
+              build?: Record<string, unknown>;
+              deploy?: Record<string, unknown>;
+            }>(`/tenants/${tid}/applications/${aid}/config`);
+            const merged = deepMerge(
+              { build: current.build ?? {}, deploy: current.deploy ?? {} },
+              cfg,
+            );
+            if (
+              opts.buildPlacement !== undefined ||
+              opts.pushCredential !== undefined ||
+              opts.pushRepository !== undefined
+            ) {
+              assertPushTarget(merged["build"]);
+            }
+            r = await ctx.client.patch<Record<string, unknown>>(
+              `/tenants/${tid}/applications/${aid}/config`,
+              merged,
+            );
           }
-          const r = await ctx.client.patch<Record<string, unknown>>(
-            `/tenants/${tid}/applications/${aid}/config`,
-            merged,
-          );
+          if (submodules !== undefined) {
+            await setSubmodules(ctx.client, applicationPath(tid, aid), submodules);
+            r = { ...r, submodules };
+          }
           printMutation(program, r, `✓ config updated: ${aid}`);
         },
       ),

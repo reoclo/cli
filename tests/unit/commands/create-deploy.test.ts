@@ -245,3 +245,66 @@ describe("apps create --deploy", () => {
     expect(out.lines).toEqual([]);
   });
 });
+
+describe("runStacksCreate --submodules", () => {
+  const GROUP_PATH = `/tenants/${TID}/application-groups/g-1`;
+
+  test("patches the new stack once, before the deployment is triggered", async () => {
+    const api = stackApi("succeeded").on("PATCH", GROUP_PATH, { id: "g-1" });
+    const clock = new FakeClock();
+    await runStacksCreate(
+      api,
+      TID,
+      TARGET,
+      { submodules: "recursive", deploy: true, wait: true, waitTimeout: "600" },
+      "text",
+      { io: collectIo().io, sleep: clock.sleep, now: clock.now },
+    );
+    expect(api.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+      `POST ${SCAN_PATH}`,
+      `POST ${WIZARD_PATH}`,
+      `PATCH ${GROUP_PATH}`,
+      `POST ${GROUP_DEPLOY}`,
+      `GET ${GD_PATH}`,
+    ]);
+    expect(api.calls("PATCH", GROUP_PATH)[0]?.body).toEqual({ submodules: "recursive" });
+  });
+
+  test("off, the default for a new stack, sends no request", async () => {
+    const api = stackApi("succeeded");
+    await runStacksCreate(api, TID, TARGET, { submodules: "off", waitTimeout: "600" }, "text", {
+      io: collectIo().io,
+    });
+    expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+  });
+
+  test("a bad value is refused before the stack is created", async () => {
+    const api = stackApi("succeeded");
+    const e = await rejected(
+      runStacksCreate(api, TID, TARGET, { submodules: "all", waitTimeout: "600" }, "text"),
+    );
+    expect(e.exitCode).toBe(2);
+    expect(e.message).toContain("off, on, recursive");
+    expect(api.requests).toEqual([]);
+  });
+
+  test("a failed patch says the stack exists and how to retry, and skips the deploy", async () => {
+    const api = stackApi("succeeded").on("PATCH", GROUP_PATH, () => {
+      throw new Error("422 unprocessable");
+    });
+    const e = await rejected(
+      runStacksCreate(
+        api,
+        TID,
+        TARGET,
+        { submodules: "on", deploy: true, waitTimeout: "600" },
+        "text",
+        { io: collectIo().io },
+      ),
+    );
+    expect(e.exitCode).toBe(1);
+    expect(e.message).toContain("stack web was created");
+    expect(e.message).toContain("reoclo stacks config set web --submodules on");
+    expect(api.calls("POST", GROUP_DEPLOY)).toEqual([]);
+  });
+});
