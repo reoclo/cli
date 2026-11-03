@@ -27,6 +27,8 @@ export interface FakeGateway {
   statementUploads: Array<{ contentType: string; search: string; body: string }>;
   /** Paths of the deployment cancel endpoints that were POSTed, in order. */
   cancelRequests: string[];
+  /** Requests the DNS records routes received: method, query string and JSON body. */
+  dnsRecordRequests: Array<{ method: string; search: string; body: unknown }>;
   stop: () => void;
 }
 
@@ -220,6 +222,7 @@ export function startFakeGateway(): FakeGateway {
   // Stack "stack-idle": its only run finished. Cancel follows the API contract:
   // 409 when finished, "cancelled" at once when not started, otherwise the status is unchanged.
   const cancelRequests: string[] = [];
+  const dnsRecordRequests: Array<{ method: string; search: string; body: unknown }> = [];
   const groupDeployments = new Map<string, Array<Record<string, unknown>>>([
     [
       "88888888-0000-0000-0000-000000000001",
@@ -667,6 +670,32 @@ export function startFakeGateway(): FakeGateway {
           domains.push(d);
           return Response.json(d);
         }
+      }
+
+      // /mcp/tenants/{tid}/dns/records   (GET list, POST add) and .../records/{id} (DELETE)
+      if (url.pathname.startsWith(`/mcp/tenants/${TENANT_ID}/dns/records`)) {
+        const body: unknown = req.method === "POST" ? await req.json() : null;
+        dnsRecordRequests.push({ method: req.method, search: url.search, body });
+        if (req.method === "GET") {
+          const records = [
+            { id: "a1", type: "TXT", name: "_dmarc.example.com", content: "v=DMARC1; p=none", ttl: 1, priority: null, managed: false },
+            { id: "b2", type: "MX", name: "example.com", content: "mail.example.com", ttl: 300, priority: 10, managed: false },
+            { id: "c3", type: "TXT", name: "_reoclo-verify.app.example.com", content: "reoclo-verification=t", ttl: 1, priority: null, managed: true },
+          ];
+          const type = url.searchParams.get("type");
+          return Response.json({
+            zone_name: "example.com",
+            records: type ? records.filter((r) => r.type === type) : records,
+          });
+        }
+        if (req.method === "POST") {
+          const b = body as Record<string, unknown>;
+          return Response.json(
+            { id: "new1", ttl: 1, priority: null, managed: false, ...b, zone_name: "example.com" },
+            { status: 201 },
+          );
+        }
+        if (req.method === "DELETE") return new Response(null, { status: 204 });
       }
 
       // POST /mcp/tenants/{tid}/applications/{app_id}/restart
@@ -1631,6 +1660,7 @@ export function startFakeGateway(): FakeGateway {
     registryBodies,
     statementUploads,
     cancelRequests,
+    dnsRecordRequests,
     stop: () => {
       void server.stop();
     },

@@ -20,6 +20,8 @@ import {
   updateProject,
   detachSecret,
   getSecretUsage,
+  listOrphanedSecrets,
+  type OrphanedSecret,
   type SecretOrigin,
   type SecretRead,
   type SecretUsage,
@@ -285,6 +287,33 @@ export function syncConflictError(err: ApiError, key: string, project: string): 
     err.path,
     `run \`reoclo secrets detach ${key} --project ${project}\` or pass --detach`,
   );
+}
+
+/**
+ * The API appends a sentence to the 409 detail when the secret's connection is still
+ * syncing it ("The Bitwarden connection is still syncing this secret, ..."). Split it
+ * off so `secrets rm` can print it as its own warning instead of burying it in the error.
+ */
+export function extractSyncWarning(message: string): { base: string; warning: string | null } {
+  const match = /\s+(The [^.]*? connection is still syncing[\s\S]*)$/.exec(message);
+  if (!match || match.index === undefined || match[1] === undefined) {
+    return { base: message, warning: null };
+  }
+  return { base: message.slice(0, match.index), warning: match[1].trim() };
+}
+
+/** Text-table rows for `secrets orphans`: the project is shown by name when it is known. */
+export function orphanTableRows(
+  rows: OrphanedSecret[],
+  projects: SecretProjectRead[],
+): Array<Record<string, unknown>> {
+  const names = new Map(projects.map((p) => [p.id, p.name]));
+  return rows.map((r) => ({
+    key: r.key,
+    project: names.get(r.project_id) ?? r.project_id,
+    provider: r.provider,
+    connection_id: r.connection_id ?? "-",
+  }));
 }
 
 export function usageTableRows(usages: SecretUsage[]): Array<Record<string, unknown>> {
@@ -585,7 +614,9 @@ export function registerSecrets(program: Command): void {
           await deleteSecret(ctx.client, tid, secret.id);
         } catch (e) {
           if (e instanceof ApiError && e.status === 409 && synced) {
-            throw syncConflictError(e, key, opts.project);
+            const { base, warning } = extractSyncWarning(e.message);
+            if (warning !== null) process.stderr.write(`warning: ${warning}\n`);
+            throw syncConflictError(new ApiError(e.status, base, e.path), key, opts.project);
           }
           throw e;
         }
@@ -656,6 +687,43 @@ export function registerSecrets(program: Command): void {
         },
       ),
     "secret:write",
+  );
+
+  requireCapability(
+    g
+      .command("orphans")
+      .description("list synced secrets whose Bitwarden or 1Password connection was removed")
+      .option("--project <name>", "only secrets in this project (name or id)")
+      .action(async (opts: { project?: string }) => {
+        const fmt = resolveFormat(globalOutput(program));
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const projects = await listProjects(ctx.client, tid);
+        const pid = opts.project === undefined ? undefined : resolveProjectId(projects, opts.project);
+        const rows = await listOrphanedSecrets(ctx.client, tid, pid);
+        if (fmt === "text" && rows.length === 0) {
+          process.stdout.write("no orphaned synced secrets\n");
+          return;
+        }
+        printList(
+          fmt === "text"
+            ? orphanTableRows(rows, projects)
+            : (rows as unknown as Array<Record<string, unknown>>),
+          [
+            { key: "key", label: "KEY" },
+            { key: "project", label: "PROJECT" },
+            { key: "provider", label: "PROVIDER" },
+            { key: "connection_id", label: "CONNECTION" },
+          ],
+          fmt,
+        );
+        if (fmt === "text") {
+          process.stderr.write(
+            "detach them with `reoclo secrets detach <key> --project <name>` to edit them again\n",
+          );
+        }
+      }),
+    "secret_project:read",
   );
 
   requireCapability(

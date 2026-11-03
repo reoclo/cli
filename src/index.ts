@@ -16,6 +16,7 @@ import { registerLogs } from "./commands/logs";
 import { registerEnv } from "./commands/env";
 import { registerDomains } from "./commands/domains";
 import { registerVerifiedDomains } from "./commands/verified-domains";
+import { registerDns } from "./commands/dns";
 import { registerMonitors } from "./commands/monitors";
 import { registerStatusPages } from "./commands/status-pages";
 import { registerIncidents } from "./commands/incidents";
@@ -143,6 +144,7 @@ if (import.meta.main) {
   registerBuildPools(program);
   registerBuilds(program);
   registerUp(program);
+  registerDns(program);
 
   // Hidden background worker: refresh the cached "latest release" marker by
   // asking GitHub. Spawned detached after normal commands (see postAction); runs
