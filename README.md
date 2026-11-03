@@ -164,6 +164,10 @@ reoclo secrets ls --project prod --source bitwarden
 # Who reads this secret? Applications and stacks, by env reference or project binding
 reoclo secrets usage DB_PASSWORD --project prod
 
+# Synced secrets whose Bitwarden or 1Password connection was removed (add --project to narrow)
+reoclo secrets orphans
+reoclo secrets orphans --project prod -o json
+
 # Stop syncing one secret; the value stays in Reoclo and becomes a manual secret
 reoclo secrets detach DB_PASSWORD --project prod
 
@@ -173,7 +177,9 @@ reoclo secrets detach --all --source bitwarden --project prod --yes
 
 `secrets detach` asks before it changes anything (`--yes` skips the prompt) and reports how many secrets it detached. A manual secret is already detached, so the command says so and makes no API call.
 
-`secrets rm` lists the applications and stacks that use the secret and asks you to confirm. A synced secret cannot be deleted until it is detached: pass `--detach` to detach and delete in one step, or run `secrets detach` first.
+`secrets orphans` lists synced secrets that lost their connection. Removing a connection in the dashboard detaches its secrets by default, so orphans only appear when someone chose to keep them as they were. They stay read-only until you detach them.
+
+`secrets rm` lists the applications and stacks that use the secret and asks you to confirm. A synced secret cannot be deleted until it is detached: pass `--detach` to detach and delete in one step, or run `secrets detach` first. When the secret's connection is still syncing, `secrets rm` also prints a warning from the API: the connection would overwrite an edited copy or bring a deleted one back, so detach it (which also stops the sync recreating it).
 
 ```bash
 reoclo secrets rm DB_PASSWORD --project prod --detach
@@ -347,6 +353,20 @@ tunnel: max concurrent tunnels per user reached (4). Run `reoclo tunnel ls` to s
 ### Closing stale sessions
 
 `reoclo tunnel close` also cleans up a session that no gateway holds any more, for example after a crash. The command reports that the session "had no live connection" and marks it closed. If the session was seen on a gateway within the last few minutes it is left open and the command asks you to try again shortly.
+
+## DNS records on managed zones
+
+On Cloudflare zones your organization has connected, you can add, list and remove TXT, CNAME and MX records without opening the Cloudflare dashboard. Reoclo finds the zone from the record name; records Reoclo publishes for your apps cannot be changed here.
+
+```bash
+# DMARC policy for example.com
+reoclo dns records add _dmarc.example.com --type TXT --content "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com"
+
+reoclo dns records ls example.com --type TXT
+reoclo dns records rm <record-id> --zone example.com
+```
+
+`rm` asks before deleting; `--yes` skips the prompt.
 
 ## Output formats
 

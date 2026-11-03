@@ -19,6 +19,13 @@ export interface SecretRead {
   last_synced_at?: string | null;
 }
 
+/** A synced secret whose Bitwarden or 1Password connection no longer exists. */
+export interface OrphanedSecret extends SecretRead {
+  project_id: string;
+  provider: "bitwarden" | "onepassword";
+  connection_id: string | null;
+}
+
 export interface SecretUsage {
   kind: "application" | "stack";
   id: string;
@@ -163,6 +170,16 @@ export function deleteSecret(c: HttpClient, tid: string, secretId: string): Prom
 /** Stop syncing a secret from Bitwarden or 1Password. The value stays in Reoclo. */
 export function detachSecret(c: HttpClient, tid: string, secretId: string): Promise<SecretRead> {
   return c.post<SecretRead>(`/tenants/${tid}/secrets/${secretId}/detach`);
+}
+
+/** Synced secrets whose connection was removed; `projectId` narrows to one project. */
+export function listOrphanedSecrets(
+  c: HttpClient,
+  tid: string,
+  projectId?: string,
+): Promise<OrphanedSecret[]> {
+  const q = projectId === undefined ? "" : `?project_id=${encodeURIComponent(projectId)}`;
+  return c.get<OrphanedSecret[]>(`/tenants/${tid}/secrets/orphans${q}`);
 }
 
 /** The apps and stacks that read this secret. 404 on servers without the endpoint. */
