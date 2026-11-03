@@ -11,7 +11,7 @@ import type {
   Repository,
 } from "../../src/client/types";
 
-export type Method = "GET" | "POST" | "PUT";
+export type Method = "GET" | "POST" | "PUT" | "PATCH";
 
 export interface RecordedRequest {
   method: Method;
@@ -51,6 +51,10 @@ export class FakeApi implements ApiClient {
 
   put<T>(path: string, body?: unknown): Promise<T> {
     return this.handle<T>("PUT", path, body);
+  }
+
+  patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.handle<T>("PATCH", path, body);
   }
 
   private handle<T>(method: Method, fullPath: string, body: unknown): Promise<T> {

@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { Command } from "commander";
 import {
   TERMINAL_GROUP_STATUSES,
   fmtDurationMs,
   fmtDurationS,
   matchGroup,
   orphanedMembers,
+  registerGroups,
   matchGroupDeployment,
   memberForService,
   newestRunning,
@@ -191,5 +193,26 @@ describe("orphanedMembers", () => {
         { slug: "stack-old", orphaned_from_definition: true, managed_by_group: false },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("--submodules flag (REO-576)", () => {
+  function longs(...path: string[]): string[] {
+    const program = new Command().name("reoclo");
+    registerGroups(program);
+    let cmd = program.commands.find((c) => c.name() === "groups")!;
+    for (const name of path) cmd = cmd.commands.find((c) => c.name() === name)!;
+    return cmd.options.map((o) => o.long ?? "");
+  }
+
+  test("stacks config set and stacks create take --submodules", () => {
+    expect(longs("config", "set")).toContain("--submodules");
+    expect(longs("create")).toContain("--submodules");
+  });
+
+  test("stacks is an alias of groups, so stacks config set resolves", () => {
+    const program = new Command().name("reoclo");
+    registerGroups(program);
+    expect(program.commands.some((c) => c.aliases().includes("stacks"))).toBe(true);
   });
 });

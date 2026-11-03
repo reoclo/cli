@@ -10,6 +10,7 @@ const REPO = "22222222-2222-4222-8222-222222222222";
 const APP = "33333333-3333-4333-8333-333333333333";
 const DOMAIN = "44444444-4444-4444-8444-444444444444";
 const PROJECT = "55555555-5555-4555-8555-555555555555";
+const GROUP = "66666666-6666-4666-8666-666666666666";
 
 interface Seen {
   method: string;
@@ -41,6 +42,21 @@ beforeEach(() => {
           return Response.json([{ id: PROJECT, name: "staging-secrets" }]);
         case `POST ${base}/applications/`:
           return Response.json({ id: APP, slug: "stack", name: "stack" });
+        case `GET ${base}/applications/${APP}`:
+          return Response.json({ id: APP, slug: "stack", name: "stack", server_id: SERVER });
+        case `PATCH ${base}/applications/${APP}`:
+          return Response.json({ id: APP, slug: "stack", submodules: "recursive" });
+        case `GET ${base}/applications/${APP}/config`:
+          return Response.json({ build: { buildpack: "node" }, deploy: { replicas: 1 } });
+        case `PATCH ${base}/applications/${APP}/config`:
+          return Response.json({ build: { buildpack: "node" }, deploy: { replicas: 2 } });
+        case `GET ${base}/application-groups/`:
+          return Response.json([
+            { id: GROUP, slug: "web", name: "Web", kind: "compose", server_id: SERVER, submodules: "on" },
+            { id: "g-2", slug: "plain", name: "Plain", kind: "compose", server_id: SERVER },
+          ]);
+        case `PATCH ${base}/application-groups/${GROUP}`:
+          return Response.json({ id: GROUP, slug: "web", submodules: "recursive" });
         case `POST ${base}/secret-projects`:
           return Response.json({ id: PROJECT, name: "new-project" });
         case `POST ${base}/applications/${APP}/deploy`:
@@ -207,4 +223,84 @@ test("domains publish exits non-zero and does not publish when the plan is block
   expect(r.exitCode).toBe(1);
   expect(r.stderr).toContain("no Cloudflare token covers example.com");
   expect(seen.some((s) => s.path === `/tenants/${T}/dns/publish/${DOMAIN}`)).toBe(false);
+});
+
+
+test("apps config set --submodules patches the app and leaves the config slice alone", async () => {
+  const r = await run(["apps", "config", "set", APP, "--submodules", "recursive"]);
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("config updated");
+  expect(bodyOf("PATCH", `/tenants/${T}/applications/${APP}`)).toEqual({ submodules: "recursive" });
+  expect(seen.some((s) => s.path.endsWith("/config"))).toBe(false);
+});
+
+test("apps config set sends --submodules and other flags to their own endpoints", async () => {
+  const r = await run(["-o", "json", "apps", "config", "set", APP, "--replicas", "2", "--submodules", "on"]);
+  expect(r.exitCode).toBe(0);
+  expect(bodyOf("PATCH", `/tenants/${T}/applications/${APP}`)).toEqual({ submodules: "on" });
+  const config = bodyOf("PATCH", `/tenants/${T}/applications/${APP}/config`) as { deploy: { replicas: number } };
+  expect(config.deploy.replicas).toBe(2);
+  expect((JSON.parse(r.stdout) as { submodules: string }).submodules).toBe("on");
+});
+
+test("apps config set --submodules with a bad value exits 2 and lists the modes", async () => {
+  const r = await run(["apps", "config", "set", APP, "--submodules", "all"]);
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr).toContain("expected one of: off, on, recursive");
+  expect(seen.some((s) => s.method !== "GET")).toBe(false);
+});
+
+test("apps get shows submodules off when the API omits the field", async () => {
+  const r = await run(["apps", "get", APP]);
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toMatch(/submodules\s+off/);
+});
+
+test("apps config get shows submodules off, read from the app when the config omits it", async () => {
+  const r = await run(["-o", "json", "apps", "config", "get", APP]);
+  expect(r.exitCode).toBe(0);
+  expect((JSON.parse(r.stdout) as { submodules: string }).submodules).toBe("off");
+});
+
+test("apps create --submodules recursive patches the new app before anything else", async () => {
+  const r = await run(["apps", "create", "--name", "stack", "--server", SERVER, "--submodules", "recursive"]);
+  expect(r.exitCode).toBe(0);
+  expect(bodyOf("POST", `/tenants/${T}/applications/`)).not.toHaveProperty("submodules");
+  expect(bodyOf("PATCH", `/tenants/${T}/applications/${APP}`)).toEqual({ submodules: "recursive" });
+});
+
+test("apps create --submodules off sends no extra request", async () => {
+  const r = await run(["apps", "create", "--name", "stack", "--server", SERVER, "--submodules", "off"]);
+  expect(r.exitCode).toBe(0);
+  expect(seen.some((s) => s.method === "PATCH")).toBe(false);
+});
+
+test("apps create rejects a bad --submodules value before creating anything", async () => {
+  const r = await run(["apps", "create", "--name", "x", "--server", SERVER, "--submodules", "yes"]);
+  expect(r.exitCode).toBe(2);
+  expect(seen.some((s) => s.method === "POST")).toBe(false);
+});
+
+test("stacks config set --submodules patches the stack by slug", async () => {
+  const r = await run(["stacks", "config", "set", "web", "--submodules", "recursive"]);
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("stack updated: web");
+  expect(bodyOf("PATCH", `/tenants/${T}/application-groups/${GROUP}`)).toEqual({ submodules: "recursive" });
+});
+
+test("stacks config set without a field exits 4 and a bad value exits 2", async () => {
+  const none = await run(["stacks", "config", "set", "web"]);
+  expect(none.exitCode).toBe(4);
+  expect(none.stderr).toContain("no fields to update");
+  const bad = await run(["stacks", "config", "set", "web", "--submodules", "deep"]);
+  expect(bad.exitCode).toBe(2);
+  expect(bad.stderr).toContain("expected one of: off, on, recursive");
+  expect(seen.some((s) => s.method === "PATCH")).toBe(false);
+});
+
+test("stacks get shows the submodules mode, off when absent", async () => {
+  const on = await run(["stacks", "get", "web"]);
+  expect(on.stdout).toMatch(/submodules\s+on/);
+  const off = await run(["-o", "json", "stacks", "get", "plain"]);
+  expect((JSON.parse(off.stdout) as { submodules: string }).submodules).toBe("off");
 });
