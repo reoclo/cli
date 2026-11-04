@@ -94,6 +94,7 @@ describe("pickComposeFile", () => {
   test("fails when the flag names a file the scan did not find", () => {
     const e = thrown(() => pickComposeFile(scan(), "nope.yml"));
     expect(e.exitCode).toBe(2);
+    expect(e.message).toContain("does not exist or is not a compose file");
     expect(e.message).toContain("found: docker-compose.yml");
   });
 
@@ -249,6 +250,39 @@ describe("createStack", () => {
     const body = api.calls("POST", WIZARD_PATH)[0]?.body as WizardCreateRequest;
     expect(body.deploy_branch).toBe("staging");
     expect(body.group_name).toBe("web-staging");
+  });
+
+  test("scans an explicit --compose-file as a config path, so any file name resolves", async () => {
+    const plunk = scan({
+      compose_files: ["stacks/plunk-compose.yml"],
+      services: [service({ compose_file_path: "stacks/plunk-compose.yml" })],
+    });
+    const api = new FakeApi().on("POST", SCAN_PATH, plunk).on("POST", WIZARD_PATH, WIZARD_OK);
+    const result = await createStack(api, TID, {
+      repositoryId: REPO.id,
+      repositoryName: "web",
+      serverId: SERVER_ID,
+      composeFile: "stacks/plunk-compose.yml",
+    });
+    expect(result.composeFile).toBe("stacks/plunk-compose.yml");
+    expect(api.calls("POST", SCAN_PATH)[0]?.body).toEqual({ ref: null, config_paths: ["stacks/plunk-compose.yml"] });
+    expect(api.calls("POST", SCAN_PATH)).toHaveLength(1);
+  });
+
+  test("rescans with the explicit path when a prescan missed it", async () => {
+    const plunk = scan({
+      compose_files: ["docker-compose.yml", "stacks/plunk-compose.yml"],
+      services: [service(), service({ compose_file_path: "stacks/plunk-compose.yml" })],
+    });
+    const api = new FakeApi().on("POST", SCAN_PATH, plunk).on("POST", WIZARD_PATH, WIZARD_OK);
+    const result = await createStack(
+      api,
+      TID,
+      { repositoryId: REPO.id, repositoryName: "web", serverId: SERVER_ID, composeFile: "stacks/plunk-compose.yml" },
+      scan(),
+    );
+    expect(result.composeFile).toBe("stacks/plunk-compose.yml");
+    expect(api.calls("POST", SCAN_PATH)[0]?.body).toEqual({ ref: null, config_paths: ["stacks/plunk-compose.yml"] });
   });
 
   test("fails before the wizard call when several compose files are found", async () => {

@@ -68,6 +68,11 @@ function normalizePath(path: string): string {
   return path.replace(/^\.\//, "");
 }
 
+function hasComposeFile(scan: RepoScanResponse, requested: string): boolean {
+  const wanted = normalizePath(requested);
+  return scan.compose_files.some((f) => normalizePath(f) === wanted);
+}
+
 export function pickComposeFile(scan: RepoScanResponse, requested?: string): string {
   const files = scan.compose_files;
   if (requested !== undefined) {
@@ -76,8 +81,8 @@ export function pickComposeFile(scan: RepoScanResponse, requested?: string): str
     if (found) return found;
     throw exitError(
       files.length === 0
-        ? `compose file '${requested}' not found: the repository has no compose file at ${scan.ref}`
-        : `compose file '${requested}' not found at ${scan.ref}. found: ${files.join(", ")}`,
+        ? `compose file '${requested}' not found at ${scan.ref}: the path does not exist or is not a compose file`
+        : `compose file '${requested}' not found at ${scan.ref}: the path does not exist or is not a compose file. found: ${files.join(", ")}`,
       EXIT.MISUSE,
     );
   }
@@ -189,8 +194,16 @@ export async function createStack(
   input: CreateStackInput,
   prescanned?: RepoScanResponse,
 ): Promise<CreateStackResult> {
-  const scan =
-    prescanned ?? (await scanRepository(client, tid, input.repositoryId, { ref: input.branch }));
+  // An explicit --compose-file is scanned as a config path, as the dashboard's
+  // "add a config file by path" does, so a name outside the scanner's patterns
+  // (stacks/plunk-compose.yml) still resolves.
+  const configPaths = input.composeFile ? [input.composeFile] : [];
+  let scan =
+    prescanned ??
+    (await scanRepository(client, tid, input.repositoryId, { ref: input.branch, configPaths }));
+  if (input.composeFile && !hasComposeFile(scan, input.composeFile)) {
+    scan = await scanRepository(client, tid, input.repositoryId, { ref: input.branch, configPaths });
+  }
   const composeFile = pickComposeFile(scan, input.composeFile);
   const services = stackServices(scan, composeFile, input.serverId);
   const response = await wizardSetup(client, tid, {
