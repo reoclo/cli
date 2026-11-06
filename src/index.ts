@@ -33,6 +33,7 @@ import { registerDeploy } from "./commands/deploy";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
 import { registerAlerts } from "./commands/alerts";
+import { registerFindings } from "./commands/findings";
 import { registerChannels } from "./commands/channels";
 import { registerAudit } from "./commands/audit";
 import { registerDashboard } from "./commands/dashboard";
@@ -130,6 +131,7 @@ if (import.meta.main) {
   registerShell(program);
   registerTunnel(program);
   registerAlerts(program);
+  registerFindings(program);
   registerChannels(program);
   registerAudit(program);
   registerDashboard(program);

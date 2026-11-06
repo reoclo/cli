@@ -48,6 +48,32 @@ export function deepMerge(
   return out;
 }
 
+const CONFIG_SLICES = ["build", "deploy"] as const;
+
+/**
+ * The body for `PATCH .../config`: only the slices and keys the caller touched, each merged
+ * with its stored value. The server applies sent keys onto the stored config, and refuses any
+ * `build` block for a stack member (its build comes from the compose file), so resending the
+ * whole stored build would block a deploy-only change such as a health check on a member.
+ */
+export function configPatchBody(
+  current: { build?: Record<string, unknown>; deploy?: Record<string, unknown> },
+  touched: Record<string, unknown>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(touched)) {
+    const slice = CONFIG_SLICES.find((s) => s === key);
+    if (slice === undefined || !isPlainObject(value)) {
+      body[key] = value;
+      continue;
+    }
+    const stored = current[slice] ?? {};
+    body[slice] = Object.fromEntries(
+      Object.entries(value).map(([field, v]) => [field, deepMerge({ v: stored[field] }, { v }).v]),
+    );
+  }
+  return body;
+}
 
 export const BUILD_PACKS = ["dockerfile", "docker_compose", "docker_image"] as const;
 type BuildPack = (typeof BUILD_PACKS)[number];
@@ -638,20 +664,15 @@ export function registerApps(program: Command): void {
             throw e;
           }
 
-          // The config PATCH replaces the whole build/deploy slice server-side
-          // (application.build = data.build), and every build field defaults —
-          // so sending only the changed field would reset the rest (e.g.
-          // build_pack -> dockerfile). Fetch the current config and deep-merge
-          // the changes so a partial `--docker-image` / `--set` preserves
-          // everything else.
+          // The body is the ApplicationConfigUpdate shape ({build, deploy}) directly; a
+          // `{ config: cfg }` wrapper is ignored by the server. The server merges sent keys
+          // onto the stored config but replaces a nested object (health_check, env) whole,
+          // so each touched key is merged with its stored value first. Untouched slices stay
+          // out of the body: a stack member refuses any `build` block, so resending the stored
+          // build would block a deploy-only change such as a health check (REO-611).
           //
           // Submodules are not part of the build/deploy slice: they go through the
           // app's own PATCH, so a --submodules-only call skips the config round trip.
-          //
-          // Also: the body is the ApplicationConfigUpdate shape ({build, deploy})
-          // directly. It was previously wrapped in `{ config: cfg }`, which the
-          // server ignored entirely — every `apps config set` reported success
-          // while persisting nothing.
           let r: Record<string, unknown> = {};
           if (Object.keys(cfg).length > 0) {
             const current = await ctx.client.get<{
@@ -671,7 +692,7 @@ export function registerApps(program: Command): void {
             }
             r = await ctx.client.patch<Record<string, unknown>>(
               `/tenants/${tid}/applications/${aid}/config`,
-              merged,
+              configPatchBody(current, cfg),
             );
           }
           if (submodules !== undefined) {

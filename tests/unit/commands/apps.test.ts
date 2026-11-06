@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { registerApps, deepMerge } from "../../../src/commands/apps";
+import {
+  registerApps,
+  deepMerge,
+  configPatchBody,
+} from "../../../src/commands/apps";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 
 describe("apps config subgroup", () => {
@@ -34,9 +38,45 @@ describe("apps config subgroup", () => {
       .commands.find((c) => c.name() === "config")!
       .commands.find((c) => c.name() === "set")!;
     const longs = set.options.map((o) => o.long);
-    for (const flag of ["--buildpack", "--docker-image", "--container-port", "--host-port", "--replicas", "--env", "--set"]) {
+    for (const flag of ["--buildpack", "--docker-image", "--container-port", "--host-port", "--replicas", "--health-check", "--env", "--set"]) {
       expect(longs).toContain(flag);
     }
+  });
+});
+
+describe("configPatchBody (apps config set)", () => {
+  const current = {
+    build: { build_pack: "docker_compose", compose_service: "web" },
+    deploy: {
+      replicas: 1,
+      health_check: { type: "none", interval_seconds: 45, retries: 3 },
+    },
+  };
+
+  test("a deploy-only change leaves build out, so a stack member accepts it", () => {
+    const body = configPatchBody(current, { deploy: { replicas: 2 } });
+    expect(body).toEqual({ deploy: { replicas: 2 } });
+    expect(body).not.toHaveProperty("build");
+  });
+
+  test("a nested object is merged with its stored value, not replaced", () => {
+    const body = configPatchBody(current, {
+      deploy: { health_check: { type: "http", http_path: "/up" } },
+    });
+    expect(body).toEqual({
+      deploy: {
+        health_check: { type: "http", interval_seconds: 45, retries: 3, http_path: "/up" },
+      },
+    });
+  });
+
+  test("a build change is sent as the touched keys only", () => {
+    const body = configPatchBody(current, { build: { docker_image: "redis:7" } });
+    expect(body).toEqual({ build: { docker_image: "redis:7" } });
+  });
+
+  test("top-level keys outside build and deploy pass through", () => {
+    expect(configPatchBody(current, { require_ci: true })).toEqual({ require_ci: true });
   });
 });
 

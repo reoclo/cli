@@ -29,6 +29,10 @@ export interface FakeGateway {
   cancelRequests: string[];
   /** Requests the DNS records routes received: method, query string and JSON body. */
   dnsRecordRequests: Array<{ method: string; search: string; body: unknown }>;
+  /** Every body PATCHed to an application's /config. */
+  configPatches: Array<Record<string, unknown>>;
+  /** Query string of every findings list request. */
+  findingRequests: string[];
   stop: () => void;
 }
 
@@ -162,6 +166,30 @@ export function startFakeGateway(): FakeGateway {
       source_type: i % 4 === 0 ? "container" : "system",
       source_name: i % 4 === 0 ? "app-container" : "kernel",
       stream: i % 3 === 0 ? "stderr" : "stdout",
+    });
+  }
+
+  const configPatches: Array<Record<string, unknown>> = [];
+  const findingRequests: string[] = [];
+  const findings = new Map<string, Record<string, unknown>>();
+  for (const [id, status, severity] of [
+    ["f1111111-0000-0000-0000-000000000001", "open", "high"],
+    ["f1111111-0000-0000-0000-000000000002", "resolved", "low"],
+  ] as const) {
+    findings.set(id, {
+      id,
+      status,
+      severity,
+      category: "ops",
+      title: `finding ${id.slice(-1)}`,
+      summary: "a summary",
+      occurrences: 3,
+      last_seen_at: "2026-11-06T10:00:00Z",
+      server_name: "web-1",
+      source_name: "api",
+      evidence: [
+        { ts: "2026-11-06T09:59:00Z", level: "error", source_name: "api", message: "boom" },
+      ],
     });
   }
 
@@ -788,13 +816,52 @@ export function startFakeGateway(): FakeGateway {
               return Response.json({ detail: "empty patch" }, { status: 422 });
             }
             const existing = appConfigs.get(aid) ?? {};
+            configPatches.push(body);
+            const slice = (key: "build" | "deploy"): Record<string, unknown> => ({
+              ...(existing[key] as Record<string, unknown> | undefined),
+              ...body[key],
+            });
             const merged = {
               ...existing,
-              ...(body.build ? { build: body.build } : {}),
-              ...(body.deploy ? { deploy: body.deploy } : {}),
+              ...(body.build ? { build: slice("build") } : {}),
+              ...(body.deploy ? { deploy: slice("deploy") } : {}),
             };
             appConfigs.set(aid, merged);
             return Response.json(merged);
+          }
+        }
+      }
+
+      if (req.method === "GET" && /^\/mcp\/tenants\/[^/]+\/alerts\/instances$/.test(url.pathname)) {
+        return Response.json([]);
+      }
+
+      // /mcp/tenants/{tid}/log-watcher/findings[/{id}]
+      {
+        const m = url.pathname.match(
+          /^\/mcp\/tenants\/[^/]+\/log-watcher\/findings(?:\/([^/]+))?$/,
+        );
+        if (m) {
+          const id = m[1];
+          if (id === undefined && req.method === "GET") {
+            findingRequests.push(url.search);
+            const wanted = url.searchParams.get("status");
+            const items = [...findings.values()].filter((f) => !wanted || f["status"] === wanted);
+            const size = Number(url.searchParams.get("page_size") ?? "50");
+            return Response.json({
+              items: items.slice(0, size),
+              page: 1,
+              page_size: size,
+              total: items.length,
+            });
+          }
+          const finding = id === undefined ? undefined : findings.get(id);
+          if (!finding) return Response.json({ detail: "Finding not found" }, { status: 404 });
+          if (req.method === "GET") return Response.json(finding);
+          if (req.method === "PATCH") {
+            const body = (await req.json()) as { status: string };
+            finding["status"] = body.status;
+            return Response.json(finding);
           }
         }
       }
@@ -1661,6 +1728,8 @@ export function startFakeGateway(): FakeGateway {
     statementUploads,
     cancelRequests,
     dnsRecordRequests,
+    configPatches,
+    findingRequests,
     stop: () => {
       void server.stop();
     },
