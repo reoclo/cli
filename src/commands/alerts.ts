@@ -4,6 +4,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import type { ResolvedContext } from "../client/bootstrap";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
+import { openFindingsNote } from "./findings";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 
 const ALERT_STATES = ["firing", "acknowledged", "resolved"];
@@ -193,6 +194,10 @@ export function registerAlerts(program: Command): void {
             ],
             fmt,
           );
+          if (fmt === "text") {
+            const note = await openFindingsNote(ctx.client, tid);
+            if (note) process.stderr.write(`${note}\n`);
+          }
         },
       ),
     {

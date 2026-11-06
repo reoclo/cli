@@ -54,6 +54,16 @@ test("typed flag wins over --set on the same path", async () => {
   expect(cfg.deploy["replicas"]).toBe(3);
 });
 
+test("apps config set --health-check sends a deploy-only patch", async () => {
+  const r = await $`bun run src/index.ts apps config set ${APP_ID} --health-check http:/up`
+    .env(env())
+    .quiet();
+  expect(r.stdout.toString()).toContain("✓ config updated");
+  expect(gw.configPatches).toEqual([
+    { deploy: { health_check: { type: "http", http_path: "/up" } } },
+  ]);
+});
+
 test("empty patch exits 4 with documented message", async () => {
   const r = await $`bun run src/index.ts apps config set ${APP_ID}`.env(env()).nothrow().quiet();
   expect(r.exitCode).toBe(4);
