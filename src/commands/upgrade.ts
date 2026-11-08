@@ -244,22 +244,58 @@ interface GitHubRelease {
   prerelease: boolean;
 }
 
+const GITHUB_API_HEADERS = { Accept: "application/vnd.github+json" };
+const RELEASES_PAGE_TIMEOUT_MS = 15_000;
+
 /**
- * Resolve the latest version tag for a given channel by querying the GitHub
- * Releases API. Returns the tag string (e.g. "v0.19.0") — always prefixed.
+ * GET a GitHub REST API path, authenticated when GH_TOKEN or GITHUB_TOKEN is
+ * set. GitHub can degrade anonymous API traffic while authenticated requests
+ * keep working.
+ */
+async function fetchGitHubApi(path: string): Promise<Response> {
+  const url = `https://api.github.com${path}`;
+  const token = process.env["GH_TOKEN"] || process.env["GITHUB_TOKEN"];
+  if (!token) return fetch(url, { headers: GITHUB_API_HEADERS });
+  const r = await fetch(url, {
+    headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${token}` },
+  });
+  // GITHUB_TOKEN can belong to another forge (Gitea Actions sets its own) or
+  // have expired. The releases are public, so ask again without it.
+  return r.status === 401 ? fetch(url, { headers: GITHUB_API_HEADERS }) : r;
+}
+
+/**
+ * Read the latest stable tag from the redirect on the public releases page,
+ * which does not depend on api.github.com. Null when the page is unreachable,
+ * too slow, or does not redirect to a tag, so the caller can try the API.
+ */
+async function latestTagFromRedirect(): Promise<string | null> {
+  try {
+    const r = await fetch(`https://github.com/${GITHUB_REPO}/releases/latest`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(RELEASES_PAGE_TIMEOUT_MS),
+    });
+    return /\/releases\/tag\/([^/?#]+)$/.exec(r.headers.get("location") ?? "")?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the latest version tag for a given channel from GitHub Releases.
+ * Returns the tag string (e.g. "v0.19.0") — always prefixed.
  *
- *   - "stable" → the release marked as `latest=true` on GitHub (excludes prereleases)
+ *   - "stable" → the release GitHub marks as latest (excludes prereleases), from
+ *                the releases page redirect, falling back to the API
  *   - "beta"   → the newest release with `prerelease=true` in the last 10 entries
  *   - "dev"    → same as beta (the historical moving-HEAD "dev" channel doesn't
  *                map cleanly onto GitHub Releases; treat as a prerelease channel)
  */
 export async function resolveLatestVersion(channel: string): Promise<string> {
-  const headers = { Accept: "application/vnd.github+json" };
-
   if (channel === "stable") {
-    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
-      headers,
-    });
+    const tag = await latestTagFromRedirect();
+    if (tag) return tag;
+    const r = await fetchGitHubApi(`/repos/${GITHUB_REPO}/releases/latest`);
     if (!r.ok) throw new Error(`HTTP ${r.status} fetching latest release`);
     const data = (await r.json()) as GitHubRelease;
     if (typeof data.tag_name !== "string" || !data.tag_name) {
@@ -269,9 +305,7 @@ export async function resolveLatestVersion(channel: string): Promise<string> {
   }
 
   if (channel === "beta" || channel === "dev") {
-    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`, {
-      headers,
-    });
+    const r = await fetchGitHubApi(`/repos/${GITHUB_REPO}/releases?per_page=10`);
     if (!r.ok) throw new Error(`HTTP ${r.status} fetching releases list`);
     const data = (await r.json()) as GitHubRelease[];
     if (!Array.isArray(data)) throw new Error("releases list response was not an array");

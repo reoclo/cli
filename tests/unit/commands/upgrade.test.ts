@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, afterEach } from "bun:test";
+import { describe, expect, test, mock, afterEach, beforeEach } from "bun:test";
 import {
   delegatedUpgradeArgv,
   detectInstallMethod,
@@ -13,23 +13,118 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+const RELEASES_PAGE = "https://github.com/reoclo/cli/releases/latest";
+const RELEASES_API = "https://api.github.com/repos/reoclo/cli/releases";
+
+interface FetchCall {
+  url: string;
+  init?: RequestInit;
+}
+
+function stubFetch(respond: (call: FetchCall) => Response): FetchCall[] {
+  const calls: FetchCall[] = [];
+  globalThis.fetch = mock((url: string, init?: RequestInit) => {
+    const call = { url, init };
+    calls.push(call);
+    return Promise.resolve().then(() => respond(call));
+  }) as unknown as typeof fetch;
+  return calls;
+}
+
+function redirectTo(location: string): Response {
+  return new Response(null, { status: 302, headers: { location } });
+}
+
+function authHeader(call: FetchCall | undefined): string | undefined {
+  return (call?.init?.headers as Record<string, string> | undefined)?.["Authorization"];
+}
+
 describe("resolveLatestVersion", () => {
   const originalFetch = globalThis.fetch;
+  const originalGhToken = process.env["GH_TOKEN"];
+  const originalGithubToken = process.env["GITHUB_TOKEN"];
+
+  beforeEach(() => {
+    delete process.env["GH_TOKEN"];
+    delete process.env["GITHUB_TOKEN"];
+  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalGhToken === undefined) delete process.env["GH_TOKEN"];
+    else process.env["GH_TOKEN"] = originalGhToken;
+    if (originalGithubToken === undefined) delete process.env["GITHUB_TOKEN"];
+    else process.env["GITHUB_TOKEN"] = originalGithubToken;
   });
 
-  test("stable channel → fetches /releases/latest and returns tag_name", async () => {
-    let calledUrl = "";
-    globalThis.fetch = mock((url: string) => {
-      calledUrl = url;
-      return Promise.resolve(jsonResponse({ tag_name: "v0.19.0", prerelease: false }));
-    }) as unknown as typeof fetch;
+  test("stable reads the tag from the releases page and never calls the API", async () => {
+    process.env["GH_TOKEN"] = "gh-secret";
+    const calls = stubFetch(() => redirectTo("https://github.com/reoclo/cli/releases/tag/v0.98.0"));
 
-    const tag = await resolveLatestVersion("stable");
-    expect(tag).toBe("v0.19.0");
-    expect(calledUrl).toBe("https://api.github.com/repos/reoclo/cli/releases/latest");
+    expect(await resolveLatestVersion("stable")).toBe("v0.98.0");
+    expect(calls.map((c) => c.url)).toEqual([RELEASES_PAGE]);
+    expect(calls[0]?.init?.redirect).toBe("manual");
+    expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(authHeader(calls[0])).toBeUndefined();
+  });
+
+  test("stable falls back to the API when the releases page does not redirect to a tag", async () => {
+    const calls = stubFetch(({ url }) =>
+      url === RELEASES_PAGE
+        ? new Response("unavailable", { status: 503 })
+        : jsonResponse({ tag_name: "v0.19.0", prerelease: false }),
+    );
+
+    expect(await resolveLatestVersion("stable")).toBe("v0.19.0");
+    expect(calls.map((c) => c.url)).toEqual([RELEASES_PAGE, `${RELEASES_API}/latest`]);
+  });
+
+  test("stable falls back to the API when the releases page request fails", async () => {
+    const calls = stubFetch(({ url }) => {
+      if (url === RELEASES_PAGE) throw new DOMException("timed out", "TimeoutError");
+      return jsonResponse({ tag_name: "v0.19.0", prerelease: false });
+    });
+
+    expect(await resolveLatestVersion("stable")).toBe("v0.19.0");
+    expect(calls.map((c) => c.url)).toEqual([RELEASES_PAGE, `${RELEASES_API}/latest`]);
+  });
+
+  test("beta sends GH_TOKEN in preference to GITHUB_TOKEN", async () => {
+    process.env["GH_TOKEN"] = "gh-secret";
+    process.env["GITHUB_TOKEN"] = "github-secret";
+    const calls = stubFetch(() => jsonResponse([{ tag_name: "v0.20.0-rc.1", prerelease: true }]));
+
+    await resolveLatestVersion("beta");
+    expect(authHeader(calls[0])).toBe("Bearer gh-secret");
+  });
+
+  test("beta sends GITHUB_TOKEN when it is the only token", async () => {
+    process.env["GITHUB_TOKEN"] = "github-secret";
+    const calls = stubFetch(() => jsonResponse([{ tag_name: "v0.20.0-rc.1", prerelease: true }]));
+
+    await resolveLatestVersion("beta");
+    expect(authHeader(calls[0])).toBe("Bearer github-secret");
+  });
+
+  test("beta sends no Authorization header without a token", async () => {
+    const calls = stubFetch(() => jsonResponse([{ tag_name: "v0.20.0-rc.1", prerelease: true }]));
+
+    await resolveLatestVersion("beta");
+    expect(calls).toHaveLength(1);
+    expect(authHeader(calls[0])).toBeUndefined();
+  });
+
+  test("beta retries anonymously when GitHub rejects the token", async () => {
+    process.env["GITHUB_TOKEN"] = "token-from-another-forge";
+    const calls = stubFetch((call) =>
+      authHeader(call)
+        ? new Response("bad credentials", { status: 401 })
+        : jsonResponse([{ tag_name: "v0.20.0-rc.1", prerelease: true }]),
+    );
+
+    expect(await resolveLatestVersion("beta")).toBe("v0.20.0-rc.1");
+    expect(calls).toHaveLength(2);
+    expect(authHeader(calls[1])).toBeUndefined();
   });
 
   test("beta channel → fetches releases list and returns first prerelease tag", async () => {

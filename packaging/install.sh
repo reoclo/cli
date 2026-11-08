@@ -44,16 +44,23 @@ if [ "$VERSION" = "latest" ]; then
     echo "  reoclo upgrade --channel ${CHANNEL}" >&2
     exit 2
   fi
-  # Query the GitHub Releases API directly. The /releases/latest endpoint
-  # excludes prereleases by GitHub's contract, which is the desired
-  # "stable" channel semantic. tag_name appears once in this single-object
-  # response, so a grep+sed extraction is sufficient (no jq dependency).
-  VERSION=$(curl -fsSL -H "Accept: application/vnd.github+json" \
-    "https://api.github.com/repos/${GH_REPO}/releases/latest" \
-    | grep -E '"tag_name":' | head -1 \
-    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')
+  # /releases/latest excludes prereleases by GitHub's contract, which is the
+  # desired "stable" channel semantic. Read the tag from the redirect on the
+  # public releases page first: it does not depend on api.github.com, which
+  # GitHub can degrade for anonymous callers on its own.
+  VERSION=$(curl -s --max-time 15 -o /dev/null -w '%{redirect_url}' \
+    "https://github.com/${GH_REPO}/releases/latest" \
+    | sed -nE 's|.*/releases/tag/([^/?#]+)$|\1|p')
   if [ -z "$VERSION" ]; then
-    echo "failed to resolve latest version from GitHub Releases API" >&2
+    # tag_name appears once in this single-object response, so a grep+sed
+    # extraction is sufficient (no jq dependency).
+    VERSION=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${GH_REPO}/releases/latest" \
+      | grep -E '"tag_name":' | head -1 \
+      | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')
+  fi
+  if [ -z "$VERSION" ]; then
+    echo "failed to resolve latest version from GitHub" >&2
     exit 1
   fi
 fi
