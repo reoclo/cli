@@ -349,7 +349,7 @@ export function registerServersSetup(program: Command, g: Command): void {
           const server = await ctx.client.get<Server>(`/tenants/${tid}/servers/${sid}`);
           let dest = explicit;
           if (!dest) {
-            const host = server.ip ?? server.public_ip;
+            const host = server.ip;
             if (!host) {
               throw badUsage(`server '${idOrSlug}' has no recorded IP. Pass --ssh <[user@]host>.`);
             }
@@ -359,7 +359,12 @@ export function registerServersSetup(program: Command, g: Command): void {
 
           if (!opts.check) {
             if (!opts.sshOnly) {
-              await warnAboutBlockedPorts(ctx.client, `/tenants/${tid}/servers/${sid}/ports`, firewallAllow);
+              // setup.sh keeps whichever port sshd listens on open.
+              const sshPort = opts.port === undefined ? [] : [opts.port];
+              await warnAboutBlockedPorts(ctx.client, `/tenants/${tid}/servers/${sid}/ports`, [
+                ...firewallAllow,
+                ...sshPort,
+              ]);
             }
             const scope = opts.sshOnly
               ? "disables root and password SSH logins"

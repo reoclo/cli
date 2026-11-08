@@ -40,6 +40,11 @@ test("servers containers / health / ports / uptime", async () => {
   expect(up.stdout.toString()).toContain("overall uptime: 100%");
 });
 
+test("servers ls shows each server's IP", async () => {
+  const ls = await $`bun run src/index.ts servers ls`.env(env()).quiet();
+  expect(ls.stdout.toString()).toContain("1.1.1.1");
+});
+
 test("servers reboot --yes skips the prompt", async () => {
   const rb = await $`bun run src/index.ts servers reboot srv-1 --yes`.env(env()).quiet();
   expect(rb.stdout.toString()).toContain("✓ reboot signaled: srv-1");

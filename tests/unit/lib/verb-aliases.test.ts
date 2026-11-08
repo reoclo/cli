@@ -5,6 +5,7 @@ import { registerDomains } from "../../../src/commands/domains";
 import { registerChannels } from "../../../src/commands/channels";
 import { registerAlerts } from "../../../src/commands/alerts";
 import { registerStatusPages } from "../../../src/commands/status-pages";
+import { registerServers } from "../../../src/commands/servers";
 
 function find(root: Command, path: string[]): Command {
   let cmd = root;
@@ -86,6 +87,7 @@ describe("applyVerbAliases over real command groups", () => {
     registerChannels(program);
     registerAlerts(program);
     registerStatusPages(program);
+    registerServers(program);
     applyVerbAliases(program);
     return program;
   }

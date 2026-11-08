@@ -31,7 +31,7 @@ export function registerServers(program: Command): void {
           { key: "slug", label: "SLUG" },
           { key: "name", label: "NAME" },
           { key: "hostname", label: "HOSTNAME" },
-          { key: "public_ip", label: "IP" },
+          { key: "ip", label: "IP" },
           { key: "status", label: "STATUS" },
           { key: "runner_version", label: "RUNNER" },
         ],
