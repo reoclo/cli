@@ -98,6 +98,15 @@ describe("portsBlockedByHardening", () => {
     expect(portsBlockedByHardening(ports, [])).toEqual([8080, 9050]);
   });
 
+  test("reads the bracketed IPv6 address the scan reports, and never flags SSH on 22", () => {
+    const scan = [
+      { port: 22, address: "[::]" },
+      { port: 22, address: "0.0.0.0" },
+      { port: 9000, address: "[::]" },
+    ];
+    expect(portsBlockedByHardening(scan, [])).toEqual([9000]);
+  });
+
   test("container ports published on the host count too", () => {
     const scan = {
       listening_ports: [],

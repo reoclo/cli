@@ -265,9 +265,12 @@ export function portsBlockedByHardening(
   for (const l of listening) {
     const port = Number(l.port);
     const address = l.address ?? "";
-    const isPublic = address === "" || address === "*" || address === "0.0.0.0" || address === "::";
+    const isPublic = ["", "*", "0.0.0.0", "::", "[::]"].includes(address);
     if (!isPublic || !Number.isInteger(port)) continue;
-    if (port === 80 || port === 443 || l.process?.includes("sshd") || open(port)) continue;
+    // The scan cannot name root's processes, so sshd on 22 often has no process.
+    if (port === 22 || port === 80 || port === 443 || l.process?.includes("sshd") || open(port)) {
+      continue;
+    }
     blocked.add(port);
   }
   return [...blocked].sort((a, b) => a - b);

@@ -25,8 +25,7 @@ export interface Server {
   slug: string;
   name: string | null;
   hostname: string;
-  public_ip: string | null;
-  ip?: string | null;
+  ip: string | null;
   status: "online" | "offline" | "unknown";
   runner_version?: string | null;
   role?: "runtime" | "build" | "both";
