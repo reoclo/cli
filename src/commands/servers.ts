@@ -6,8 +6,9 @@ import { globalOutput, printList, printMutation, printObject, resolveFormat } fr
 import type { Server } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
-import { promptYesNo } from "../ui/prompt";
+import { confirmOrExit, promptYesNo } from "../ui/prompt";
 import { registerServersPower } from "./servers-power";
+import { registerServersSetup } from "./servers-setup";
 import { SERVER_ROLES } from "../client/enums";
 import { parseEnum } from "../util/parse-flag";
 
@@ -257,5 +258,25 @@ export function registerServers(program: Command): void {
     { args: [{ slot: 0, resource: "servers" }] },
   );
 
+  withCompletion(
+    g
+      .command("rm <idOrSlug>")
+      .description("decommission a server (it must have no applications)")
+      .option("--yes", "skip the confirmation prompt")
+      .action(async (idOrSlug: string, opts: { yes?: boolean }) => {
+        const ctx = await bootstrap();
+        const tid = await requireTenantId(ctx);
+        const sid = await resolveServer(ctx.client, tid, idOrSlug);
+        await confirmOrExit(
+          `Decommission server '${idOrSlug}'? It disconnects and cannot be deployed to again. [y/N] `,
+          opts.yes,
+        );
+        await ctx.client.del(`/tenants/${tid}/servers/${sid}`);
+        printMutation(program, { id: sid, decommissioned: true }, `✓ decommissioned: ${idOrSlug}`);
+      }),
+    { args: [{ slot: 0, resource: "servers" }] },
+  );
+
   registerServersPower(program, g);
+  registerServersSetup(program, g);
 }

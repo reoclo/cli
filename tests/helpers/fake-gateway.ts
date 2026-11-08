@@ -33,6 +33,12 @@ export interface FakeGateway {
   configPatches: Array<Record<string, unknown>>;
   /** Query string of every findings list request. */
   findingRequests: string[];
+  /** JSON bodies POSTed to create a runner token. */
+  runnerTokenBodies: Array<Record<string, unknown>>;
+  /** Ids of runner tokens that were revoked. */
+  runnerTokenRevokes: string[];
+  /** Ids of servers that were decommissioned. */
+  serverDeletes: string[];
   stop: () => void;
 }
 
@@ -171,6 +177,9 @@ export function startFakeGateway(): FakeGateway {
 
   const configPatches: Array<Record<string, unknown>> = [];
   const findingRequests: string[] = [];
+  const runnerTokenBodies: Array<Record<string, unknown>> = [];
+  const runnerTokenRevokes: string[] = [];
+  const serverDeletes: string[] = [];
   const findings = new Map<string, Record<string, unknown>>();
   for (const [id, status, severity] of [
     ["f1111111-0000-0000-0000-000000000001", "open", "high"],
@@ -420,6 +429,33 @@ export function startFakeGateway(): FakeGateway {
         });
       }
 
+      // POST /mcp/admin/runners/tokens?tenant_id=
+      if (url.pathname === "/mcp/admin/runners/tokens" && req.method === "POST") {
+        runnerTokenBodies.push((await req.json()) as Record<string, unknown>);
+        return Response.json(
+          {
+            token: { id: "tok-1", expires_at: "2026-01-01T01:00:00Z" },
+            plaintext_token: "rt_secretvalue",
+            runner_gateway_url: "wss://gateway.example.test/ws/runner",
+            runner_install_url: "https://get.example.test",
+          },
+          { status: 201 },
+        );
+      }
+
+      // /mcp/admin/runners/tokens/{id}
+      const runnerTokenMatch = url.pathname.match(/^\/mcp\/admin\/runners\/tokens\/([^/]+)$/);
+      if (runnerTokenMatch) {
+        if (req.method === "DELETE") {
+          runnerTokenRevokes.push(runnerTokenMatch[1] ?? "");
+          return new Response(null, { status: 204 });
+        }
+        return Response.json({
+          status: "used",
+          used_by_server_id: "00000000-0000-0000-0000-00000000bbbb",
+        });
+      }
+
       // /mcp/tenants/{tid}/servers/  (bare array)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/servers/`) {
         return Response.json([
@@ -442,6 +478,10 @@ export function startFakeGateway(): FakeGateway {
       );
       if (srvMatch) {
         const sid = srvMatch[1] ?? "";
+        if (req.method === "DELETE") {
+          serverDeletes.push(sid);
+          return new Response(null, { status: 204 });
+        }
         if (req.method === "PATCH") {
           const patch = (await req.json()) as { role?: string };
           if (patch.role !== undefined) serverRoles.set(sid, patch.role);
@@ -449,8 +489,10 @@ export function startFakeGateway(): FakeGateway {
         return Response.json({
           role: serverRoles.get(sid) ?? "runtime",
           id: sid,
+          slug: "srv-1",
           name: "srv-1",
           hostname: "srv-1.local",
+          ip: "203.0.113.20",
           public_ip: "1.1.1.1",
           status: "online",
           connection_type: "runner",
@@ -1730,6 +1772,9 @@ export function startFakeGateway(): FakeGateway {
     dnsRecordRequests,
     configPatches,
     findingRequests,
+    runnerTokenBodies,
+    runnerTokenRevokes,
+    serverDeletes,
     stop: () => {
       void server.stop();
     },
