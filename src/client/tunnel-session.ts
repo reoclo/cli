@@ -67,7 +67,15 @@ export interface TunnelSessionOptions {
   forwards?: ForwardSpec[];
   reverses?: ReverseSpec[];
   reconnectDeadlineMs?: number; // default 5 * 60_000
-  onStatus?: (s: SessionStatus, reason?: string) => void;
+  /** `code` is the WebSocket close code behind a "failed" or "reconnecting"
+   *  status when there is one (for example 4408), so a caller can tell closes
+   *  apart without parsing `reason`. */
+  onStatus?: (s: SessionStatus, reason?: string, code?: number) => void;
+  /** Close codes treated as fatal in addition to FATAL_CLOSE_CODES. The tunnel
+   *  daemon passes 4407 (closed by an operator) and 4408 (maximum duration) so
+   *  it never reopens those sessions on its own. The one-shot command leaves
+   *  this unset and keeps reconnecting through them. */
+  extraFatalCodes?: number[];
   /** Refresh the access token before it expires. Called with the SESSION's
    *  current (live) token on every cycle — not a snapshot captured once at
    *  construction — so the underlying refresh's own failed-token double-check
@@ -191,8 +199,8 @@ export class TunnelSession {
     this.opts.onStatus?.("closed");
   }
 
-  private status(s: SessionStatus, reason?: string): void {
-    this.opts.onStatus?.(s, reason);
+  private status(s: SessionStatus, reason?: string, code?: number): void {
+    this.opts.onStatus?.(s, reason, code);
   }
 
   /**
@@ -394,6 +402,27 @@ export class TunnelSession {
     return out;
   }
 
+  /** Open one more reverse listener on a running session. Resolves with the
+   *  listen id once the runner has bound the port; pass it to removeReverse(). */
+  async addReverse(spec: ReverseSpec): Promise<string> {
+    const listenId = `l-${randomUUID()}`;
+    this.reverseListeners.set(listenId, spec);
+    try {
+      await this.sendListenOpen(listenId, spec);
+    } catch (err) {
+      this.reverseListeners.delete(listenId);
+      throw err;
+    }
+    return listenId;
+  }
+
+  /** Close a reverse listener opened with addReverse(). */
+  removeReverse(listenId: string): void {
+    if (this.reverseListeners.delete(listenId)) {
+      this.send({ type: "tunnel_listen_close", listen_id: listenId });
+    }
+  }
+
   private sendListenOpen(listenId: string, r: ReverseSpec): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -476,7 +505,10 @@ export class TunnelSession {
     // Fatal close codes (e.g. 4502 Runner connection failed) mean retrying is
     // pointless — the gateway already classified the failure as non-recoverable.
     // Stop the session and surface the reason instead of looping reconnect.
-    if (code !== undefined && FATAL_CLOSE_CODES.has(code)) {
+    if (
+      code !== undefined &&
+      (FATAL_CLOSE_CODES.has(code) || (this.opts.extraFatalCodes ?? []).includes(code))
+    ) {
       this.stopped = true;
       for (const s of this.tcpListeners) s.close();
       for (const s of this.udpListeners) s.close();
@@ -486,10 +518,11 @@ export class TunnelSession {
         this.status(
           "failed",
           `${reason ?? "too many concurrent tunnels"}. Run \`reoclo tunnel ls\` to see open tunnels and \`reoclo tunnel close <id>\` to free one.`,
+          code,
         );
         return;
       }
-      this.status("failed", reason ?? `connection closed (code ${code})`);
+      this.status("failed", reason ?? `connection closed (code ${code})`, code);
       return;
     }
 
@@ -504,7 +537,11 @@ export class TunnelSession {
       );
     }
     this.largestDataFrame = null;
-    this.status("reconnecting", code !== undefined ? `${code}${reason ? ` ${reason}` : ""}` : undefined);
+    this.status(
+      "reconnecting",
+      code !== undefined ? `${code}${reason ? ` ${reason}` : ""}` : undefined,
+      code,
+    );
     this.scheduleReconnect();
   }
 
@@ -588,6 +625,16 @@ export class TunnelSession {
   }
 
   private onLocalTcpAccept(sock: net.Socket, f: ForwardSpec): void {
+    this.attachTcpSocket(sock, f);
+  }
+
+  /**
+   * Carry an accepted local TCP socket over a new stream to `target`. The
+   * caller owns the listener; the session only needs the socket. Frames are
+   * dropped unless the WebSocket is open, so a caller that accepts before the
+   * session is active must pause the socket and attach once it is.
+   */
+  attachTcpSocket(sock: net.Socket, f: Pick<ForwardSpec, "remoteHost" | "remotePort">): void {
     // Drop new connections fast while interrupted — gateway would drop the tunnel_open anyway.
     if (this.interrupted) { sock.destroy(); return; }
     const streamId = `s-${randomUUID()}`;
@@ -614,6 +661,17 @@ export class TunnelSession {
     buf: Buffer,
     rinfo: dgram.RemoteInfo,
     f: ForwardSpec,
+    listener: dgram.Socket,
+  ): void {
+    this.forwardUdpDatagram(buf, rinfo, f, listener);
+  }
+
+  /** Carry one datagram received on a caller-owned UDP `listener` to `target`.
+   *  Replies are sent back through the same listener to the source peer. */
+  forwardUdpDatagram(
+    buf: Buffer,
+    rinfo: dgram.RemoteInfo,
+    f: Pick<ForwardSpec, "remoteHost" | "remotePort">,
     listener: dgram.Socket,
   ): void {
     // Drop new datagrams while interrupted — gateway would drop tunnel_open anyway.
