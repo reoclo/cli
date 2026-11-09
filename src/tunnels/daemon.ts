@@ -15,7 +15,7 @@ import { localCaActions, type CaActions } from "./ca-actions";
 import { daemonResponding } from "./control-client";
 import { startControlServer, type ControlServerOptions } from "./control-server";
 import { ApiDirectory, type Directory } from "./directory";
-import { HostsClient, type HostsSink } from "./hosts-client";
+import { HostsClient, hostsHelperAllowed, type HostsSink } from "./hosts-client";
 import { TunnelManager, type PoolKey } from "./manager";
 import type { ShareSpawner } from "./shares";
 import type { Tailscale } from "./tailscale";
@@ -153,7 +153,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
         new LeafIssuer({
           checkTrusted: (ca) => checkTrust(defaultTrustEnv(), { certPath: caCertFile(), certPem: ca.certPem }),
         }),
-      hosts: opts.hosts ?? new HostsClient(),
+      hosts: opts.hosts ?? (hostsHelperAllowed() ? new HostsClient() : undefined),
       connectTimeoutMs: opts.connectTimeoutMs,
       timers: opts.timers,
       createPool:

@@ -9,6 +9,7 @@ import { answers } from "../hostsd/main";
 import { realRunner, type CommandRunner } from "../tunnels/command-runner";
 import { loadConfig } from "../tunnels/config";
 import { ControlClient, connectToDaemon, DaemonError, type HostsListing } from "../tunnels/control-client";
+import { hostsHelperAllowed } from "../tunnels/hosts-client";
 import { isValidHostname } from "../tunnels/hosts-block";
 import { globalOutput, printList, printMutation, resolveFormat } from "../ui/output";
 import { UsageError } from "./tunnel-saved";
@@ -104,6 +105,33 @@ export function helperLine(h: HostsListing["helper"]): string {
 async function run(runner: CommandRunner, cmd: string, args: string[]): Promise<void> {
   const r = await runner(cmd, args, { inherit: true });
   if (r.code !== 0) throw new Error(`${cmd} ${args[0] ?? ""} exited with code ${r.code}`);
+}
+
+/** Install the root helper (asks for sudo). Returns what happened, one line each. */
+export async function installHostsHelper(opts: { allowSuffix?: string[]; port443?: boolean }): Promise<string[]> {
+  requireCompiled("hosts setup");
+  const uid = requireUser();
+  if (!hostsHelperAllowed()) {
+    throw new UsageError(
+      "the hosts helper only serves the default config directory, because it writes one block for the whole machine; unset REOCLO_CONFIG_DIR, or pass --no-hosts to tunnel setup",
+    );
+  }
+  if (opts.port443) await assertPort443Free();
+  const { cmd, args } = buildSetupCommand({
+    execPath: process.execPath,
+    script: process.argv[1],
+    uid,
+    allowSuffixes: opts.allowSuffix ?? [],
+    port443: opts.port443 === true,
+    relayPort: loadConfig().https_port,
+    root: false,
+  });
+  await run(realRunner, cmd, args);
+  const listing = await (await connectToDaemon()).syncHosts();
+  return [
+    helperLine(listing.helper).replace(/^helper: /, ""),
+    ...(opts.port443 ? ["URLs no longer carry a port"] : []),
+  ];
 }
 
 export function registerHosts(program: Command): void {
@@ -204,22 +232,7 @@ Examples:
     )
     .action(async (opts: { allowSuffix?: string[]; port443?: boolean }) => {
       try {
-        requireCompiled("hosts setup");
-        const uid = requireUser();
-        if (opts.port443) await assertPort443Free();
-        const { cmd, args } = buildSetupCommand({
-          execPath: process.execPath,
-          script: process.argv[1],
-          uid,
-          allowSuffixes: opts.allowSuffix ?? [],
-          port443: opts.port443 === true,
-          relayPort: loadConfig().https_port,
-          root: false,
-        });
-        await run(realRunner, cmd, args);
-        const listing = await (await connectToDaemon()).syncHosts();
-        console.log(`hosts: ${helperLine(listing.helper).replace(/^helper: /, "")}`);
-        if (opts.port443) console.log("hosts: URLs no longer carry a port");
+        for (const line of await installHostsHelper(opts)) console.log(`hosts: ${line}`);
       } catch (err) {
         fail(err);
       }

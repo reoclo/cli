@@ -3,11 +3,21 @@
 // How the tunnel daemon and the CLI talk to the root hosts helper: one JSON
 // object per line over a Unix socket.
 
+import { usingDefaultConfigDir } from "../config/paths";
 import net from "node:net";
 import { hostsdSocketPath } from "../hostsd/paths";
 import type { HelperStatus } from "../hostsd/main";
 
 export type { HelperStatus };
+
+/**
+ * The helper writes one block for the whole machine, so only the default config
+ * directory may drive it. A daemon on any other directory, such as a test or a
+ * smoke run, would replace the real hostnames with its own.
+ */
+export function hostsHelperAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env["REOCLO_HOSTSD_DIR"]) || usingDefaultConfigDir();
+}
 
 export class HostsError extends Error {
   constructor(

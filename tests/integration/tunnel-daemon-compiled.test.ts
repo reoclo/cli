@@ -65,4 +65,22 @@ describe("compiled binary", () => {
     expect(approve.code).toBe(1);
     expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
   }, 60_000);
+
+  it("keeps a daemon on another config directory away from the real hosts helper", async () => {
+    expect((await run("tunnel", "daemon", "start")).code).toBe(0);
+    const status = await run("tunnel", "daemon", "status", "-o", "json");
+    expect(status.out).toContain('"hosts_helper_installed": false');
+    expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
+
+    const setup = await run("hosts", "setup");
+    expect(setup.code).not.toBe(0);
+    expect(setup.out).toContain("default config directory");
+  }, 60_000);
+
+  it("runs tunnel setup without a sign-in", async () => {
+    const setup = await run("tunnel", "setup", "--no-service", "--no-trust", "--no-hosts", "-o", "json");
+    expect(setup.code).toBe(0);
+    expect(setup.out).toContain('"outcome": "skipped"');
+    expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
+  }, 60_000);
 });
