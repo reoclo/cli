@@ -46,6 +46,7 @@ const COMMANDS = [
   "repos",
   "servers",
   "shell",
+  "tunnel",
   "up",
   "upgrade",
   "whoami",

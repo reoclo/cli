@@ -12,6 +12,8 @@ import {
 import { globalOutput, printList, printObject, resolveFormat, type OutputFormat } from "../ui/output";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
+import { registerTunnelSaved } from "./tunnel-saved";
+import { registerTunnelDaemon } from "./tunnel-daemon";
 
 // ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
 
@@ -19,6 +21,15 @@ export interface TunnelInterruption {
   at: string;
   reason: string;
   recovered_at: string | null;
+}
+
+/** One distinct destination a session carried a stream to. */
+export interface TunnelTarget {
+  mode: "forward" | "reverse";
+  proto: "tcp" | "udp";
+  host: string;
+  port: number;
+  first_seen_at: string;
 }
 
 export interface TunnelSessionRead {
@@ -43,6 +54,8 @@ export interface TunnelSessionRead {
   datagrams_out: number;
   peer_count: number;
   interruptions: TunnelInterruption[];
+  /** Destinations the session carried streams to. Absent from older servers. */
+  targets?: TunnelTarget[];
 }
 
 export interface TunnelCloseResponse {
@@ -132,6 +145,12 @@ export function formatTunnelDescribe(t: TunnelSessionRead, fmt: OutputFormat): v
     peer_count: t.peer_count,
   };
   printObject(flat, fmt);
+  if (t.targets && t.targets.length > 0) {
+    process.stdout.write(`\ntargets (${t.targets.length}):\n`);
+    for (const tg of t.targets) {
+      process.stdout.write(`  ${tg.mode}  ${tg.proto}  ${tg.host}:${tg.port}  first_seen_at=${tg.first_seen_at}\n`);
+    }
+  }
   if (t.interruptions.length > 0) {
     process.stdout.write(`\ninterruptions (${t.interruptions.length}):\n`);
     for (const intr of t.interruptions) {
@@ -339,6 +358,12 @@ Examples:
   $ reoclo tunnel ls --server my-server --active
   $ reoclo tunnel describe <tunnel-id>
   $ reoclo tunnel close <tunnel-id>
+
+Saved tunnels (kept up by the tunnel daemon):
+  $ reoclo tunnel add prod-db --server my-server --target 5432
+  $ reoclo tunnel status
+  $ reoclo tunnel down prod-db
+  $ reoclo tunnel daemon status
 `,
       )
       .option(
@@ -570,9 +595,12 @@ Examples:
       }),
     { args: [{ slot: 0, resource: "tunnels" }] },
   );
+
+  registerTunnelSaved(tunnelCmd, program);
+  registerTunnelDaemon(tunnelCmd, program);
 }
 
-function deriveDirectUrl(streamsUrl: string): string {
+export function deriveDirectUrl(streamsUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(streamsUrl);
