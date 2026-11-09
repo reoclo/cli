@@ -5,7 +5,7 @@
 // and uninstall do the file and service-manager work.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { daemonCommand } from "./control-client";
@@ -140,6 +140,18 @@ function run(cmd: string, args: string[]): { ok: boolean; output: string } {
 export interface ServiceResult {
   file: string;
   message: string;
+}
+
+/** True when the service file on disk is exactly what installService() would write. */
+export function serviceInstalled(): boolean {
+  const spec = serviceSpec();
+  const [file, expected] =
+    platform() === "darwin" ? [launchdPlistPath(), launchdPlist(spec)] : [systemdUnitPath(), systemdUnit(spec)];
+  try {
+    return readFileSync(file, "utf8") === expected;
+  } catch {
+    return false;
+  }
 }
 
 export function installService(): ServiceResult {

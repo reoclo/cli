@@ -45,6 +45,18 @@ async function tellDaemon(suffixes: string[] | undefined): Promise<void> {
   }
 }
 
+/** Create the CA if needed and trust it. Returns what happened, one line each. */
+export async function trustLocalCa(domains: string[]): Promise<string[]> {
+  const suffixes = mergeSuffixes(loadConfig().ca_suffixes, domains);
+  const result = await localCaActions.trust(suffixes);
+  await tellDaemon(suffixes);
+  return [
+    ...result.lines,
+    `the CA covers ${result.suffixes.join(", ")}`,
+    (await import("../tunnels/trust")).firefoxHint(),
+  ];
+}
+
 export function registerTunnelTrust(tunnelCmd: Command): void {
   tunnelCmd
     .command("trust")
@@ -64,12 +76,7 @@ Examples:
     )
     .action(async (opts: { domain?: string[] }) => {
       try {
-        const suffixes = mergeSuffixes(loadConfig().ca_suffixes, opts.domain ?? []);
-        const result = await localCaActions.trust(suffixes);
-        for (const line of result.lines) console.log(`tunnel: ${line}`);
-        await tellDaemon(suffixes);
-        console.log(`tunnel: the CA covers ${result.suffixes.join(", ")}`);
-        console.log(`tunnel: ${(await import("../tunnels/trust")).firefoxHint()}`);
+        for (const line of await trustLocalCa(opts.domain ?? [])) console.log(`tunnel: ${line}`);
       } catch (err) {
         fail(err);
       }

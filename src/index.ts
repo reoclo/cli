@@ -229,6 +229,7 @@ if (import.meta.main) {
     "tunnel trust",
     "tunnel untrust",
     "tunnel ca-path",
+    "tunnel setup",
     "tunnel approvals",
     "tunnel approve",
     "tunnel deny",

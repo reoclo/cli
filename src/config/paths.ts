@@ -15,6 +15,15 @@ export function configDir(): string {
   const override = _configDirStorage.getStore();
   if (override) return override;
   if (process.env.REOCLO_CONFIG_DIR) return process.env.REOCLO_CONFIG_DIR;
+  return defaultConfigDir();
+}
+
+/** False when $REOCLO_CONFIG_DIR or a test points the CLI somewhere else. */
+export function usingDefaultConfigDir(): boolean {
+  return configDir() === defaultConfigDir();
+}
+
+export function defaultConfigDir(): string {
   if (platform() === "win32") {
     const base = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
     return join(base, "reoclo");

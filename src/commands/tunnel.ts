@@ -15,6 +15,7 @@ import { cacheList } from "../completion/populate";
 import { registerTunnelSaved } from "./tunnel-saved";
 import { registerTunnelDaemon } from "./tunnel-daemon";
 import { registerTunnelTrust } from "./tunnel-trust";
+import { registerTunnelSetup } from "./tunnel-setup";
 import { registerTunnelApprovals } from "./tunnel-approvals";
 
 // ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
@@ -601,6 +602,7 @@ Saved tunnels (kept up by the tunnel daemon):
   registerTunnelSaved(tunnelCmd, program);
   registerTunnelDaemon(tunnelCmd, program);
   registerTunnelTrust(tunnelCmd);
+  registerTunnelSetup(tunnelCmd, program);
   registerTunnelApprovals(tunnelCmd, program);
 }
 
