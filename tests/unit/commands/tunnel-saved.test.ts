@@ -71,7 +71,7 @@ describe("buildAddBody", () => {
     expect(() => buildAddBody("a", { kind: "reverse", remotePort: "80", localTarget: "1", target: "5" }, ctx)).toThrow(/--target does not apply/);
   });
   it("rejects an unknown kind", () => {
-    expect(() => buildAddBody("a", { kind: "icmp", target: "80" }, ctx)).toThrow(/expected tcp, udp, https or reverse/);
+    expect(() => buildAddBody("a", { kind: "icmp", target: "80" }, ctx)).toThrow(/expected tcp, udp, https, reverse or local/);
   });
   it("marks usage errors with exit code 2", () => {
     try {
@@ -217,7 +217,7 @@ describe("daemon command helpers", () => {
       tunnels: { total: 0, enabled: 0, by_state: {} },
       https: { port: 8443, listening: false, error: "port 8443 is already in use" },
       ca: { exists: true, trusted: true, suffixes: ["reoclo.localhost"], stale: true, not_after: "2028-11-09T00:00:00.000Z" },
-      hosts: { installed: true, entries: 3, suffixes: [], relay: { enabled: true, listening: true, port: 8443 } },
+      hosts: { installed: true, entries: 3, suffixes: ["reoclo.test"], relay: { enabled: true, listening: false, port: 8443 } },
     });
     expect(out).toMatchObject({
       https_port: 8443,
@@ -226,9 +226,13 @@ describe("daemon command helpers", () => {
       ca_exists: true,
       ca_trusted: true,
       ca_stale: true,
+      ca_suffixes: ["reoclo.localhost"],
       hosts_helper_installed: true,
       hosts_entries: 3,
-      hosts_port_443_relay: true,
+      hosts_port_443_relay: false,
+      hosts_suffixes: ["reoclo.test"],
+      hosts_relay_enabled: true,
+      hosts_relay_listening: false,
     });
     expect(out).not.toHaveProperty("hosts_error");
   });

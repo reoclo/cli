@@ -9,7 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolveServer } from "../../client/resolve";
 import type { Server } from "../../client/types";
-import { buildAddBody, buildEditBody, type AddOptions, type EditOptions } from "../../commands/tunnel-saved";
+import { buildAddBody, buildEditBody, type AddContext, type AddOptions, type EditOptions } from "../../commands/tunnel-saved";
 import type { ApprovalView } from "../../tunnels/approvals";
 import { DaemonError, type ClientIdentity, type ControlClient, type GatedReply } from "../../tunnels/control-client";
 import type { TunnelView } from "../../tunnels/manager";
@@ -53,7 +53,7 @@ function failure(err: unknown): ToolResult {
 /** What an agent needs to know about a tunnel. */
 export function shapeTunnel(t: TunnelView, caPath?: string): Record<string, unknown> {
   let endpoint: string | undefined;
-  if (t.kind === "https") endpoint = t.url;
+  if (t.kind === "https" || t.kind === "local") endpoint = t.url;
   else if (t.kind !== "reverse" && t.endpoint !== undefined) {
     endpoint = t.adhoc ? `${t.kind === "udp" ? "udp" : "http"}://${t.endpoint}` : t.endpoint;
   }
@@ -64,8 +64,7 @@ export function shapeTunnel(t: TunnelView, caPath?: string): Record<string, unkn
     message: t.message,
     ...(t.action !== "None" ? { action: t.action } : {}),
     ...(t.detail ? { detail: t.detail } : {}),
-    org: t.org,
-    server: t.server,
+    ...(t.kind === "local" ? { local_target: t.local_target } : { org: t.org, server: t.server }),
     ...(t.target ? { target: t.target } : {}),
     ...(t.kind === "reverse" ? { remote_port: t.remote_port, local_target: t.local_target } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -80,7 +79,7 @@ export function shapeTunnel(t: TunnelView, caPath?: string): Record<string, unkn
       : {}),
     ad_hoc: t.adhoc === true,
     expires_at: t.expires_at ?? null,
-    ...(caPath && t.kind === "https" ? { ca_path: caPath } : {}),
+    ...(caPath && (t.kind === "https" || t.kind === "local") ? { ca_path: caPath } : {}),
     traffic: t.traffic,
   };
 }
@@ -118,8 +117,8 @@ async function settle<T>(client: ControlClient, reply: GatedReply<T>, signal: Ab
 }
 
 const ADD_FIELDS = {
-  server: z.string().min(1).describe("Server name, slug or id"),
-  kind: z.enum(["tcp", "udp", "https", "reverse"]).optional().describe("Default tcp, or https when hostname is given"),
+  server: z.string().min(1).optional().describe("Server name, slug or id. Required except for kind local"),
+  kind: z.enum(["tcp", "udp", "https", "reverse", "local"]).optional().describe("Default tcp, or https when hostname is given. local serves hostname over HTTPS and forwards to local_target on this machine"),
   target: z.string().min(1).optional().describe("Forward tunnels: where the server connects, HOST:PORT or a bare port (127.0.0.1)"),
   local_port: z.number().int().min(1).max(65535).optional().describe("tcp or udp: local port to listen on"),
   hostname: z.string().min(1).optional().describe("Local hostname, such as grafana.prod-1.reoclo.localhost. Needs approval."),
@@ -127,7 +126,7 @@ const ADD_FIELDS = {
   via: z.enum(["reoclo", "tailscale", "auto"]).optional().describe("Transport: the Reoclo relay (default), the tailnet, or the tailnet with the relay as fallback"),
   tailnet_host: z.string().min(1).optional().describe("The server's name on the tailnet, when it differs from its Reoclo hostname"),
   remote_port: z.number().int().min(1).max(65535).optional().describe("reverse: port the server listens on. Needs approval."),
-  local_target: z.string().min(1).optional().describe("reverse: where this machine connects, HOST:PORT or a bare port"),
+  local_target: z.string().min(1).optional().describe("reverse or local: where this machine connects, HOST:PORT or a bare port"),
   bind_public: z.boolean().optional().describe("reverse: bind 0.0.0.0 on the server. Needs approval."),
 };
 
@@ -243,14 +242,27 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
     },
     async (args) => {
       try {
-        const org = needOrg();
-        const { tenantId, client: api } = await deps.ctx.resolveOrg();
-        const serverId = await resolveServer(api, tenantId, args.server);
-        const servers = await api.get<Server[]>(`/tenants/${tenantId}/servers/`);
-        const found = servers.find((s) => s.id === serverId);
-        const display = found?.name ?? found?.slug ?? args.server;
+        const local = args.kind === "local";
+        let addCtx: AddContext | undefined;
+        if (!local) {
+          if (args.server === undefined) return result({ error: "server is required unless kind is local" }, true);
+          const org = needOrg();
+          const { tenantId, client: api } = await deps.ctx.resolveOrg();
+          const serverId = await resolveServer(api, tenantId, args.server);
+          const servers = await api.get<Server[]>(`/tenants/${tenantId}/servers/`);
+          const found = servers.find((s) => s.id === serverId);
+          addCtx = {
+            org,
+            tenant_id: tenantId,
+            profile: deps.profile,
+            server: found?.name ?? found?.slug ?? args.server,
+            server_id: serverId,
+            server_hostname: found?.hostname,
+            connection_type: found?.connection_type,
+          };
+        }
         const opts: AddOptions & EditOptions = {
-          server: args.server,
+          server: local ? undefined : args.server,
           target: args.target,
           kind: args.kind,
           hostname: args.hostname,
@@ -270,23 +282,10 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
         });
         const reply: GatedReply<TunnelView> =
           existing === undefined
-            ? await c.requestWithStatus<TunnelView>(
-                "POST",
-                "/v1/tunnels",
-                buildAddBody(args.name, opts, {
-                  org,
-                  tenant_id: tenantId,
-                  profile: deps.profile,
-                  server: display,
-                  server_id: serverId,
-                  server_hostname: found?.hostname,
-                  connection_type: found?.connection_type,
-                }),
-              )
+            ? await c.requestWithStatus<TunnelView>("POST", "/v1/tunnels", buildAddBody(args.name, opts, addCtx))
             : await c.requestWithStatus<TunnelView>("PATCH", `/v1/tunnels/${encodeURIComponent(args.name)}`, {
                 ...buildEditBody(existing.kind, opts),
-                server: display,
-                server_id: serverId,
+                ...(addCtx ? { server: addCtx.server, server_id: addCtx.server_id } : {}),
               });
         const settled = await settle(c, reply, signal());
         return settled.done ? result(shapeTunnel(settled.value, caPath())) : settled.result;

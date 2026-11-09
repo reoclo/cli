@@ -1,7 +1,7 @@
 // The bundled binary loads modules differently from `bun test`, and a load-order
 // failure there stops the daemon from starting while every unit test passes.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,6 +75,38 @@ describe("compiled binary", () => {
     const setup = await run("hosts", "setup");
     expect(setup.code).not.toBe(0);
     expect(setup.out).toContain("default config directory");
+  }, 60_000);
+
+  it("lists a tunnel running in a terminal and stops it", async () => {
+    const child = Bun.spawn(["bash", "-c", 'exec -a "reoclo tunnel prod-1" sleep 60'], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    const registry = join(dir, "config", "tunnels", "run", "foreground");
+    mkdirSync(registry, { recursive: true });
+    writeFileSync(
+      join(registry, `${String(child.pid)}.json`),
+      JSON.stringify({
+        pid: child.pid,
+        org: "acme",
+        server: "prod-1",
+        state: "active",
+        started_at: "2026-11-09T10:00:00.000Z",
+        forwards: [{ kind: "forward", proto: "tcp", listen: "127.0.0.1:7700", target: "127.0.0.1:7700" }],
+      }),
+    );
+    expect((await run("tunnel", "daemon", "start")).code).toBe(0);
+    const listed = await run("tunnel", "status");
+    expect(listed.out).toContain("Running in a terminal");
+    expect(listed.out).toContain("127.0.0.1:7700 -> 127.0.0.1:7700");
+
+    const res = await fetch(`http://localhost/v1/foreground/${String(child.pid)}/stop`, {
+      unix: join(dir, "config", "tunnels", "run", "tunneld.sock"),
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    await child.exited;
+    expect(child.signalCode).toBe("SIGTERM");
+
+    expect((await run("tunnel", "status")).out).not.toContain("Running in a terminal");
+    expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
   }, 60_000);
 
   it("runs tunnel setup without a sign-in", async () => {

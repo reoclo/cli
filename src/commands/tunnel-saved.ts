@@ -10,6 +10,7 @@ import { globalOutput, printList, printMutation, resolveFormat, type OutputForma
 import { VIA_VALUES, type Via } from "../tunnels/config";
 import { connectToDaemon, DaemonError, type ControlClient, type DaemonStatus } from "../tunnels/control-client";
 import { BASE_SUFFIX, isValidHostname } from "../tunnels/hosts-block";
+import type { ForegroundTunnel } from "../tunnels/foreground";
 import type { TunnelView } from "../tunnels/manager";
 import { targetProblem } from "../tunnels/tailscale";
 
@@ -65,7 +66,13 @@ export function parseHostPortFlag(flag: string, value: string): string {
 const FORWARD_ONLY = ["target", "localPort", "hostname"] as const;
 const HTTPS_REJECTS = ["localPort"] as const;
 const REVERSE_ONLY = ["remotePort", "localTarget", "bindPublic"] as const;
+/** A local route has no server, gateway session or transport: only a hostname and a local target. */
+const LOCAL_REJECTS = ["server", "target", "localPort", "remotePort", "bindPublic", "keepUp", "via", "tailnetHost"] as const;
 const FLAG_NAME: Record<string, string> = {
+  server: "--server",
+  keepUp: "--keep-up",
+  via: "--via",
+  tailnetHost: "--tailnet-host",
   target: "--target",
   hostname: "--hostname",
   localPort: "--local-port",
@@ -145,12 +152,33 @@ export function parseHostnameFlag(value: string): string {
   return host;
 }
 
-/** The body for POST /v1/tunnels. Throws UsageError for a flag mix that makes no sense. */
-export function buildAddBody(name: string, opts: AddOptions, ctx: AddContext): Record<string, unknown> {
+/** The kind `add` saves: --kind, else https when --hostname is given, else tcp. */
+export function addKindOf(opts: Pick<AddOptions, "kind" | "hostname">): string {
   const kind = opts.kind ?? (opts.hostname !== undefined ? "https" : "tcp");
-  if (kind !== "tcp" && kind !== "udp" && kind !== "https" && kind !== "reverse") {
-    throw new UsageError(`invalid --kind: ${JSON.stringify(kind)} (expected tcp, udp, https or reverse)`);
+  if (kind !== "tcp" && kind !== "udp" && kind !== "https" && kind !== "reverse" && kind !== "local") {
+    throw new UsageError(`invalid --kind: ${JSON.stringify(kind)} (expected tcp, udp, https, reverse or local)`);
   }
+  return kind;
+}
+
+function buildLocalAddBody(name: string, opts: AddOptions): Record<string, unknown> {
+  rejectFlags("local", opts, LOCAL_REJECTS);
+  if (opts.hostname === undefined) throw new UsageError("a local tunnel needs --hostname");
+  if (opts.localTarget === undefined) throw new UsageError("a local tunnel needs --local-target");
+  return {
+    name,
+    kind: "local",
+    hostname: parseHostnameFlag(opts.hostname),
+    local_target: parseHostPortFlag("--local-target", opts.localTarget),
+    enabled: opts.up !== false,
+  };
+}
+
+/** The body for POST /v1/tunnels. Throws UsageError for a flag mix that makes no sense. A local route needs no `ctx`. */
+export function buildAddBody(name: string, opts: AddOptions, ctx?: AddContext): Record<string, unknown> {
+  const kind = addKindOf(opts);
+  if (kind === "local") return buildLocalAddBody(name, opts);
+  if (ctx === undefined) throw new UsageError(`a ${kind} tunnel needs --server`);
   const body: Record<string, unknown> = {
     name,
     org: ctx.org,
@@ -189,6 +217,12 @@ export function buildAddBody(name: string, opts: AddOptions, ctx: AddContext): R
 /** The body for PATCH /v1/tunnels/{name}: only what the user passed. */
 export function buildEditBody(kind: string, opts: EditOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {};
+  if (kind === "local") {
+    rejectFlags(kind, opts, LOCAL_REJECTS);
+    if (opts.hostname !== undefined) body["hostname"] = parseHostnameFlag(opts.hostname);
+    if (opts.localTarget !== undefined) body["local_target"] = parseHostPortFlag("--local-target", opts.localTarget);
+    return body;
+  }
   if (kind === "reverse") rejectFlags(kind, opts, FORWARD_ONLY);
   else rejectFlags(kind, opts, REVERSE_ONLY);
   if (kind === "https") rejectFlags(kind, opts, HTTPS_REJECTS);
@@ -259,7 +293,7 @@ export function sharedLabel(t: TunnelView): string {
 
 function localOf(t: TunnelView): string {
   if (t.kind === "reverse") return t.local_target ?? "";
-  return t.kind === "https" ? (t.url ?? "") : (t.endpoint ?? "");
+  return t.kind === "https" || t.kind === "local" ? (t.url ?? "") : (t.endpoint ?? "");
 }
 
 /** What to tell someone who just saved an HTTPS tunnel that cannot open yet. One line each. */
@@ -277,14 +311,38 @@ export function httpsHints(status: Pick<DaemonStatus, "ca" | "hosts">): string[]
 }
 
 function targetOf(t: TunnelView): string {
+  if (t.kind === "local") return t.local_target ?? "";
   return t.kind === "reverse" ? `${t.server}:${t.remote_port ?? ""}` : `${t.server}:${t.target ?? ""}`;
 }
 
-export function formatSavedTunnels(items: TunnelView[], fmt: OutputFormat): void {
+export function formatForegroundTunnels(items: ForegroundTunnel[]): void {
+  if (items.length === 0) return;
+  process.stdout.write("Running in a terminal:\n");
+  printList(
+    items.map((t) => ({
+      server: t.server,
+      org: t.org,
+      state: t.state,
+      forwards: t.forwards.map((f) => `${f.listen} -> ${f.target}`).join(", "),
+      pid: String(t.pid),
+    })),
+    [
+      { key: "server", label: "SERVER" },
+      { key: "org", label: "ORG" },
+      { key: "state", label: "STATE" },
+      { key: "forwards", label: "FORWARDS" },
+      { key: "pid", label: "PID" },
+    ],
+    "text",
+  );
+}
+
+export function formatSavedTunnels(items: TunnelView[], fmt: OutputFormat, terminal: ForegroundTunnel[] = []): void {
   if (fmt === "json") {
     for (const t of items) process.stdout.write(JSON.stringify(t) + "\n");
     return;
   }
+  if (items.length === 0 && terminal.length > 0) return;
   if (items.length === 0) {
     process.stdout.write("no saved tunnels; add one with: reoclo tunnel add <name> --server <server> --target <port>\n");
     return;
@@ -292,7 +350,7 @@ export function formatSavedTunnels(items: TunnelView[], fmt: OutputFormat): void
   printList(
     items.map((t) => ({
       name: t.name,
-      server: t.server,
+      server: t.kind === "local" ? "local" : t.server,
       kind: t.adhoc ? `${t.kind} (ad-hoc)` : t.kind,
       local: localOf(t),
       target: targetOf(t),
@@ -317,6 +375,7 @@ export function formatSavedTunnels(items: TunnelView[], fmt: OutputFormat): void
 }
 
 function summary(t: TunnelView): string {
+  if (t.kind === "local") return `tunnel: ${t.name} (local) ${t.url} -> ${t.local_target}: ${t.state}`;
   const from = t.kind === "https" ? t.url : t.endpoint;
   const where = t.kind === "reverse" ? `${t.server}:${t.remote_port} -> ${t.local_target}` : `${from} -> ${t.server}:${t.target}`;
   return `tunnel: ${t.name} (${t.kind}) ${where}: ${t.state}`;
@@ -390,7 +449,10 @@ export function registerTunnelSaved(tunnelCmd: Command, program: Command): void 
       try {
         const client = await connectToDaemon();
         const items = name ? [await client.tunnel(name)] : await client.tunnels();
-        formatSavedTunnels(items, fmt);
+        const terminal = name || fmt !== "text" ? [] : await client.foreground();
+        formatSavedTunnels(items, fmt, terminal);
+        if (items.length > 0 && terminal.length > 0) process.stdout.write("\n");
+        formatForegroundTunnels(terminal);
       } catch (err) {
         fail(err);
       }
@@ -399,15 +461,15 @@ export function registerTunnelSaved(tunnelCmd: Command, program: Command): void 
   tunnelCmd
     .command("add <name>")
     .description("save a tunnel; the tunnel daemon keeps it up across terminals and restarts")
-    .requiredOption("--server <server>", "server name, slug or id")
+    .option("--server <server>", "server name, slug or id (required except for --kind local)")
     .option("--target <host:port|port>", "forward: where the server connects (a bare port means 127.0.0.1)")
-    .option("--kind <kind>", "tcp, udp, https or reverse (default tcp, or https when --hostname is given)")
-    .option("--hostname <name>", "local hostname; https defaults to <name>.<server>.reoclo.localhost")
+    .option("--kind <kind>", "tcp, udp, https, reverse or local (default tcp, or https when --hostname is given)")
+    .option("--hostname <name>", "local hostname; https defaults to <name>.<server>.reoclo.localhost; required for local")
     .option("--local-port <port>", "forward: local port to listen on (default: the target port when free)")
     .option("--keep-up", "hold the gateway session open instead of opening it on demand")
     .option("--no-up", "save the tunnel without bringing it up")
     .option("--remote-port <port>", "reverse: port the server listens on")
-    .option("--local-target <host:port|port>", "reverse: where this machine connects")
+    .option("--local-target <host:port|port>", "reverse, local: where this machine connects")
     .option("--bind-public", "reverse: bind 0.0.0.0 on the server")
     .option("--via <transport>", "reoclo, tailscale or auto (default reoclo; tailscale for an SSH server)")
     .option("--tailnet-host <name>", "the server's name on the tailnet, when it differs from its Reoclo hostname")
@@ -419,26 +481,33 @@ Examples:
   $ reoclo tunnel add prod-db --server prod-1 --target db.internal:5432 --local-port 15432 --keep-up
   $ reoclo tunnel add hook --server prod-1 --kind reverse --remote-port 8080 --local-target 3000
   $ reoclo tunnel add grafana --server prod-1 --kind https --target 3000
+  $ reoclo tunnel add dev-app --kind local --hostname app.reoclo.test --local-target 127.0.0.1:48080
 `,
     )
     .action(async (name: string, opts: AddOptions) => {
       try {
-        const ctx = await bootstrap();
-        if (!ctx.orgSlug) {
-          throw new UsageError("tunnel add needs an organization: pass --org <slug>, set $REOCLO_ORG, or add a .reoclo file");
+        const kind = addKindOf(opts);
+        let addCtx: AddContext | undefined;
+        if (kind !== "local") {
+          if (opts.server === undefined) throw new UsageError(`a ${kind} tunnel needs --server`);
+          const ctx = await bootstrap();
+          if (!ctx.orgSlug) {
+            throw new UsageError("tunnel add needs an organization: pass --org <slug>, set $REOCLO_ORG, or add a .reoclo file");
+          }
+          const tenantId = await requireTenantId(ctx);
+          const serverId = await resolveServer(ctx.client, tenantId, opts.server);
+          const info = await serverInfo(ctx, tenantId, opts.server, serverId);
+          addCtx = {
+            org: ctx.orgSlug,
+            tenant_id: tenantId,
+            profile: ctx.profileName,
+            server: info.display,
+            server_id: serverId,
+            server_hostname: info.hostname,
+            connection_type: info.connection_type,
+          };
         }
-        const tenantId = await requireTenantId(ctx);
-        const serverId = await resolveServer(ctx.client, tenantId, opts.server ?? "");
-        const info = await serverInfo(ctx, tenantId, opts.server ?? "", serverId);
-        const body = buildAddBody(name, opts, {
-          org: ctx.orgSlug,
-          tenant_id: tenantId,
-          profile: ctx.profileName,
-          server: info.display,
-          server_id: serverId,
-          server_hostname: info.hostname,
-          connection_type: info.connection_type,
-        });
+        const body = buildAddBody(name, opts, addCtx);
         const client = await connectToDaemon();
         for (const warning of await tailnetWarnings(client, body)) console.error(`tunnel: warning: ${warning}`);
         const saved = await client.add(body);
@@ -456,12 +525,12 @@ Examples:
     .description("change a saved tunnel; it restarts when it is up")
     .option("--server <server>", "server name, slug or id")
     .option("--target <host:port|port>", "forward: where the server connects")
-    .option("--hostname <name>", "local hostname for a tcp, udp or https tunnel")
+    .option("--hostname <name>", "local hostname for a tcp, udp, https or local tunnel")
     .option("--local-port <port>", "tcp, udp: local port to listen on")
     .option("--keep-up", "hold the gateway session open")
     .option("--no-keep-up", "open the gateway session on demand")
     .option("--remote-port <port>", "reverse: port the server listens on")
-    .option("--local-target <host:port|port>", "reverse: where this machine connects")
+    .option("--local-target <host:port|port>", "reverse, local: where this machine connects")
     .option("--bind-public", "reverse: bind 0.0.0.0 on the server")
     .option("--no-bind-public", "reverse: bind 127.0.0.1 on the server")
     .option("--via <transport>", "reoclo, tailscale or auto")

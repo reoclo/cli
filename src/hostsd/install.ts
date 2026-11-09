@@ -70,6 +70,10 @@ export interface InstallOptions {
   run?: CommandRunner;
   /** Make the installed files root-owned. Off in tests, which run unprivileged. */
   chownRoot?: boolean;
+  /** Waits between launchd retries. Tests replace it. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Resolves once the helper answers. Absent in a sandbox, where no service starts. */
+  waitUntilUp?: () => Promise<void>;
 }
 
 export class InstallError extends Error {
@@ -97,6 +101,44 @@ async function must(run: CommandRunner, cmd: string, args: string[]): Promise<vo
   if (r.code !== 0) throw new InstallError(`${shellWords(cmd, args)} failed: ${(r.stderr || r.stdout).trim()}`);
 }
 
+const BOOTSTRAP_ATTEMPTS = 8;
+const BOOTSTRAP_RETRY_MS = 250;
+
+/** `launchctl bootout` returns before launchd has finished, so a bootstrap straight after it can fail. */
+async function bootstrapLaunchd(run: CommandRunner, service: string, sleep: (ms: number) => Promise<void>): Promise<void> {
+  const args = ["bootstrap", "system", service];
+  for (let attempt = 1; attempt < BOOTSTRAP_ATTEMPTS; attempt++) {
+    if ((await run("launchctl", args)).code === 0) return;
+    await sleep(BOOTSTRAP_RETRY_MS);
+  }
+  await must(run, "launchctl", args);
+}
+
+const HELPER_WAIT_ATTEMPTS = 80;
+const HELPER_WAIT_MS = 250;
+
+/**
+ * The helper takes a couple of seconds to start. Whoever ran the install asks it
+ * for its status straight after, so the install must not return before it answers.
+ */
+export async function waitForHelper(
+  status: () => Promise<unknown>,
+  sleep: (ms: number) => Promise<void> = Bun.sleep,
+): Promise<void> {
+  let last: unknown;
+  for (let attempt = 0; attempt < HELPER_WAIT_ATTEMPTS; attempt++) {
+    try {
+      await status();
+      return;
+    } catch (err) {
+      last = err;
+      await sleep(HELPER_WAIT_MS);
+    }
+  }
+  const why = last instanceof Error ? last.message : String(last);
+  throw new InstallError(`the hosts helper was installed but did not answer: ${why}`);
+}
+
 function putFile(path: string, content: string, mode: number, root: boolean): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, { mode });
@@ -122,13 +164,14 @@ export async function installHostsd(o: InstallOptions): Promise<string[]> {
   if (o.platform === "darwin") {
     putFile(paths.service, hostsdLaunchdPlist(paths.binary), 0o644, root);
     await run("launchctl", ["bootout", `system/${HOSTSD_LABEL}`]);
-    await must(run, "launchctl", ["bootstrap", "system", paths.service]);
+    await bootstrapLaunchd(run, paths.service, o.sleep ?? Bun.sleep);
   } else {
     putFile(paths.service, hostsdSystemdUnit(paths.binary), 0o644, root);
     await must(run, "systemctl", ["daemon-reload"]);
     await must(run, "systemctl", ["enable", HOSTSD_UNIT]);
     await must(run, "systemctl", ["restart", HOSTSD_UNIT]);
   }
+  await o.waitUntilUp?.();
   return [
     `copied the CLI to ${paths.binary}`,
     `wrote ${paths.config}`,

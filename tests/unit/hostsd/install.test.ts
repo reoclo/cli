@@ -9,7 +9,7 @@ import {
   buildConfig,
   hostsdLaunchdPlist,
   hostsdSystemdUnit,
-  installHostsd,
+  installHostsd, waitForHelper,
   uninstallHostsd,
 } from "../../../src/hostsd/install";
 import { LINUX_PATHS, MAC_PATHS, sandboxPaths, sandboxDir, type HostsdPaths } from "../../../src/hostsd/paths";
@@ -126,11 +126,51 @@ describe("installHostsd", () => {
     ]);
   });
 
+  it("does not return until the helper answers", async () => {
+    const order: string[] = [];
+    const run: CommandRunner = (_cmd, args) => {
+      order.push(String(args[0]));
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    await installHostsd({
+      uid: 501, allowSuffixes: [], port443: false, sourceBinary: join(dir, "cli"), platform: "darwin", paths, run,
+      waitUntilUp: () => {
+        order.push("up");
+        return Promise.resolve();
+      },
+    });
+    expect(order).toEqual(["bootout", "bootstrap", "up"]);
+  });
+
+  it("waits through a helper that is still starting", async () => {
+    let calls = 0;
+    await waitForHelper(() => (++calls < 4 ? Promise.reject(new Error("not listening")) : Promise.resolve()), () => Promise.resolve());
+    expect(calls).toBe(4);
+  });
+
+  it("says so when the helper never answers", async () => {
+    expect(messageOf(await rejectionOf(
+      waitForHelper(() => Promise.reject(new Error("not listening")), () => Promise.resolve()),
+    ))).toMatch(/installed but did not answer: not listening/);
+  });
+
+  it("retries a bootstrap that races the bootout before it", async () => {
+    let attempts = 0;
+    const racing: CommandRunner = (_cmd, args) => {
+      if (args[0] === "bootstrap" && ++attempts < 3) {
+        return Promise.resolve({ code: 5, stdout: "", stderr: "Bootstrap failed: 5: Input/output error" });
+      }
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    await installHostsd({ uid: 501, allowSuffixes: [], port443: false, sourceBinary: join(dir, "cli"), platform: "darwin", paths, run: racing, sleep: () => Promise.resolve() });
+    expect(attempts).toBe(3);
+  });
+
   it("fails and says which command failed when the service manager refuses", async () => {
     const failing: CommandRunner = (cmd, args) =>
       Promise.resolve(args[0] === "bootstrap" ? { code: 5, stdout: "", stderr: "no such service" } : { code: 0, stdout: "", stderr: "" });
     expect(messageOf(await rejectionOf(
-      installHostsd({ uid: 501, allowSuffixes: [], port443: false, sourceBinary: join(dir, "cli"), platform: "darwin", paths, run: failing }),
+      installHostsd({ uid: 501, allowSuffixes: [], port443: false, sourceBinary: join(dir, "cli"), platform: "darwin", paths, run: failing, sleep: () => Promise.resolve() }),
     ))).toMatch(/launchctl bootstrap system .* failed: no such service/);
   });
 

@@ -15,13 +15,16 @@ import {
   hostnameOf,
   isForward,
   isHttps,
+  isLocal,
   isReverse,
   loadConfig,
   parseTunnel,
   updateConfig,
   viaOf,
+  type DialedTunnel,
   type ForwardTunnel,
   type HttpsTunnel,
+  type LocalTunnel,
   type SavedTunnel,
   type TunnelsFile,
   type Via,
@@ -138,7 +141,7 @@ export interface ManagerOptions {
   /** Where the pids of share children are recorded. Default: next to the config file. */
   sharesFile?: string;
   /** The server's stored port scan, for the tailnet bind check. A failure counts as no scan. */
-  portScan?: (cfg: SavedTunnel) => Promise<ScannedPort[] | undefined>;
+  portScan?: (cfg: DialedTunnel) => Promise<ScannedPort[] | undefined>;
   /** Longest wait for a dial over the tailnet. Default 5 s. */
   tailnetConnectTimeoutMs?: number;
 }
@@ -490,7 +493,7 @@ export class TunnelManager {
 
   async unshare(name: string): Promise<TunnelView> {
     const rt = this.require(name);
-    if (rt.cfg.kind === "reverse" || rt.cfg.share === undefined) return this.view(rt);
+    if (rt.cfg.kind === "reverse" || rt.cfg.kind === "local" || rt.cfg.share === undefined) return this.view(rt);
     return this.edit(name, { share: null });
   }
 
@@ -498,7 +501,7 @@ export class TunnelManager {
   private async fillShare(raw: Record<string, unknown>, current?: SavedTunnel): Promise<void> {
     const patch = raw["share"];
     if (patch === null || typeof patch !== "object" || Array.isArray(patch)) return;
-    const before = current && current.kind !== "reverse" ? current.share : undefined;
+    const before = current && current.kind !== "reverse" && current.kind !== "local" ? current.share : undefined;
     const share: Record<string, unknown> = { ...before, ...(patch as Record<string, unknown>) };
     if (share["port"] === undefined) {
       const target = typeof raw["target"] === "string" ? raw["target"] : "";
@@ -657,12 +660,12 @@ export class TunnelManager {
   private async activate(rt: Runtime, o: { reset?: boolean } = {}): Promise<void> {
     rt.active = true;
     const cfg = rt.cfg;
-    const entry = viaOf(cfg) === "tailscale" ? undefined : this.ensurePool(rt);
+    const entry = isLocal(cfg) || viaOf(cfg) === "tailscale" ? undefined : this.ensurePool(rt, cfg);
     if (o.reset) entry?.pool.reset();
     if (isForward(cfg)) await this.bind(rt, cfg);
-    else if (isHttps(cfg)) await this.bindHttps(rt, cfg);
-    if (cfg.kind !== "reverse" && cfg.share) await this.startShare(rt, cfg);
-    if (isReverse(cfg) || cfg.keep_up) void this.connectHeld(rt);
+    else if (isHttps(cfg) || isLocal(cfg)) await this.bindHttps(rt, cfg);
+    if (cfg.kind !== "reverse" && cfg.kind !== "local" && cfg.share) await this.startShare(rt, cfg);
+    if (isReverse(cfg) || (!isLocal(cfg) && cfg.keep_up)) void this.connectHeld(rt);
     if (viaOf(cfg) !== "reoclo") void this.refreshPath(rt);
     this.emitTunnel(rt);
   }
@@ -715,17 +718,17 @@ export class TunnelManager {
 
   // ── pools ────────────────────────────────────────────────────────────────
 
-  private poolKey(cfg: SavedTunnel): string {
+  private poolKey(cfg: Exclude<SavedTunnel, LocalTunnel>): string {
     return [cfg.profile ?? "", cfg.org, cfg.server_id].join("\u0000");
   }
 
-  private ensurePool(rt: Runtime): PoolEntry {
+  private ensurePool(rt: Runtime, cfg: Exclude<SavedTunnel, LocalTunnel>): PoolEntry {
     if (rt.entry) return rt.entry;
-    const key = this.poolKey(rt.cfg);
+    const key = this.poolKey(cfg);
     let entry = this.pools.get(key);
     if (!entry) {
       const pool = this.opts.createPool(
-        { org: rt.cfg.org, tenant_id: rt.cfg.tenant_id, server_id: rt.cfg.server_id, profile: rt.cfg.profile },
+        { org: cfg.org, tenant_id: cfg.tenant_id, server_id: cfg.server_id, profile: cfg.profile },
         this.file.idle_timeout_seconds * 1000,
       );
       const created: PoolEntry = { pool, unsubscribe: () => undefined, users: new Set() };
@@ -761,7 +764,7 @@ export class TunnelManager {
   }
 
   private holdsSession(rt: Runtime): boolean {
-    return rt.active && (isReverse(rt.cfg) || rt.cfg.keep_up);
+    return rt.active && !isLocal(rt.cfg) && (isReverse(rt.cfg) || rt.cfg.keep_up);
   }
 
   // ── keep-up and reverse holds ────────────────────────────────────────────
@@ -858,7 +861,7 @@ export class TunnelManager {
     }
   }
 
-  private async bindHttps(rt: Runtime, cfg: HttpsTunnel): Promise<void> {
+  private async bindHttps(rt: Runtime, cfg: HttpsTunnel | LocalTunnel): Promise<void> {
     this.routes.set(cfg.hostname, rt);
     await this.ensureProxy();
   }
@@ -904,12 +907,49 @@ export class TunnelManager {
 
   private onSecure(hostname: string, sock: tls.TLSSocket): void {
     const rt = this.routes.get(hostname);
-    if (!rt || !rt.active || !isHttps(rt.cfg)) {
+    if (!rt || !rt.active || !(isHttps(rt.cfg) || isLocal(rt.cfg))) {
       sock.destroy();
+      return;
+    }
+    if (isLocal(rt.cfg)) {
+      this.onLocal(rt, sock, rt.cfg);
       return;
     }
     const target = splitHostPort(rt.cfg.target);
     this.onAccept(rt, sock, { remoteHost: target.host, remotePort: target.port });
+  }
+
+  /** Pipe a decrypted connection to a TCP address on this machine. A refused target closes the client and logs one line. */
+  private onLocal(rt: Runtime, sock: tls.TLSSocket, cfg: LocalTunnel): void {
+    sock.pause();
+    this.track(rt, sock);
+    const target = splitHostPort(cfg.local_target);
+    const peer = net.connect({ host: target.host, port: target.port });
+    let connected = false;
+    peer.on("error", (err) => {
+      if (!connected) this.log(`tunnel ${cfg.name}: could not connect to ${cfg.local_target}: ${err.message}`);
+      peer.destroy();
+      sock.destroy();
+    });
+    peer.once("connect", () => {
+      connected = true;
+      sock.pipe(peer);
+      peer.pipe(sock);
+      sock.resume();
+    });
+    peer.once("close", () => sock.destroy());
+    sock.once("close", () => peer.destroy());
+  }
+
+  /** Count an accepted socket's bytes and streams against the tunnel. */
+  private track(rt: Runtime, sock: net.Socket): void {
+    sock.on("error", () => sock.destroy());
+    rt.sockets.add(sock);
+    sock.once("close", () => {
+      rt.sockets.delete(sock);
+      rt.closedIn += sock.bytesWritten;
+      rt.closedOut += sock.bytesRead;
+    });
   }
 
   private onAccept(
@@ -917,15 +957,9 @@ export class TunnelManager {
     sock: net.Socket,
     remote: { remoteHost: string; remotePort: number },
   ): void {
-    sock.on("error", () => sock.destroy());
     // Hold the bytes until the session is open: send() drops frames before that.
     sock.pause();
-    rt.sockets.add(sock);
-    sock.once("close", () => {
-      rt.sockets.delete(sock);
-      rt.closedIn += sock.bytesWritten;
-      rt.closedOut += sock.bytesRead;
-    });
+    this.track(rt, sock);
     if (!rt.entry && viaOf(rt.cfg) !== "tailscale") {
       sock.destroy();
       return;
@@ -992,7 +1026,7 @@ export class TunnelManager {
   }
 
   /** Where a server's port scan says the port listens, cached for five minutes. */
-  private async scan(cfg: SavedTunnel): Promise<ScannedPort[] | undefined> {
+  private async scan(cfg: DialedTunnel): Promise<ScannedPort[] | undefined> {
     const fn = this.opts.portScan;
     if (!fn) return undefined;
     const key = [cfg.profile ?? "", cfg.org, cfg.server_id].join("\u0000");
@@ -1010,7 +1044,7 @@ export class TunnelManager {
 
   private async tailnetRoute(rt: Runtime, host: string, port: number): Promise<TailnetRoute> {
     const cfg = rt.cfg;
-    if (cfg.kind === "reverse") return { ok: false, reason: "a reverse tunnel can only use the relay" };
+    if (cfg.kind === "reverse" || cfg.kind === "local") return { ok: false, reason: `a ${cfg.kind} tunnel can only use the relay` };
     const proto = cfg.kind === "udp" ? "udp" : "tcp";
     const ineligible = targetProblem(proto, `${host}:${port}`);
     if (ineligible) return { ok: false, reason: ineligible };
@@ -1062,7 +1096,7 @@ export class TunnelManager {
   /** Look at the tailnet once the tunnel is up, so status shows the peer and any problem before the first connection. */
   private async refreshPath(rt: Runtime): Promise<void> {
     const cfg = rt.cfg;
-    if (cfg.kind === "reverse") return;
+    if (cfg.kind === "reverse" || cfg.kind === "local") return;
     const target = splitHostPort(cfg.target);
     await this.decide(rt, target.host, target.port);
   }
@@ -1282,7 +1316,8 @@ export class TunnelManager {
   private stateOf(rt: Runtime): StateReport {
     if (!rt.active) return reportFor("down");
     if (rt.localError) return reportFor("failed", rt.localError);
-    if (isHttps(rt.cfg) && this.proxyError) return reportFor("failed", this.proxyError);
+    if ((isHttps(rt.cfg) || isLocal(rt.cfg)) && this.proxyError) return reportFor("failed", this.proxyError);
+    if (isLocal(rt.cfg)) return reportFor("active");
     if (rt.failure) return reportFor(rt.failure.state, rt.failure.detail);
     if (viaOf(rt.cfg) === "tailscale") {
       if (rt.tailnetProblem) return reportFor("failed", rt.tailnetProblem);
@@ -1299,6 +1334,24 @@ export class TunnelManager {
 
   private view(rt: Runtime): TunnelView {
     const cfg = rt.cfg;
+    if (isLocal(cfg)) {
+      return {
+        name: cfg.name,
+        org: "",
+        server: "",
+        server_id: "",
+        kind: "local",
+        keep_up: cfg.keep_up,
+        enabled: cfg.enabled,
+        via: "reoclo",
+        path: "relay",
+        ...this.stateOf(rt),
+        hostname: cfg.hostname,
+        url: this.urlFor(cfg.hostname),
+        local_target: cfg.local_target,
+        traffic: this.traffic(rt),
+      };
+    }
     const base = {
       name: cfg.name,
       org: cfg.org,
@@ -1383,7 +1436,7 @@ export class TunnelManager {
   }
 
   private shareView(rt: Runtime): { share: ShareView } | Record<string, never> {
-    const share = rt.cfg.kind === "reverse" ? undefined : rt.cfg.share;
+    const share = rt.cfg.kind === "reverse" || rt.cfg.kind === "local" ? undefined : rt.cfg.share;
     if (!share) return {};
     const status: ShareStatus | undefined = rt.shareError
       ? { state: "failed", error: rt.shareError, restarts: 0 }

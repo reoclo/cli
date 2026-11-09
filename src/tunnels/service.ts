@@ -163,7 +163,12 @@ export function installService(): ServiceResult {
     writeFileSync(file, launchdPlist(spec));
     const target = `gui/${process.getuid?.() ?? 0}`;
     run("launchctl", ["bootout", `${target}/${LAUNCHD_LABEL}`]);
-    const r = run("launchctl", ["bootstrap", target, file]);
+    // bootout returns before launchd has finished, so the first bootstrap can fail.
+    let r = run("launchctl", ["bootstrap", target, file]);
+    for (let attempt = 1; !r.ok && attempt < 8; attempt++) {
+      Bun.sleepSync(250);
+      r = run("launchctl", ["bootstrap", target, file]);
+    }
     if (!r.ok) throw new Error(`launchctl bootstrap failed: ${r.output}`);
     return { file, message: `installed ${file} and loaded it with launchctl` };
   }

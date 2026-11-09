@@ -11,6 +11,7 @@ import type { CaStatus } from "./ca";
 import type { OrgView, PortView, ServerView } from "./directory";
 import type { HostEntryView, HostsStatusView, SettingsView, TunnelView } from "./manager";
 import { logFile, runDir, socketPath, stateDir } from "./paths";
+import type { ForegroundTunnel } from "./foreground";
 import type { TailscaleStatusView } from "./tailscale";
 
 export class DaemonError extends Error {
@@ -117,6 +118,15 @@ export class ControlClient {
   }
   async tunnels(): Promise<TunnelView[]> {
     return (await this.request<{ tunnels: TunnelView[] }>("GET", "/v1/tunnels")).tunnels;
+  }
+  /** Tunnels running in terminals. A daemon older than this feature has none to report. */
+  async foreground(): Promise<ForegroundTunnel[]> {
+    try {
+      return (await this.request<{ tunnels: ForegroundTunnel[] }>("GET", "/v1/foreground")).tunnels;
+    } catch (err) {
+      if (err instanceof DaemonError && err.code === "not_found") return [];
+      throw err;
+    }
   }
   tunnel(name: string): Promise<TunnelView> {
     return this.request("GET", `/v1/tunnels/${encodeURIComponent(name)}`);
