@@ -438,6 +438,62 @@ describe("formatTunnelDescribe", () => {
     expect(captured).toContain("timeout");
     expect(captured).toContain("(not recovered)");
   });
+
+  it("lists a pooled session's targets in text mode when the API returns them", () => {
+    const session = makeTunnelSession({
+      targets: [
+        { mode: "forward", proto: "tcp", host: "127.0.0.1", port: 5432, first_seen_at: "2026-11-09T10:00:00Z" },
+        { mode: "forward", proto: "tcp", host: "127.0.0.1", port: 6379, first_seen_at: "2026-11-09T10:05:00Z" },
+      ],
+    });
+    let captured = "";
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array) => {
+      captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    };
+    try {
+      formatTunnelDescribe(session, "text");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(captured).toContain("targets (2):");
+    expect(captured).toContain("forward  tcp  127.0.0.1:5432  first_seen_at=2026-11-09T10:00:00Z");
+    expect(captured).toContain("127.0.0.1:6379");
+  });
+
+  it("prints no targets section when the API sends none", () => {
+    for (const session of [makeTunnelSession(), makeTunnelSession({ targets: [] })]) {
+      let captured = "";
+      const origWrite = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (chunk: string | Uint8Array) => {
+        captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        return true;
+      };
+      try {
+        formatTunnelDescribe(session, "text");
+      } finally {
+        process.stdout.write = origWrite;
+      }
+      expect(captured).not.toContain("targets");
+    }
+  });
+
+  it("includes the targets in JSON output", () => {
+    const targets = [{ mode: "reverse" as const, proto: "udp" as const, host: "127.0.0.1", port: 53, first_seen_at: "t" }];
+    let captured = "";
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array) => {
+      captured += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    };
+    try {
+      formatTunnelDescribe(makeTunnelSession({ targets }), "json");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect((JSON.parse(captured) as { targets: unknown }).targets).toEqual(targets);
+  });
 });
 
 // ── Regression: existing parseTunnelArgs wiring still works ───────────────────

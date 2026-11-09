@@ -209,11 +209,23 @@ if (import.meta.main) {
     "init",      // bootstrap happens inside the action with proper error handling
     "skills",    // local install/list against github.com/reoclo/skills; no reoclo auth needed
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
+    "daemon",    // `tunnel daemon …` manages a local process; it must run (launchd, systemd) with or without a login
+  ]);
+
+  // Leaf commands that only talk to the local tunnel daemon. The daemon owns the
+  // credentials, so these need no login of their own.
+  const LOCAL_ONLY_PATHS = new Set([
+    "tunnel status",
+    "tunnel up",
+    "tunnel down",
+    "tunnel rm",
+    "tunnel edit",
   ]);
 
   function isPassthrough(actionCommand: Command): boolean {
     const leafName = actionCommand.name();
     const parentName = actionCommand.parent?.name();
+    if (parentName && LOCAL_ONLY_PATHS.has(`${parentName} ${leafName}`)) return true;
     const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
     return PASSTHROUGH_COMMANDS.has(topLevel);
   }
