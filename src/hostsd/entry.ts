@@ -7,7 +7,8 @@
 
 import pkg from "../../package.json" with { type: "json" };
 import { assertValidSuffix } from "../tunnels/hosts-block";
-import { installHostsd, uninstallHostsd, InstallError } from "./install";
+import { HostsClient } from "../tunnels/hosts-client";
+import { installHostsd, uninstallHostsd, InstallError, waitForHelper } from "./install";
 import { startHostsd } from "./main";
 import { hostsdPaths, isRoot, sandboxDir } from "./paths";
 
@@ -86,7 +87,9 @@ export async function runHostsdEntry(argv: readonly string[]): Promise<never> {
         platform: process.platform,
         paths,
         chownRoot: !sandboxed,
-        ...(sandboxed ? { run: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }) } : {}),
+        ...(sandboxed
+          ? { run: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }) }
+          : { waitUntilUp: () => waitForHelper(() => new HostsClient(paths.socket, 1000).status()) }),
       });
       for (const l of lines) process.stdout.write(`${l}\n`);
       process.exit(0);

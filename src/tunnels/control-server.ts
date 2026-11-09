@@ -10,6 +10,7 @@ import type { AuthFlow } from "./auth-flow";
 import { mergeSuffixList, type CaActions } from "./ca-actions";
 import type { Directory } from "./directory";
 import { callerOf, gateAdd, gateCa, gateEdit, gateRemove, gateShare, gateUnshare, gateUp, type Gate } from "./gating";
+import { ForegroundNotFound, listForeground, stopForeground, type ForegroundTunnel } from "./foreground";
 import { HostnameError } from "./hosts-block";
 import { DEFAULT_ADHOC_TTL_MINUTES, ManagerError, type ManagerEvent, type TunnelManager } from "./manager";
 import { TUNNEL_STATES } from "./states";
@@ -25,6 +26,8 @@ export interface ControlServerOptions {
   onShutdown: () => void;
   /** Milliseconds between traffic events. Default 1000. */
   trafficIntervalMs?: number;
+  /** Tunnels running in terminals. Tests replace this; the daemon reads the registry. */
+  foreground?: { list(): ForegroundTunnel[]; stop(id: string): Promise<void> };
   /** Organizations, servers, ports and server lookup. Without it those routes answer 502. */
   directory?: Directory;
   /** The device-flow sign-in behind POST /v1/auth/login. */
@@ -117,6 +120,7 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
   const encoder = new TextEncoder();
   const closers = new Set<() => void>();
   const subscribers = new Set<(event: string, data: unknown) => void>();
+  const foreground = opts.foreground ?? { list: () => listForeground(), stop: (id: string) => stopForeground(id) };
   let loginInFlight = false;
 
   const publish = (event: string, data: unknown): void => {
@@ -178,9 +182,28 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
         };
         const unsubscribe = manager.onEvent(onEvent);
         subscribers.add(send);
+        let lastForeground = "[]";
+        const pushForeground = (): void => {
+          let next: string;
+          let tunnels: ForegroundTunnel[] = [];
+          try {
+            tunnels = foreground.list();
+            next = JSON.stringify(tunnels);
+          } catch (err) {
+            next = `error: ${err instanceof Error ? err.message : String(err)}`;
+            if (next !== lastForeground) send("log", { line: `could not read terminal tunnels: ${next}` });
+            lastForeground = next;
+            return;
+          }
+          if (next === lastForeground) return;
+          lastForeground = next;
+          send("foreground", { tunnels });
+        };
+        pushForeground();
         const timer = setInterval(() => {
           const snapshot = manager.trafficSnapshot();
           if (snapshot.length > 0) send("traffic", { tunnels: snapshot });
+          pushForeground();
         }, opts.trafficIntervalMs ?? 1000);
         const heartbeat = setInterval(() => {
           try {
@@ -327,6 +350,18 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
         forbidAgent("deciding an approval");
         return json(decision === "approve" ? await approvals.approve(id) : approvals.deny(id));
       }
+    }
+    if (path === "/v1/foreground" && method === "GET") return json({ tunnels: foreground.list() });
+    const stopForegroundRoute = /^\/v1\/foreground\/([^/]+)\/stop$/.exec(path);
+    if (stopForegroundRoute && method === "POST") {
+      forbidAgent("stopping a tunnel in someone's terminal");
+      try {
+        await foreground.stop(decodeURIComponent(stopForegroundRoute[1] ?? ""));
+      } catch (err) {
+        if (err instanceof ForegroundNotFound) throw new ManagerError("not_found", err.message);
+        throw err;
+      }
+      return json({ ok: true });
     }
     if (path === "/v1/tunnels/open" && method === "POST") {
       const request = parseOpenRequest(await readBody(req));

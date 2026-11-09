@@ -28,6 +28,11 @@ export function pidFile(): string {
   return join(runDir(), "tunneld.pid");
 }
 
+/** One file per tunnel started in a terminal. See foreground.ts. */
+export function foregroundDir(): string {
+  return join(runDir(), "foreground");
+}
+
 /** Pids of the `tailscale serve` children the daemon started, so a crash cannot leave them behind. */
 export function sharesFile(): string {
   return join(runDir(), "shares.json");

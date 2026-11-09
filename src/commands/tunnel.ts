@@ -12,6 +12,7 @@ import {
 import { globalOutput, printList, printObject, resolveFormat, type OutputFormat } from "../ui/output";
 import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
+import { ForegroundRegistration, type ForegroundForward } from "../tunnels/foreground";
 import { registerTunnelSaved } from "./tunnel-saved";
 import { registerTunnelDaemon } from "./tunnel-daemon";
 import { registerTunnelTrust } from "./tunnel-trust";
@@ -418,15 +419,20 @@ Saved tunnels (kept up by the tunnel daemon):
           const directUrl = process.env["REOCLO_DIRECT_URL"] ?? deriveDirectUrl(ctx.streamsUrl);
 
           const gatewayUrl = buildTunnelWsUrl(directUrl, serverId);
+          let registration: ForegroundRegistration | undefined;
           const session = new TunnelSession(
             // ctx.refresh is passed through buildTunnelSessionOptions() by
             // reference (see that function's doc comment + its unit test in
             // tests/unit/commands/tunnel.test.ts) — never wrap it in a thunk
             // that would pin the original token and break rotation.
             buildTunnelSessionOptions(ctx, gatewayUrl, parsed, (s, reason) => {
-              if (s === "active") process.stderr.write("tunnel: connected\n");
-              else if (s === "reconnecting")
+              if (s === "active") {
+                process.stderr.write("tunnel: connected\n");
+                registration?.setState("active");
+              } else if (s === "reconnecting") {
                 process.stderr.write(`tunnel: reconnecting${reason ? ` (${reason})` : "..."}\n`);
+                registration?.setState("reconnecting");
+              }
               else if (s === "closed") process.stderr.write("tunnel: closed\n");
               else if (s === "failed") {
                 process.stderr.write(`tunnel: ${reason ?? "connection failed"}\n`);
@@ -444,8 +450,11 @@ Saved tunnels (kept up by the tunnel daemon):
             process.exit(0);
           };
           process.on("SIGINT", () => { void onSigInt(); });
+          // The desktop app stops a terminal tunnel with SIGTERM.
+          process.on("SIGTERM", () => { void onSigInt(); });
 
           const ready = await session.start();
+          const registered: ForegroundForward[] = [];
           for (let i = 0; i < parsed.forwards.length; i++) {
             const f = parsed.forwards[i]!;
             const bound = ready.forwards[i];
@@ -459,6 +468,12 @@ Saved tunnels (kept up by the tunnel daemon):
             console.log(
               `-L  ${f.localBind}:${bound.boundPort}  →  ${parsed.server}:${f.remoteHost}:${f.remotePort}  (${f.proto})`,
             );
+            registered.push({
+              kind: "forward",
+              proto: f.proto,
+              listen: `${f.localBind}:${bound.boundPort}`,
+              target: `${f.remoteHost}:${f.remotePort}`,
+            });
           }
           for (let i = 0; i < parsed.reverses.length; i++) {
             const r = parsed.reverses[i]!;
@@ -473,6 +488,22 @@ Saved tunnels (kept up by the tunnel daemon):
             console.log(
               `-R  ${parsed.server}:${bound.boundPort}  →  ${r.localHost}:${r.localPort}  (${r.proto})`,
             );
+            registered.push({
+              kind: "reverse",
+              proto: r.proto,
+              listen: `${parsed.server}:${bound.boundPort}`,
+              target: `${r.localHost}:${r.localPort}`,
+            });
+          }
+          try {
+            registration = new ForegroundRegistration({
+              org: ctx.orgSlug ?? "",
+              server: parsed.server,
+              forwards: registered,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`tunnel: warning: this tunnel will not appear in the desktop app: ${msg}\n`);
           }
           console.log("Ctrl-C to close");
         } catch (err) {

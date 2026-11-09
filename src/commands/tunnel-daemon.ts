@@ -46,6 +46,7 @@ export function describeStatus(s: DaemonStatus): Record<string, unknown> {
           ca_exists: s.ca.exists,
           ca_trusted: s.ca.trusted,
           ca_stale: s.ca.stale,
+          ca_suffixes: s.ca.suffixes,
           ...(s.ca.not_after ? { ca_not_after: s.ca.not_after } : {}),
         }
       : {}),
@@ -54,6 +55,9 @@ export function describeStatus(s: DaemonStatus): Record<string, unknown> {
           hosts_helper_installed: s.hosts.installed,
           hosts_entries: s.hosts.entries,
           hosts_port_443_relay: s.hosts.relay.listening,
+          hosts_suffixes: s.hosts.suffixes,
+          hosts_relay_enabled: s.hosts.relay.enabled,
+          hosts_relay_listening: s.hosts.relay.listening,
           ...(s.hosts.error ? { hosts_error: s.hosts.error } : {}),
         }
       : {}),

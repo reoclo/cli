@@ -239,6 +239,8 @@ if (import.meta.main) {
     const leafName = actionCommand.name();
     const parentName = actionCommand.parent?.name();
     if (parentName && LOCAL_ONLY_PATHS.has(`${parentName} ${leafName}`)) return true;
+    // A local route has no server or organization, so adding one needs no login.
+    if (parentName === "tunnel" && leafName === "add" && actionCommand.opts<{ kind?: string }>().kind === "local") return true;
     const topLevel = parentName && parentName !== PROGRAM_NAME ? parentName : leafName;
     return PASSTHROUGH_COMMANDS.has(topLevel);
   }

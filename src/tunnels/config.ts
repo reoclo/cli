@@ -112,11 +112,23 @@ const reverseTunnel = z
   })
   .strict();
 
+/** Served by the daemon's TLS proxy and forwarded to a TCP address on this machine. No org, server or gateway session. */
+const localTunnel = z
+  .object({
+    name: common.name,
+    kind: z.literal("local"),
+    hostname,
+    local_target: hostPort,
+    enabled: z.boolean().default(true),
+    keep_up: z.boolean().default(false),
+  })
+  .strict();
+
 /** One saved tunnel as stored in the file. */
 export const TunnelSchema = z
-  .discriminatedUnion("kind", [forwardTunnel, httpsTunnel, reverseTunnel])
+  .discriminatedUnion("kind", [forwardTunnel, httpsTunnel, reverseTunnel, localTunnel])
   .superRefine((t, ctx) => {
-    if (t.kind === "reverse") return;
+    if (t.kind === "reverse" || t.kind === "local") return;
     if (t.via === "tailscale" && t.keep_up) {
       ctx.addIssue({ code: "custom", path: ["keep_up"], message: "keep_up holds a gateway session, so it does not apply to via: tailscale" });
     }
@@ -134,6 +146,9 @@ export type SavedTunnel = z.infer<typeof TunnelSchema>;
 export type ForwardTunnel = Extract<SavedTunnel, { kind: "tcp" | "udp" }>;
 export type ReverseTunnel = Extract<SavedTunnel, { kind: "reverse" }>;
 export type HttpsTunnel = Extract<SavedTunnel, { kind: "https" }>;
+export type LocalTunnel = Extract<SavedTunnel, { kind: "local" }>;
+/** Tunnels that dial a server target and so can use the tailnet. */
+export type DialedTunnel = ForwardTunnel | HttpsTunnel;
 
 export function isReverse(t: SavedTunnel): t is ReverseTunnel {
   return t.kind === "reverse";
@@ -143,6 +158,10 @@ export function isHttps(t: SavedTunnel): t is HttpsTunnel {
   return t.kind === "https";
 }
 
+export function isLocal(t: SavedTunnel): t is LocalTunnel {
+  return t.kind === "local";
+}
+
 /** tcp and udp tunnels: the ones with a fixed local port. */
 export function isForward(t: SavedTunnel): t is ForwardTunnel {
   return t.kind === "tcp" || t.kind === "udp";
@@ -150,7 +169,7 @@ export function isForward(t: SavedTunnel): t is ForwardTunnel {
 
 /** The transport a tunnel uses; a tunnel saved without one uses the relay. */
 export function viaOf(t: SavedTunnel): Via {
-  return t.kind === "reverse" ? "reoclo" : (t.via ?? "reoclo");
+  return t.kind === "reverse" || t.kind === "local" ? "reoclo" : (t.via ?? "reoclo");
 }
 
 /** The hostname a tunnel answers to, when it has one. */
@@ -228,7 +247,7 @@ export const TunnelsFileSchema = z
         }
         ports.set(t.local_port, t.name);
       }
-      if (t.kind !== "reverse" && t.share !== undefined) {
+      if (t.kind !== "reverse" && t.kind !== "local" && t.share !== undefined) {
         const owner = sharePorts.get(t.share.port);
         if (owner !== undefined) {
           ctx.addIssue({

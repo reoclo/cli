@@ -35,6 +35,12 @@ export function gateAdd(raw: unknown): Gate | undefined {
   const b = asBody(raw);
   const name = str(b["name"]);
   const server = str(b["server"]);
+  if (b["kind"] === "local") {
+    return {
+      action: "save_tunnel",
+      description: `Save local route "${name}": ${str(b["hostname"])} to ${str(b["local_target"])} on this machine`,
+    };
+  }
   if (b["kind"] === "reverse") {
     return {
       action: "save_tunnel",
@@ -66,6 +72,12 @@ export function gateEdit(current: TunnelView, raw: unknown): Gate | undefined {
   const kind = sensitive(current);
   if (kind !== undefined) {
     return { action: "save_tunnel", description: `Change ${kind} "${current.name}" on ${current.server}` };
+  }
+  if (current.kind === "local" && ("hostname" in b || "local_target" in b)) {
+    return {
+      action: "save_tunnel",
+      description: `Change local route "${current.name}" (${current.hostname ?? "?"} to ${current.local_target ?? "?"}) to ${str(b["hostname"], current.hostname ?? "?")} to ${str(b["local_target"], current.local_target ?? "?")}`,
+    };
   }
   if ("hostname" in b && b["hostname"] !== current.hostname) {
     return {

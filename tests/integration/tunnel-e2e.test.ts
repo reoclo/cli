@@ -22,6 +22,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { withConfigDir } from "../../src/config/paths";
+import { listForeground } from "../../src/tunnels/foreground";
 import type { ServerWebSocket } from "bun";
 import { seedTenantProfile } from "../helpers/seed-profile";
 
@@ -124,6 +126,38 @@ afterEach(() => {
 });
 
 describe("reoclo tunnel — e2e forward TCP", () => {
+  it("lists itself while it runs and cleans up on SIGTERM", async () => {
+    const cli = spawn("bun", ["run", "src/index.ts", "tunnel", SERVER_ID, "-L", "0:127.0.0.1:5432"], {
+      cwd: join(import.meta.dir, "../.."),
+      env: {
+        ...process.env,
+        REOCLO_CONFIG_DIR: tmp,
+        REOCLO_CACHE_DIR: join(tmp, "cache"),
+        REOCLO_DIRECT_URL: backend.url.replace(/^http:/, "ws:"),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const exited = new Promise<number | null>((resolve) => cli.on("exit", (code) => resolve(code)));
+    await new Promise<void>((resolve, reject) => {
+      let out = "";
+      cli.stdout?.on("data", (chunk: Buffer) => {
+        out += chunk.toString();
+        if (out.includes("Ctrl-C to close")) resolve();
+      });
+      cli.on("exit", (code) => reject(new Error(`CLI exited early with code ${String(code)}`)));
+    });
+
+    const [entry] = withConfigDir(tmp, () => listForeground());
+    expect(entry?.pid).toBe(cli.pid);
+    expect(entry?.state).toBe("active");
+    expect(entry?.forwards[0]?.listen).toMatch(/^127\.0\.0\.1:\d+$/);
+    expect(entry?.forwards[0]?.target).toBe("127.0.0.1:5432");
+
+    cli.kill("SIGTERM");
+    expect(await exited).toBe(0);
+    expect(withConfigDir(tmp, () => listForeground())).toEqual([]);
+  }, 15_000);
+
   it("forwards bytes through the CLI to a mock gateway and echoes back", async () => {
     // `REOCLO_DIRECT_URL` is read directly in tunnel.ts action to build the WS URL.
     // Use ws:// (not http://) — buildTunnelWsUrl prepends /v1/tunnel.
