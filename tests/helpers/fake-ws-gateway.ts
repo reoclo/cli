@@ -29,7 +29,8 @@ export interface FakeWsGateway {
   stop(): Promise<void>;
 }
 
-export async function startFakeWsGateway(opts: { echo?: boolean } = {}): Promise<FakeWsGateway> {
+/** `echo` sends every data frame back; `http` answers each complete HTTP request head with a 200 whose body names the request line. */
+export async function startFakeWsGateway(opts: { echo?: boolean; http?: boolean } = {}): Promise<FakeWsGateway> {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   const changed = new EventEmitter();
   changed.setMaxListeners(0);
@@ -87,6 +88,7 @@ export async function startFakeWsGateway(opts: { echo?: boolean } = {}): Promise
 
   wss.on("connection", (ws, req) => {
     sockets.add(ws);
+    const requests = new Map<string, Buffer>();
     gw.connections++;
     gw.urls.push(req.url ?? "");
     ws.on("error", () => undefined);
@@ -100,6 +102,17 @@ export async function startFakeWsGateway(opts: { echo?: boolean } = {}): Promise
         ws.send(JSON.stringify({ type: "tunnel_listen_opened", listen_id: msg["listen_id"], port: msg["port"] }));
       } else if (msg["type"] === "tunnel_data" && opts.echo) {
         ws.send(JSON.stringify({ type: "tunnel_data", stream_id: msg["stream_id"], data: msg["data"] }));
+      } else if (msg["type"] === "tunnel_data" && opts.http) {
+        const sid = String(msg["stream_id"]);
+        const head = Buffer.concat([requests.get(sid) ?? Buffer.alloc(0), Buffer.from(String(msg["data"]), "base64")]);
+        requests.set(sid, head);
+        const text = head.toString("latin1");
+        if (text.includes("\r\n\r\n")) {
+          requests.delete(sid);
+          const body = `fake gateway saw: ${text.split("\r\n")[0]}`;
+          const response = `HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+          ws.send(JSON.stringify({ type: "tunnel_data", stream_id: msg["stream_id"], data: Buffer.from(response).toString("base64") }));
+        }
       }
       changed.emit("change");
     });

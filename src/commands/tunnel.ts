@@ -14,6 +14,8 @@ import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { registerTunnelSaved } from "./tunnel-saved";
 import { registerTunnelDaemon } from "./tunnel-daemon";
+import { registerTunnelTrust } from "./tunnel-trust";
+import { registerTunnelApprovals } from "./tunnel-approvals";
 
 // ── Tunnel session types (from Task 8.1 API) ──────────────────────────────────
 
@@ -598,6 +600,8 @@ Saved tunnels (kept up by the tunnel daemon):
 
   registerTunnelSaved(tunnelCmd, program);
   registerTunnelDaemon(tunnelCmd, program);
+  registerTunnelTrust(tunnelCmd);
+  registerTunnelApprovals(tunnelCmd, program);
 }
 
 export function deriveDirectUrl(streamsUrl: string): string {

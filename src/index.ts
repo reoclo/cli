@@ -32,6 +32,8 @@ import { registerCheckout } from "./commands/checkout";
 import { registerDeploy } from "./commands/deploy";
 import { registerShell } from "./commands/shell";
 import { registerTunnel } from "./commands/tunnel";
+import { registerHosts } from "./commands/hosts";
+import { isHostsdInvocation, runHostsdEntry } from "./hostsd/entry";
 import { registerAlerts } from "./commands/alerts";
 import { registerFindings } from "./commands/findings";
 import { registerChannels } from "./commands/channels";
@@ -79,6 +81,8 @@ import { installSyncStdio } from "./util/sync-stdio";
 export const VERSION = pkg.version;
 
 if (import.meta.main) {
+  // The root hosts helper dispatches before Commander and before any user config is read.
+  if (isHostsdInvocation(process.argv)) await runHostsdEntry(process.argv);
   // Before anything writes: a pipe must be fully written before any process.exit.
   installSyncStdio();
   const PROGRAM_NAME = detectProgramName();
@@ -130,6 +134,7 @@ if (import.meta.main) {
   registerDeploy(program);
   registerShell(program);
   registerTunnel(program);
+  registerHosts(program);
   registerAlerts(program);
   registerFindings(program);
   registerChannels(program);
@@ -210,6 +215,7 @@ if (import.meta.main) {
     "skills",    // local install/list against github.com/reoclo/skills; no reoclo auth needed
     "upgrade",   // checks get.reoclo.com; no tenant auth needed
     "daemon",    // `tunnel daemon …` manages a local process; it must run (launchd, systemd) with or without a login
+    "hosts",     // `hosts …` edits local hostnames through the tunnel daemon and the root helper; no login needed
   ]);
 
   // Leaf commands that only talk to the local tunnel daemon. The daemon owns the
@@ -220,6 +226,12 @@ if (import.meta.main) {
     "tunnel down",
     "tunnel rm",
     "tunnel edit",
+    "tunnel trust",
+    "tunnel untrust",
+    "tunnel ca-path",
+    "tunnel approvals",
+    "tunnel approve",
+    "tunnel deny",
   ]);
 
   function isPassthrough(actionCommand: Command): boolean {

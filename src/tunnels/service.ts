@@ -22,7 +22,7 @@ export interface ServiceSpec {
   env: Record<string, string>;
 }
 
-function xml(s: string): string {
+export function xml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
@@ -64,7 +64,7 @@ ${env}
 `;
 }
 
-function systemdQuote(arg: string): string {
+export function systemdQuote(arg: string): string {
   return /^[A-Za-z0-9_\-./:=@%+]+$/.test(arg) ? arg : `"${arg.replace(/(["\\])/g, "\\$1")}"`;
 }
 

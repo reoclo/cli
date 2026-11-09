@@ -40,3 +40,8 @@ for (const key of Object.keys(process.env)) {
 //
 // Set after the strip loop above, which would otherwise delete it.
 process.env.REOCLO_PROJECT_DIR = mkdtempSync(join(tmpdir(), "reoclo-noproject-"));
+
+// The daemon asks the Tailscale CLI for its status. Pointing the lookup at a file
+// that does not exist keeps every test off the real CLI, whatever this machine has
+// installed; tests that need Tailscale inject a fake reader.
+process.env.REOCLO_TAILSCALE_PATH = join(tmpdir(), "reoclo-no-tailscale");
