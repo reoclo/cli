@@ -37,6 +37,7 @@ const COMMANDS = [
   "env",
   "exec",
   "groups",
+  "hosts",
   "keyring",
   "login",
   "logout",

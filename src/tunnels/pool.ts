@@ -82,6 +82,8 @@ export interface PoolLike {
   touch(): void;
   /** Clear a failure or terminal state. Called when someone runs `up`. */
   reset(): void;
+  /** Change how long an unused session stays open. Applies from the next idle period. */
+  setIdleTimeout?(ms: number): void;
   stop(): Promise<void>;
   onChange(fn: (s: PoolState) => void): () => void;
 }
@@ -105,8 +107,16 @@ export class ServerPool implements PoolLike {
   private current: PoolState = { state: "ready" };
   private readonly listeners = new Set<(s: PoolState) => void>();
 
+  private idleMs: number;
+
   constructor(private readonly opts: ServerPoolOptions) {
     this.timers = opts.timers ?? realTimers;
+    this.idleMs = opts.idleTimeoutMs;
+  }
+
+  setIdleTimeout(ms: number): void {
+    this.idleMs = ms;
+    if (this.idleTimer !== undefined) this.armIdle();
   }
 
   get state(): PoolState {
@@ -266,7 +276,7 @@ export class ServerPool implements PoolLike {
       this.idleTimer = undefined;
       if (gen !== this.gen || this.streams > 0 || this.holds > 0) return;
       void this.closeIdle();
-    }, this.opts.idleTimeoutMs);
+    }, this.idleMs);
   }
 
   private async closeIdle(): Promise<void> {

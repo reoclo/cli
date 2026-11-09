@@ -13,6 +13,15 @@ import {
 } from "../../../src/tunnels/config";
 import { messageOf, rejectionOf } from "../../helpers/rejection";
 
+function captured(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected the call to throw");
+}
+
 const base = {
   name: "prod-db",
   org: "acme",
@@ -64,12 +73,72 @@ describe("parseTunnel", () => {
     expect(() => parseTunnel(noRemote)).toThrow(ConfigError);
   });
 
-  it("rejects later-phase fields and names the phase that adds them", () => {
-    expect(() => parseTunnel({ ...forward, kind: "https" })).toThrow(/phase 2/);
-    expect(() => parseTunnel({ ...forward, hostname: "db.reoclo.localhost" })).toThrow(/phase 2/);
-    expect(() => parseTunnel({ ...forward, via: "tailscale" })).toThrow(/phase 5/);
-    expect(() => parseTunnel({ ...forward, via: "auto" })).toThrow(/phase 5/);
-    expect(() => parseTunnel({ ...forward, share: { tailnet: true, port: 5432 } })).toThrow(/phase 6/);
+  it("accepts every transport on tcp, udp and https tunnels, with a peer override", () => {
+    const https = { ...base, name: "grafana", kind: "https", target: "127.0.0.1:3000", hostname: "grafana.prod-1.reoclo.localhost" };
+    for (const via of ["reoclo", "tailscale", "auto"]) {
+      expect(parseTunnel({ ...forward, via })).toMatchObject({ via });
+      expect(parseTunnel({ ...forward, kind: "udp", via })).toMatchObject({ via });
+      expect(parseTunnel({ ...https, via })).toMatchObject({ via });
+    }
+    expect(parseTunnel({ ...forward, via: "auto", tailnet_host: "db-box", server_hostname: "prod-1.internal" })).toMatchObject({
+      tailnet_host: "db-box",
+      server_hostname: "prod-1.internal",
+    });
+    expect(messageOf(captured(() => parseTunnel({ ...forward, via: "carrier-pigeon" })))).toContain("via");
+  });
+
+  it("keeps a reverse tunnel on the relay", () => {
+    expect(parseTunnel({ ...reverse, via: "reoclo" })).toMatchObject({ via: "reoclo" });
+    expect(() => parseTunnel({ ...reverse, via: "tailscale" })).toThrow(ConfigError);
+    expect(() => parseTunnel({ ...reverse, via: "auto" })).toThrow(ConfigError);
+    expect(() => parseTunnel({ ...reverse, tailnet_host: "box" })).toThrow(ConfigError);
+    expect(() => parseTunnel({ ...reverse, share: { tailnet: true, port: 8080 } })).toThrow(ConfigError);
+  });
+
+  it("refuses keep_up with via: tailscale, because keep_up holds a gateway session", () => {
+    expect(() => parseTunnel({ ...forward, via: "tailscale", keep_up: true })).toThrow(/keep_up/);
+    expect(parseTunnel({ ...forward, via: "auto", keep_up: true })).toMatchObject({ keep_up: true });
+  });
+
+  it("validates shares: tcp needs no internal port, https needs one, udp cannot be shared", () => {
+    const https = { ...base, name: "grafana", kind: "https", target: "127.0.0.1:3000", hostname: "grafana.prod-1.reoclo.localhost" };
+    expect(parseTunnel({ ...forward, share: { tailnet: true, port: 5432 } })).toMatchObject({ share: { tailnet: true, port: 5432 } });
+    expect(() => parseTunnel({ ...forward, share: { tailnet: true, port: 5432, internal_port: 9 } })).toThrow(/internal_port/);
+    expect(parseTunnel({ ...https, share: { tailnet: true, port: 443, internal_port: 18443 } })).toMatchObject({ share: { internal_port: 18443 } });
+    expect(() => parseTunnel({ ...https, share: { tailnet: true, port: 443 } })).toThrow(/internal_port/);
+    expect(() => parseTunnel({ ...forward, kind: "udp", share: { tailnet: true, port: 5432 } })).toThrow(/tcp and https/);
+    expect(() => parseTunnel({ ...forward, share: { tailnet: false, port: 5432 } })).toThrow(ConfigError);
+    expect(() => parseTunnel({ ...forward, share: { tailnet: true } })).toThrow(ConfigError);
+  });
+
+  it("rejects two shares on one port and an internal port that is another tunnel's local port", () => {
+    const a = parseTunnel({ ...forward, name: "a", local_port: 15001, share: { tailnet: true, port: 5432 } });
+    const b = parseTunnel({ ...forward, name: "b", local_port: 15002, share: { tailnet: true, port: 5432 } });
+    expect(() => parseConfig({ version: 1, tunnels: [a, b] })).toThrow(/share port 5432 is already used by tunnel "a"/);
+    const https = parseTunnel({
+      ...base,
+      name: "web",
+      kind: "https",
+      target: "127.0.0.1:3000",
+      hostname: "web.prod-1.reoclo.localhost",
+      share: { tailnet: true, port: 443, internal_port: 15001 },
+    });
+    expect(() => parseConfig({ version: 1, tunnels: [a, https] })).toThrow(/internal_port 15001 is already used as the local_port of tunnel "a"/);
+  });
+
+  it("accepts an https tunnel with a hostname and no local port", () => {
+    const https = { ...base, name: "grafana", kind: "https", target: "127.0.0.1:3000", hostname: "grafana.prod-1.reoclo.localhost" };
+    expect<unknown>(parseTunnel(https)).toEqual({ ...https, keep_up: false, enabled: true });
+    expect(() => parseTunnel({ ...https, local_port: 15000 })).toThrow(ConfigError);
+    const noHost: Record<string, unknown> = { ...https };
+    delete noHost["hostname"];
+    expect(() => parseTunnel(noHost)).toThrow(ConfigError);
+    expect(() => parseTunnel({ ...https, hostname: "Grafana.Local" })).toThrow(/lowercase DNS name/);
+  });
+
+  it("allows a hostname on a tcp tunnel and not on a reverse tunnel", () => {
+    expect(parseTunnel({ ...forward, hostname: "db.prod-1.reoclo.localhost" })).toMatchObject({ hostname: "db.prod-1.reoclo.localhost" });
+    expect(() => parseTunnel({ ...reverse, hostname: "hook.reoclo.localhost" })).toThrow(ConfigError);
   });
 
   it("accepts via: reoclo and rejects unknown fields", () => {
@@ -98,6 +167,43 @@ describe("parseConfig", () => {
     const cfg = parseConfig({ version: 1, tunnels: [forward, { ...reverse, remote_port: 15432 }] });
     expect(cfg.tunnels).toHaveLength(2);
   });
+
+  it("defaults the HTTPS port to 8443 and the suffix and host lists to empty", () => {
+    expect(parseConfig({ version: 1 })).toMatchObject({ https_port: 8443, ca_suffixes: [], manual_hosts: [] });
+    expect(parseConfig({ version: 1, https_port: 9443 }).https_port).toBe(9443);
+    expect(() => parseConfig({ version: 1, https_port: 70000 })).toThrow(ConfigError);
+  });
+
+  const https = (name: string, hostname: string): Record<string, unknown> => ({ ...base, name, kind: "https", target: "127.0.0.1:3000", hostname });
+
+  it("requires a hostname to end in reoclo.localhost or an allowed suffix", () => {
+    expect(() => parseConfig({ version: 1, tunnels: [https("a", "a.example.com")] })).toThrow(/must end in reoclo.localhost/);
+    expect(() => parseConfig({ version: 1, tunnels: [https("a", "a.other.localhost")] })).toThrow(/must end in reoclo.localhost/);
+    expect(parseConfig({ version: 1, tunnels: [https("a", "reoclo.localhost")] }).tunnels).toHaveLength(1);
+    const withSuffix = parseConfig({ version: 1, ca_suffixes: ["internal"], tunnels: [https("a", "grafana.internal")] });
+    expect(withSuffix.tunnels).toHaveLength(1);
+  });
+
+  it("rejects a hostname used twice, across kinds and against manual hosts", () => {
+    const dup = [https("a", "x.reoclo.localhost"), { ...forward, hostname: "x.reoclo.localhost" }];
+    expect(() => parseConfig({ version: 1, tunnels: dup })).toThrow(/already used by tunnel "a"/);
+    expect(() =>
+      parseConfig({ version: 1, manual_hosts: ["x.reoclo.localhost"], tunnels: [https("a", "x.reoclo.localhost")] }),
+    ).toThrow(/already used by a manual host/);
+  });
+
+  it("validates manual hosts and allows any .localhost name there", () => {
+    expect(parseConfig({ version: 1, manual_hosts: ["app.localhost", "x.reoclo.localhost"] }).manual_hosts).toHaveLength(2);
+    expect(() => parseConfig({ version: 1, manual_hosts: ["github.com"] })).toThrow(/must end in/);
+    expect(() => parseConfig({ version: 1, manual_hosts: ["Not A Host"] })).toThrow(/not a valid hostname/);
+    const many = Array.from({ length: 513 }, (_, i) => `h${i}.reoclo.localhost`);
+    expect(() => parseConfig({ version: 1, manual_hosts: many })).toThrow(/at most 512/);
+  });
+
+  it("rejects a CA suffix that could be a public top-level domain", () => {
+    expect(parseConfig({ version: 1, ca_suffixes: ["internal", "corp.example.com"] }).ca_suffixes).toHaveLength(2);
+    expect(() => parseConfig({ version: 1, ca_suffixes: ["com"] })).toThrow(/single label/);
+  });
 });
 
 describe("loadConfig and saveConfig", () => {
@@ -106,7 +212,14 @@ describe("loadConfig and saveConfig", () => {
   });
 
   it("round-trips through YAML", () => {
-    const cfg = parseConfig({ version: 1, idle_timeout_seconds: 30, tunnels: [forward, reverse] });
+    const cfg = parseConfig({
+      version: 1,
+      idle_timeout_seconds: 30,
+      https_port: 9443,
+      ca_suffixes: ["internal"],
+      manual_hosts: ["app.internal"],
+      tunnels: [forward, reverse, { ...base, name: "web", kind: "https", target: "127.0.0.1:80", hostname: "web.internal" }],
+    });
     saveConfig(cfg, file);
     expect(loadConfig(file)).toEqual(cfg);
     expect(readFileSync(file, "utf8")).toContain("name: prod-db");

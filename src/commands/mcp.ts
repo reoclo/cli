@@ -111,7 +111,17 @@ export function registerMcp(program: Command): void {
       }
 
       try {
-        const server = createMcpServer(buildCliMcpContext(ctx.client, tenantId));
+        const mcpContext = buildCliMcpContext(ctx.client, tenantId);
+        const server = createMcpServer(mcpContext);
+        // Loaded on demand: the tunnel tools reach the daemon on this machine, and the hosted MCP has no such daemon.
+        const { registerLocalTunnelTools } = await import("../mcp/local/tunnels");
+        const { connectToDaemon } = await import("../tunnels/control-client");
+        registerLocalTunnelTools(server, {
+          ctx: mcpContext,
+          org: ctx.orgSlug,
+          profile: ctx.profileName,
+          connect: (identity) => connectToDaemon({ identity }),
+        });
         await server.connect(new StdioServerTransport());
       } finally {
         stopRefresh?.();

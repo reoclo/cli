@@ -198,14 +198,16 @@ describe("saved state", () => {
     await new Promise<void>((r) => taken.close(() => r()));
   });
 
-  it("rejects duplicates, bad input and later-phase fields", async () => {
+  it("rejects duplicates, bad input and a reverse tunnel off the relay", async () => {
     const m = newManager();
     const cfg = await forward("prod-db");
     await m.add(cfg);
     expect(await rejectionOf(m.add({ ...cfg, local_port: await freePort() }))).toMatchObject({ code: "conflict" });
     expect(await rejectionOf(m.add({ ...cfg, name: "other" }))).toMatchObject({ code: "conflict" });
     expect(await rejectionOf(m.add({ ...cfg, name: "Bad Name" }))).toMatchObject({ code: "invalid" });
-    expect(messageOf(await rejectionOf(m.add({ ...cfg, name: "x", kind: "https" })))).toMatch(/phase 2/);
+    expect(await rejectionOf(m.add({ ...cfg, name: "x", kind: "https" }))).toMatchObject({ code: "invalid" });
+    const reverse = { ...base, name: "hook", kind: "reverse", remote_port: 8080, local_target: "127.0.0.1:3000", via: "tailscale" };
+    expect(messageOf(await rejectionOf(m.add(reverse)))).toContain("via");
     expect(await rejectionOf(m.add("nope"))).toBeInstanceOf(ManagerError);
   });
 

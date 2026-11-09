@@ -9,11 +9,19 @@ import pkg from "../../package.json" with { type: "json" };
 import { bootstrap } from "../client/bootstrap";
 import { TunnelSession } from "../client/tunnel-session";
 import { buildTunnelSessionOptions, buildTunnelWsUrl, deriveDirectUrl } from "../commands/tunnel";
+import { createAuthFlow, type AuthFlow } from "./auth-flow";
+import { LeafIssuer, type CertSource } from "./ca";
+import { localCaActions, type CaActions } from "./ca-actions";
 import { daemonResponding } from "./control-client";
-import { startControlServer } from "./control-server";
+import { startControlServer, type ControlServerOptions } from "./control-server";
+import { ApiDirectory, type Directory } from "./directory";
+import { HostsClient, type HostsSink } from "./hosts-client";
 import { TunnelManager, type PoolKey } from "./manager";
-import { logFile, pidFile, runDir, socketPath, stateDir, tunnelsFile } from "./paths";
-import { ServerPool, type PoolLike, type SessionFactory } from "./pool";
+import type { ShareSpawner } from "./shares";
+import type { Tailscale } from "./tailscale";
+import { caCertFile, logFile, pidFile, runDir, sharesFile, socketPath, stateDir, tunnelsFile } from "./paths";
+import { checkTrust, defaultTrustEnv } from "./trust";
+import { ServerPool, type PoolLike, type SessionFactory, type Timers } from "./pool";
 import { DAEMON_FATAL_CODES } from "./states";
 
 export class AlreadyRunningError extends Error {
@@ -28,6 +36,26 @@ export interface DaemonOptions {
   directUrl?: string;
   /** Replace how pools are built (tests). */
   createPool?: (key: PoolKey, idleTimeoutMs: number) => PoolLike;
+  /** Replace the certificate source (tests). Defaults to the local CA under the state directory. */
+  certs?: CertSource;
+  /** Replace the hosts helper client (tests). */
+  hosts?: HostsSink;
+  /** Replace the Reoclo API lookups behind the orgs, servers and ad-hoc routes (tests). */
+  directory?: Directory;
+  /** Replace the Tailscale CLI reader (tests). */
+  tailscale?: Tailscale;
+  /** Replace how a share's `tailscale serve` child is started (tests). */
+  spawnShare?: ShareSpawner;
+  /** Replace the device-flow sign-in (tests). */
+  auth?: AuthFlow;
+  /** Replace CA trust and untrust, which change the system trust store (tests). */
+  caActions?: CaActions;
+  /** Approval clock, timers, expiry and ids (tests). */
+  approvals?: ControlServerOptions["approvals"];
+  /** Longest wait for a session to open when a caller asks to verify the connection (tests). */
+  connectTimeoutMs?: number;
+  /** Timers for ad-hoc tunnel expiry and keep-up retries (tests). */
+  timers?: Timers;
   log?: (line: string) => void;
   version?: string;
   trafficIntervalMs?: number;
@@ -112,9 +140,22 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   });
 
   try {
+    const directory = opts.directory ?? new ApiDirectory();
     const manager = new TunnelManager({
       configPath: tunnelsFile(),
+      sharesFile: sharesFile(),
+      tailscale: opts.tailscale,
+      spawnShare: opts.spawnShare,
+      portScan: (cfg) => directory.ports(cfg.org, cfg.server_id, cfg.profile),
       log,
+      certs:
+        opts.certs ??
+        new LeafIssuer({
+          checkTrusted: (ca) => checkTrust(defaultTrustEnv(), { certPath: caCertFile(), certPem: ca.certPem }),
+        }),
+      hosts: opts.hosts ?? new HostsClient(),
+      connectTimeoutMs: opts.connectTimeoutMs,
+      timers: opts.timers,
       createPool:
         opts.createPool ??
         ((key, idleTimeoutMs) =>
@@ -129,6 +170,10 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       log,
       onShutdown: requestShutdown,
       trafficIntervalMs: opts.trafficIntervalMs,
+      directory,
+      auth: opts.auth ?? createAuthFlow(),
+      caActions: opts.caActions ?? localCaActions,
+      approvals: opts.approvals,
     });
     await manager.start();
     log(`tunnel daemon ${version} listening on ${socket} (pid ${process.pid}, log ${logFile()})`);

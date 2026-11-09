@@ -38,6 +38,35 @@ export function describeStatus(s: DaemonStatus): Record<string, unknown> {
     tunnels: s.tunnels.total,
     enabled: s.tunnels.enabled,
     ...Object.fromEntries(Object.entries(s.tunnels.by_state).filter(([, n]) => n > 0).map(([k, n]) => [`state_${k}`, n])),
+    ...(s.https
+      ? { https_port: s.https.port, https_listening: s.https.listening, ...(s.https.error ? { https_error: s.https.error } : {}) }
+      : {}),
+    ...(s.ca
+      ? {
+          ca_exists: s.ca.exists,
+          ca_trusted: s.ca.trusted,
+          ca_stale: s.ca.stale,
+          ...(s.ca.not_after ? { ca_not_after: s.ca.not_after } : {}),
+        }
+      : {}),
+    ...(s.hosts
+      ? {
+          hosts_helper_installed: s.hosts.installed,
+          hosts_entries: s.hosts.entries,
+          hosts_port_443_relay: s.hosts.relay.listening,
+          ...(s.hosts.error ? { hosts_error: s.hosts.error } : {}),
+        }
+      : {}),
+    ...(s.tailscale
+      ? {
+          tailscale_installed: s.tailscale.installed,
+          tailscale_running: s.tailscale.running,
+          ...(s.tailscale.state ? { tailscale_state: s.tailscale.state } : {}),
+          ...(s.tailscale.tailnet ? { tailscale_tailnet: s.tailscale.tailnet } : {}),
+          tailscale_https_certificates: s.tailscale.https_certificates,
+          ...(s.tailscale.error ? { tailscale_error: s.tailscale.error } : {}),
+        }
+      : {}),
   };
 }
 
