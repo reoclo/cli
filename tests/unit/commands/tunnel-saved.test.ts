@@ -217,7 +217,7 @@ describe("daemon command helpers", () => {
       tunnels: { total: 0, enabled: 0, by_state: {} },
       https: { port: 8443, listening: false, error: "port 8443 is already in use" },
       ca: { exists: true, trusted: true, suffixes: ["reoclo.localhost"], stale: true, not_after: "2028-11-09T00:00:00.000Z" },
-      hosts: { installed: true, entries: 3, suffixes: ["reoclo.test"], relay: { enabled: true, listening: false, port: 8443 } },
+      hosts: { installed: true, version: "0.103.1", entries: 3, suffixes: ["reoclo.test"], relay: { enabled: true, listening: false, port: 8443 } },
     });
     expect(out).toMatchObject({
       https_port: 8443,
@@ -228,6 +228,7 @@ describe("daemon command helpers", () => {
       ca_stale: true,
       ca_suffixes: ["reoclo.localhost"],
       hosts_helper_installed: true,
+      hosts_helper_version: "0.103.1",
       hosts_entries: 3,
       hosts_port_443_relay: false,
       hosts_suffixes: ["reoclo.test"],

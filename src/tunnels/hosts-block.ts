@@ -68,13 +68,14 @@ export function suffixFor(host: string, extra: readonly string[]): string | unde
 }
 
 /**
- * What the root helper accepts: a valid name that is a subdomain of .localhost
- * or of an allowlisted suffix. The allowlist is written at setup time with sudo.
+ * What the root helper accepts: a valid name that is a subdomain of .localhost,
+ * or an allowlisted suffix itself or a subdomain of one, the same rule the CA
+ * uses. The allowlist is written at setup time with sudo.
  */
 export function validateHelperEntry(host: string, allowlist: readonly string[]): string | undefined {
   if (!isValidHostname(host)) return `${JSON.stringify(host)} is not a valid hostname`;
   if (host.endsWith(".localhost")) return undefined;
-  if (allowlist.some((s) => host.endsWith(`.${s}`))) return undefined;
+  if (allowlist.some((s) => inSuffix(host, s))) return undefined;
   return `${host} does not end in .localhost or an allowed suffix`;
 }
 
