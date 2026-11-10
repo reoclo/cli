@@ -65,6 +65,13 @@ describe("stableBinaryPath", () => {
     });
     expect(got).toBe("/opt/homebrew/bin/reoclo");
   });
+  it("falls back to the Homebrew prefix's bin when PATH leaves it out", () => {
+    const got = stableBinaryPath(cellar, "/usr/bin:/bin", {
+      exists: (p) => p === "/opt/homebrew/bin/reoclo",
+      realpath: real,
+    });
+    expect(got).toBe("/opt/homebrew/bin/reoclo");
+  });
   it("keeps the Cellar path when no PATH entry points at it", () => {
     expect(stableBinaryPath(cellar, "/usr/bin", { exists: () => false, realpath: real })).toBe(cellar);
   });

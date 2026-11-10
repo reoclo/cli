@@ -64,6 +64,9 @@ describe("compiled binary", () => {
     const status = await run("tunnel", "daemon", "status");
     expect(status.code).toBe(0);
     expect(status.out).toMatch(/running\s+true/);
+    // The desktop app runs the CLI the daemon reports.
+    const executable = /^executable\s+(\S+)$/m.exec(status.out)?.[1];
+    expect(executable && realpathSync(executable)).toBe(realpathSync(binary));
 
     const stop = await run("tunnel", "daemon", "stop");
     expect(stop.code).toBe(0);

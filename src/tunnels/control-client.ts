@@ -29,6 +29,8 @@ export class DaemonError extends Error {
 
 export interface DaemonStatus {
   version: string;
+  /** The binary the daemon runs from. Absent before 0.104.0 and when it runs from source. */
+  executable?: string;
   pid: number;
   uptime_seconds: number;
   state_dir: string;

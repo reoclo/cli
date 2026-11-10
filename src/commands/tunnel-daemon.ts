@@ -31,6 +31,7 @@ export function describeStatus(s: DaemonStatus): Record<string, unknown> {
   return {
     running: true,
     version: s.version,
+    ...(s.executable ? { executable: s.executable } : {}),
     pid: s.pid,
     uptime_seconds: s.uptime_seconds,
     state_dir: s.state_dir,

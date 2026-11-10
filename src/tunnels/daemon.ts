@@ -23,6 +23,7 @@ import type { Tailscale } from "./tailscale";
 import { caCertFile, logFile, pidFile, runDir, sharesFile, socketPath, stateDir, tunnelsFile } from "./paths";
 import { checkTrust, defaultTrustEnv } from "./trust";
 import { ServerPool, type PoolLike, type SessionFactory, type Timers } from "./pool";
+import { daemonExecutable } from "./service";
 import { DAEMON_FATAL_CODES } from "./states";
 
 export class AlreadyRunningError extends Error {
@@ -166,6 +167,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       socketPath: socket,
       manager,
       version,
+      executable: daemonExecutable(),
       startedAt,
       stateDir: stateDir(),
       log,
