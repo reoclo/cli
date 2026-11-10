@@ -123,6 +123,11 @@ describe("hostnames and suffixes", () => {
   it("validates helper entries against .localhost and the allowlist", () => {
     expect(validateHelperEntry("a.reoclo.localhost", [])).toBeUndefined();
     expect(validateHelperEntry("a.anything.localhost", [])).toBeUndefined();
+    expect(validateHelperEntry("reoclo.test", ["reoclo.test"])).toBeUndefined();
+    expect(validateHelperEntry("app.reoclo.test", ["reoclo.test"])).toBeUndefined();
+    expect(validateHelperEntry("test", ["reoclo.test"])).toBeDefined();
+    expect(validateHelperEntry("other.test", ["reoclo.test"])).toBeDefined();
+    expect(validateHelperEntry("localhost", [])).toBeDefined();
     expect(validateHelperEntry("a.internal", ["internal"])).toBeUndefined();
     expect(validateHelperEntry("a.internal", [])).toMatch(/allowed suffix/);
     expect(validateHelperEntry("github.com", ["internal"])).toMatch(/allowed suffix/);

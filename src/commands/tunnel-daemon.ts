@@ -53,6 +53,7 @@ export function describeStatus(s: DaemonStatus): Record<string, unknown> {
     ...(s.hosts
       ? {
           hosts_helper_installed: s.hosts.installed,
+          ...(s.hosts.version ? { hosts_helper_version: s.hosts.version } : {}),
           hosts_entries: s.hosts.entries,
           hosts_port_443_relay: s.hosts.relay.listening,
           hosts_suffixes: s.hosts.suffixes,
