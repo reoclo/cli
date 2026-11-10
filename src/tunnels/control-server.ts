@@ -19,6 +19,8 @@ export interface ControlServerOptions {
   socketPath: string;
   manager: TunnelManager;
   version: string;
+  /** The binary the daemon runs from, so the desktop app can use the same CLI. */
+  executable?: string;
   startedAt: number;
   stateDir: string;
   log: (line: string) => void;
@@ -152,6 +154,7 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
     for (const t of tunnels) byState[t.state] = (byState[t.state] ?? 0) + 1;
     return {
       version: opts.version,
+      ...(opts.executable ? { executable: opts.executable } : {}),
       pid: process.pid,
       uptime_seconds: Math.floor((Date.now() - opts.startedAt) / 1000),
       state_dir: opts.stateDir,

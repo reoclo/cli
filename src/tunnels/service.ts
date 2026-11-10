@@ -95,7 +95,8 @@ WantedBy=default.target
  * The path to put in the service file. A Homebrew install runs from a symlink
  * (/opt/homebrew/bin/reoclo) that points into a versioned Cellar directory, and
  * the Cellar path disappears on upgrade. Prefer the PATH entry that resolves to
- * the running binary.
+ * the running binary, then the Homebrew prefix's own bin for a caller whose PATH
+ * leaves it out (launchd and apps opened from Finder get a minimal PATH).
  */
 export function stableBinaryPath(
   execPath: string,
@@ -107,12 +108,19 @@ export function stableBinaryPath(
 ): string {
   if (!execPath.includes("/Cellar/")) return execPath;
   const real = deps.realpath(execPath);
-  for (const dir of pathEnv.split(delimiter)) {
+  const prefixBin = join(execPath.slice(0, execPath.indexOf("/Cellar/")), "bin");
+  for (const dir of [...pathEnv.split(delimiter), prefixBin]) {
     if (!dir) continue;
     const candidate = join(dir, "reoclo");
     if (deps.exists(candidate) && deps.realpath(candidate) === real) return candidate;
   }
   return execPath;
+}
+
+/** The binary this daemon runs from, at its stable path. Undefined when it runs from source. */
+export function daemonExecutable(): string | undefined {
+  const { cmd, args } = daemonCommand();
+  return args.length === 3 ? stableBinaryPath(cmd, process.env["PATH"] ?? "") : undefined;
 }
 
 export function serviceSpec(): ServiceSpec {

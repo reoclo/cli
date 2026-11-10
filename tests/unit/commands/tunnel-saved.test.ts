@@ -205,11 +205,13 @@ describe("daemon command helpers", () => {
     });
     expect(out).toMatchObject({ running: true, pid: 7, tunnels: 2, enabled: 1, state_ready: 1, state_down: 1 });
     expect(out).not.toHaveProperty("state_active");
+    expect(out).not.toHaveProperty("executable");
     expect(out).not.toHaveProperty("ca_exists");
   });
   it("adds the HTTPS listener, the CA and the hosts helper when the daemon reports them", () => {
     const out = describeStatus({
       version: "1",
+      executable: "/opt/homebrew/bin/reoclo",
       pid: 7,
       uptime_seconds: 3,
       state_dir: "/s",
@@ -220,6 +222,7 @@ describe("daemon command helpers", () => {
       hosts: { installed: true, version: "0.103.1", entries: 3, suffixes: ["reoclo.test"], relay: { enabled: true, listening: false, port: 8443 } },
     });
     expect(out).toMatchObject({
+      executable: "/opt/homebrew/bin/reoclo",
       https_port: 8443,
       https_listening: false,
       https_error: "port 8443 is already in use",

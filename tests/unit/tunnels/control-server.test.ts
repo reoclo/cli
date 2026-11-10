@@ -30,6 +30,7 @@ beforeEach(() => {
     socketPath: socket,
     manager,
     version: "9.9.9",
+    executable: "/opt/homebrew/bin/reoclo",
     startedAt: Date.now(),
     stateDir: dir,
     log: (l) => logs.push(l),
@@ -58,7 +59,7 @@ describe("control server", () => {
     await client.add(await newTunnel("a"));
     await client.add(await newTunnel("b", { enabled: false }));
     const s = await client.status();
-    expect(s).toMatchObject({ version: "9.9.9", pid: process.pid, state_dir: dir, socket });
+    expect(s).toMatchObject({ version: "9.9.9", executable: "/opt/homebrew/bin/reoclo", pid: process.pid, state_dir: dir, socket });
     expect(s.tunnels).toMatchObject({ total: 2, enabled: 1 });
     expect(s.tunnels.by_state).toMatchObject({ ready: 1, down: 1 });
   });
