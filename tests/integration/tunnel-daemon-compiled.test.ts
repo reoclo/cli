@@ -1,7 +1,7 @@
 // The bundled binary loads modules differently from `bun test`, and a load-order
 // failure there stops the daemon from starting while every unit test passes.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,8 +9,16 @@ let dir: string;
 let binary: string;
 
 async function run(...args: string[]): Promise<{ code: number; out: string }> {
+  return runWith({}, ...args);
+}
+
+async function runWith(
+  opts: { cwd?: string; env?: Record<string, string> },
+  ...args: string[]
+): Promise<{ code: number; out: string }> {
   const p = Bun.spawn([binary, ...args], {
-    env: { ...process.env, REOCLO_CONFIG_DIR: join(dir, "config") },
+    cwd: opts.cwd,
+    env: { ...process.env, REOCLO_CONFIG_DIR: join(dir, "config"), ...opts.env },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -21,6 +29,14 @@ async function run(...args: string[]): Promise<{ code: number; out: string }> {
     p.exited,
   ]);
   return { code, out: out + err };
+}
+
+/** A process's working directory, as the OS reports it. */
+async function cwdOf(pid: number): Promise<string> {
+  if (process.platform === "linux") return readlinkSync(`/proc/${String(pid)}/cwd`);
+  const p = Bun.spawn(["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const out = await new Response(p.stdout).text();
+  return out.split("\n").find((line) => line.startsWith("n"))?.slice(1) ?? "";
 }
 
 beforeAll(async () => {
@@ -106,6 +122,19 @@ describe("compiled binary", () => {
     expect(child.signalCode).toBe("SIGTERM");
 
     expect((await run("tunnel", "status")).out).not.toContain("Running in a terminal");
+    expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
+  }, 60_000);
+
+  it("leaves the directory it was started from for the home directory", async () => {
+    // Bun shell commands, such as the keychain read behind every sign-in, fail with ENOENT once the
+    // working directory is deleted, so a daemon that kept a removed worktree as its cwd lost every tunnel.
+    const home = realpathSync(mkdtempSync(join(dir, "home-")));
+    const start = await runWith({ cwd: mkdtempSync(join(dir, "cwd-")), env: { HOME: home } }, "tunnel", "daemon", "start");
+    expect(start.code).toBe(0);
+
+    const pid = Number(/"pid":\s*(\d+)/.exec((await run("tunnel", "daemon", "status", "-o", "json")).out)?.[1]);
+    expect(pid).toBeGreaterThan(0);
+    expect(await cwdOf(pid)).toBe(home);
     expect((await run("tunnel", "daemon", "stop")).code).toBe(0);
   }, 60_000);
 
