@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ApprovalView } from "./approvals";
 import type { CaStatus } from "./ca";
@@ -274,7 +275,8 @@ export function spawnDaemon(): SpawnResult & { exited: Promise<number | null> } 
   mkdirSync(runDir(), { recursive: true, mode: 0o700 });
   const fd = openSync(logFile(), "a", 0o600);
   const { cmd, args } = daemonCommand();
-  const child = spawn(cmd, args, { detached: true, stdio: ["ignore", fd, fd], env: process.env });
+  // Not the caller's directory: a long-lived caller (`reoclo mcp`) may sit in one that was deleted, and Bun will not start there.
+  const child = spawn(cmd, args, { detached: true, cwd: homedir(), stdio: ["ignore", fd, fd], env: process.env });
   closeSync(fd);
   const exited = new Promise<number | null>((r) => child.once("exit", (code) => r(code)));
   child.unref();

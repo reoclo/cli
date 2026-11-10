@@ -5,6 +5,7 @@
 // tunnel, and shuts down cleanly on SIGINT or SIGTERM.
 
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
 import pkg from "../../package.json" with { type: "json" };
 import { bootstrap } from "../client/bootstrap";
 import { TunnelSession } from "../client/tunnel-session";
@@ -201,6 +202,9 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
 
 /** Entry for `reoclo tunnel daemon run`: start, then wait for a signal or a shutdown request. */
 export async function runDaemon(): Promise<void> {
+  // The daemon outlives the shell that started it, often a worktree that is deleted later, and Bun
+  // shell commands (the keychain read behind every sign-in) fail with ENOENT from a deleted directory.
+  process.chdir(homedir());
   let handle: DaemonHandle;
   try {
     handle = await startDaemon();
