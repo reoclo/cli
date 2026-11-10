@@ -103,6 +103,20 @@ async function must(run: CommandRunner, cmd: string, args: string[]): Promise<vo
 
 const BOOTSTRAP_ATTEMPTS = 8;
 const BOOTSTRAP_RETRY_MS = 250;
+const UNLOAD_WAIT_ATTEMPTS = 120;
+const UNLOAD_WAIT_MS = 250;
+
+/**
+ * `launchctl bootout` returns before launchd has stopped the old helper, which once took
+ * about 5 s. Wait (up to 30 s) until launchd no longer knows the service, so the bootstrap
+ * after it does not race a service that is still loaded.
+ */
+async function waitForUnload(run: CommandRunner, sleep: (ms: number) => Promise<void>): Promise<void> {
+  for (let attempt = 0; attempt < UNLOAD_WAIT_ATTEMPTS; attempt++) {
+    if ((await run("launchctl", ["print", `system/${HOSTSD_LABEL}`])).code !== 0) return;
+    await sleep(UNLOAD_WAIT_MS);
+  }
+}
 
 /** `launchctl bootout` returns before launchd has finished, so a bootstrap straight after it can fail. */
 async function bootstrapLaunchd(run: CommandRunner, service: string, sleep: (ms: number) => Promise<void>): Promise<void> {
@@ -164,6 +178,7 @@ export async function installHostsd(o: InstallOptions): Promise<string[]> {
   if (o.platform === "darwin") {
     putFile(paths.service, hostsdLaunchdPlist(paths.binary), 0o644, root);
     await run("launchctl", ["bootout", `system/${HOSTSD_LABEL}`]);
+    await waitForUnload(run, o.sleep ?? Bun.sleep);
     await bootstrapLaunchd(run, paths.service, o.sleep ?? Bun.sleep);
   } else {
     putFile(paths.service, hostsdSystemdUnit(paths.binary), 0o644, root);
