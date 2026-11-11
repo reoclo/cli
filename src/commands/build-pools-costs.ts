@@ -5,6 +5,7 @@
 import { readFileSync, statSync } from "node:fs";
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
+import { NotFoundError } from "../client/errors";
 import { EXIT } from "../client/exit-codes";
 import type { HttpClient } from "../client/http";
 import { isUuid } from "../client/resolve";
@@ -32,13 +33,26 @@ interface Estimate {
 }
 interface Builder {
   id: string; state: string; server_type: string; location: string | null; provider_server_id: string | null;
-  created_at: string; deleted_at: string | null; max_lifetime_minutes: number; error_code: string | null;
+  created_at: string; running_since?: string | null; deleted_at: string | null; max_lifetime_minutes: number; error_code: string | null;
   cost: { currency: string; net_minor_units: number; billed_hours: number } | null;
 }
 interface Reconciliation {
   month: string; currency: string;
   matches: Array<{ provider_server_id: string; estimated_net_minor_units: number; statement_net_minor_units: number; net_difference_minor_units: number; estimate_incomplete: boolean }>;
   unmatched_lines: Array<{ row: number; provider_server_id: string; resource_type: string; currency: string; net_scaled_minor_units: number; reason: string }>;
+}
+
+export const COST_DATA_UNAVAILABLE = "Cost data is not available for this organization yet.";
+
+/** The API answers a cost route with a plain 404 while cost data is not visible to the caller
+ *  (platform costs switch during the beta). Say that instead of printing the raw route. */
+export async function costRoute<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (e) {
+    if (e instanceof NotFoundError) throw new NotFoundError(COST_DATA_UNAVAILABLE, e.path);
+    throw e;
+  }
 }
 
 export async function resolveCloudCredential(client: HttpClient, tenantId: string, idOrLabel: string): Promise<string> {
@@ -58,6 +72,9 @@ function priceSource(e: Estimate): string {
   return e.price_source === "catalog_fallback" ? "reoclo plan catalog (no pricing sync yet)" : "built-in table from 2026-10-24 (no pricing sync yet)";
 }
 
+/** A pool's max lifetime caps one running session. A sleep-pool builder between builds is not in a session. */
+const NOT_RUNNING_STATES = new Set(["stopped", "stopping", "starting"]);
+
 function ageMinutes(b: Builder, now: number): number {
   const end = b.deleted_at ? Date.parse(b.deleted_at) : now;
   return Math.max(0, Math.floor((end - Date.parse(b.created_at)) / 60_000));
@@ -66,7 +83,10 @@ function ageMinutes(b: Builder, now: number): number {
 export function builderWarning(b: Builder, now: number): string {
   if (b.state === "deleted") return "";
   if (b.state === "failed" || (b.state === "deleting" && b.error_code)) return "failed, deleting";
-  return ageMinutes(b, now) > b.max_lifetime_minutes ? "past max lifetime" : "";
+  if (NOT_RUNNING_STATES.has(b.state)) return "";
+  // The cap is per running session: count from running_since, and from creation only on an older API without it.
+  const sessionStart = Date.parse(b.running_since ?? b.created_at);
+  return Math.max(0, Math.floor((now - sessionStart) / 60_000)) > b.max_lifetime_minutes ? "past max lifetime" : "";
 }
 
 export function budgetNote(spent: number, budget: number): string {
@@ -95,7 +115,7 @@ export function registerBuildPoolCosts(g: Command, program: Command): void {
         params.set("location", opts.location ?? "");
       }
       if (opts.serverType) params.set("server_type", opts.serverType);
-      const e = await ctx.client.get<Estimate>(`/tenants/${tid}/build-costs/estimate?${params}`);
+      const e = await costRoute(() => ctx.client.get<Estimate>(`/tenants/${tid}/build-costs/estimate?${params}`));
       if (fmt !== "text") return printObject(e as unknown as Record<string, unknown>, fmt);
       printObject({
         server_type: e.server_type, location: e.location,
@@ -114,7 +134,7 @@ export function registerBuildPoolCosts(g: Command, program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const id = pool === undefined ? undefined : await resolveBuildPool(ctx.client, tid, pool);
-      const report = await ctx.client.get<CostReport>(`/tenants/${tid}/build-costs${id ? `?pool_id=${id}` : ""}`);
+      const report = await costRoute(() => ctx.client.get<CostReport>(`/tenants/${tid}/build-costs${id ? `?pool_id=${id}` : ""}`));
       const detail = id ? await ctx.client.get<{ monthly_budget_cents?: number | null; budget_currency?: string }>(`/tenants/${tid}/build-pools/${id}`) : null;
       const currency = detail?.budget_currency ?? "EUR";
       const budget = detail?.monthly_budget_cents ?? null;
@@ -161,7 +181,7 @@ export function registerBuildPoolCosts(g: Command, program: Command): void {
         billed_hours: b.cost?.billed_hours ?? 0, estimated_net: b.cost ? formatMinor(b.cost.net_minor_units, b.cost.currency) : "-",
         warning: builderWarning(b, now),
       })) as unknown as Array<Record<string, unknown>>, [
-        { key: "id", label: "ID" }, { key: "provider_server_id", label: "HETZNER ID" }, { key: "state", label: "STATE" },
+        { key: "id", label: "ID" }, { key: "provider_server_id", label: "INSTANCE ID" }, { key: "state", label: "STATE" },
         { key: "type", label: "TYPE" }, { key: "age_minutes", label: "AGE (MIN)" }, { key: "billed_hours", label: "BILLED HOURS" },
         { key: "estimated_net", label: "EST. NET" }, { key: "warning", label: "WARNING" },
       ], fmt);
@@ -180,7 +200,7 @@ export function registerBuildPoolCosts(g: Command, program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const params = new URLSearchParams({ cloud_credential_id: await resolveCloudCredential(ctx.client, tid, opts.cloudCredential), month: opts.month });
-      const r = await ctx.client.postRaw<Reconciliation>(`/tenants/${tid}/build-costs/reconciliations?${params}`, data, "text/csv");
+      const r = await costRoute(() => ctx.client.postRaw<Reconciliation>(`/tenants/${tid}/build-costs/reconciliations?${params}`, data, "text/csv"));
       if (fmt !== "text") return printObject(r as unknown as Record<string, unknown>, fmt);
       process.stdout.write(`${r.month}: ${r.matches.length} matched, ${r.unmatched_lines.length} unmatched (difference = statement minus estimate)\n`);
       printList(r.matches.map((m) => ({

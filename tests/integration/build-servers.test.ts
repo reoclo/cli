@@ -122,6 +122,30 @@ test("build-pools builders flags a builder past its max lifetime", async () => {
   const warning = (id: string): unknown => builders.find((b) => b["id"] === id)?.["warning"];
   expect(warning("old-builder")).toBe("past max lifetime");
   expect(warning("fresh-builder")).toBe("");
+  expect(warning("sleeping-builder")).toBe("");
+  // Created 300 minutes ago with a 120 minute lifetime: only the session length counts.
+  expect(warning("resumed-builder")).toBe("");
+  expect(warning("overrun-builder")).toBe("past max lifetime");
+  expect(builders.find((b) => b["id"] === "old-builder")).toHaveProperty("provider_server_id", "4711");
+});
+
+test("build-pools builders labels the provider instance column neutrally", async () => {
+  const r = await $`bun run src/index.ts -o text build-pools builders pool-a`.env(env()).quiet();
+  const out = r.stdout.toString();
+  expect(out).toContain("INSTANCE ID");
+  expect(out).not.toContain("HETZNER ID");
+});
+
+test("build-pools costs and estimate say cost data is unavailable when the API hides cost routes", async () => {
+  gw.stop();
+  gw = startFakeGateway({ hideCosts: true });
+  seedTenantProfile({ configDir: tmp, apiUrl: gw.url, token: gw.token });
+  for (const args of [["costs", "pool-a"], ["costs"], ["estimate", "pool-a"]]) {
+    const r = await $`bun run src/index.ts build-pools ${args}`.env(env()).nothrow().quiet();
+    expect(r.exitCode).toBe(5);
+    expect(r.stderr.toString()).toContain("Cost data is not available for this organization yet.");
+    expect(r.stderr.toString()).not.toContain("build-costs");
+  }
 });
 
 test("build-pools reconcile uploads the raw CSV as text/csv and prints differences", async () => {

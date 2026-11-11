@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
 import { registerBuildPools } from "../../../src/commands/build-pools";
 import { getCompletionSpec } from "../../../src/client/command-meta";
-import { budgetNote, builderWarning } from "../../../src/commands/build-pools-costs";
+import { NotFoundError, ApiError } from "../../../src/client/errors";
+import { budgetNote, builderWarning, COST_DATA_UNAVAILABLE, costRoute } from "../../../src/commands/build-pools-costs";
 import { formatHourly, parseIdlePolicy, parseMoney } from "../../../src/util/ephemeral-pool";
 
 function pools(): Command {
@@ -64,6 +65,36 @@ describe("reoclo build-pools", () => {
     expect(builderWarning({ ...base, state: "failed", created_at: "2026-10-25T11:50:00Z" }, now)).toBe("failed, deleting");
     expect(builderWarning({ ...base, state: "deleted", created_at: "2026-10-25T09:00:00Z" }, now)).toBe("");
     expect(builderWarning({ ...base, state: "busy", created_at: "2026-10-25T11:30:00Z" }, now)).toBe("");
+  });
+
+  test("stopped, stopping and starting builders are never past their lifetime, running ones still are", () => {
+    const now = Date.parse("2026-10-25T12:00:00Z");
+    const base = { id: "b", server_type: "cx33", location: "fsn1", provider_server_id: "1", deleted_at: null, max_lifetime_minutes: 120, error_code: null, cost: null, created_at: "2026-10-25T09:00:00Z" };
+    for (const state of ["stopped", "stopping", "starting"]) expect(builderWarning({ ...base, state }, now)).toBe("");
+    expect(builderWarning({ ...base, state: "ready" }, now)).toBe("past max lifetime");
+    expect(builderWarning({ ...base, state: "failed" }, now)).toBe("failed, deleting");
+  });
+
+  test("a running builder's lifetime counts from running_since, from created_at only when it is absent", () => {
+    const now = Date.parse("2026-10-25T12:00:00Z");
+    const sleeper = { id: "b", server_type: "cx33", location: "fsn1", provider_server_id: "1", deleted_at: null, max_lifetime_minutes: 120, error_code: null, cost: null, state: "busy", created_at: "2026-10-25T07:00:00Z" };
+    expect(builderWarning({ ...sleeper, running_since: "2026-10-25T11:50:00Z" }, now)).toBe("");
+    expect(builderWarning({ ...sleeper, running_since: "2026-10-25T09:50:00Z" }, now)).toBe("past max lifetime");
+    expect(builderWarning({ ...sleeper, running_since: null }, now)).toBe("past max lifetime");
+    expect(builderWarning(sleeper, now)).toBe("past max lifetime");
+  });
+
+  test("a 404 from a cost route becomes the cost-data message and keeps exit 5", async () => {
+    const err = await costRoute(() => Promise.reject(new NotFoundError("not found: /tenants/t/build-costs", "/tenants/t/build-costs"))).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect((err as NotFoundError).message).toBe(COST_DATA_UNAVAILABLE);
+    expect((err as NotFoundError).exitCode).toBe(5);
+  });
+
+  test("other cost route errors and results pass through unchanged", async () => {
+    const boom = new ApiError(500, "boom", "/tenants/t/build-costs");
+    expect(await costRoute(() => Promise.reject(boom)).catch((e: unknown) => e)).toBe(boom);
+    expect(await costRoute(() => Promise.resolve(7))).toBe(7);
   });
 
   test("ephemeral create without a budget fails with exit 2 before any request", async () => {

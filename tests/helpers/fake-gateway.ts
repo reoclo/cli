@@ -42,7 +42,7 @@ export interface FakeGateway {
   stop: () => void;
 }
 
-export function startFakeGateway(): FakeGateway {
+export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGateway {
   // In-memory state per gateway instance — reset on each fresh startFakeGateway().
   const envVars = new Map<string, Map<string, string>>();
   const monitors = new Map<string, Record<string, unknown>>();
@@ -1379,7 +1379,10 @@ export function startFakeGateway(): FakeGateway {
         }
       }
 
-      // Ephemeral pool cost routes.
+      // Ephemeral pool cost routes. With hideCosts they answer 404 like the API does while cost data is not visible to the caller.
+      if (opts.hideCosts && url.pathname.startsWith(`/mcp/tenants/${TENANT_ID}/build-costs`)) {
+        return Response.json({ detail: "Not found" }, { status: 404 });
+      }
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/cloud-credentials`) {
         return Response.json([{ id: "66666666-6666-6666-6666-666666666666", label: "hetzner-main", provider: "hetzner", scope: "tenant" }]);
       }
@@ -1417,14 +1420,22 @@ export function startFakeGateway(): FakeGateway {
       {
         const m = url.pathname.match(/^\/mcp\/tenants\/[^/]+\/build-pools\/([^/]+)\/builders$/);
         if (m) {
-          const builder = (id: string, state: string, created: string) => ({
+          const builder = (id: string, state: string, created: string, runningSince: string | null = null) => ({
             id, pool_id: m[1], server_id: id, provider_server_id: "4711", state, server_type: "cx33", created_at: created,
-            provisioned_at: created, deleted_at: null, idle_since: null, max_lifetime_minutes: 120, error_code: null,
+            running_since: runningSince, provisioned_at: created, deleted_at: null, idle_since: null, max_lifetime_minutes: 120, error_code: null,
             estimated_cost_cents: 3, location: "fsn1", cost: { currency: "EUR", net_minor_units: 3, gross_minor_units: 4, billed_hours: 2, incomplete: true },
           });
           const old = new Date(Date.now() - 180 * 60_000).toISOString();
           const fresh = new Date(Date.now() - 20 * 60_000).toISOString();
-          return Response.json({ items: [builder("old-builder", "busy", old), builder("fresh-builder", "ready", fresh)], total: 2, skip: 0, limit: 20 });
+          const sleepCreated = new Date(Date.now() - 300 * 60_000).toISOString();
+          const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+          return Response.json({
+            items: [
+              builder("old-builder", "busy", old, old), builder("fresh-builder", "ready", fresh, fresh), builder("sleeping-builder", "stopped", old),
+              builder("resumed-builder", "busy", sleepCreated, minutesAgo(10)), builder("overrun-builder", "busy", sleepCreated, minutesAgo(130)),
+            ],
+            total: 5, skip: 0, limit: 20,
+          });
         }
       }
 
