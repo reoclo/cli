@@ -42,7 +42,6 @@ export function profileRows(
     .map(([name, p]) => ({
       active: name === activeProfile ? "*" : "",
       name,
-      organization: p.tenant_slug,
       email: p.user_email,
       auth: authSummary(p, now),
       api: p.api_url,
@@ -71,7 +70,6 @@ export function registerProfile(program: Command): void {
         [
           { key: "active", label: " " },
           { key: "name", label: "PROFILE" },
-          { key: "organization", label: "ORGANIZATION" },
           { key: "email", label: "EMAIL" },
           { key: "auth", label: "AUTH" },
           { key: "api", label: "API" },
@@ -105,7 +103,6 @@ export function registerProfile(program: Command): void {
       printObject(
         {
           profile: name,
-          organization: p.tenant_slug,
           email: p.user_email,
           auth: authSummary(p, Date.now()),
           api: p.api_url,
@@ -123,9 +120,8 @@ export function registerProfile(program: Command): void {
         await setActiveProfile(name);
         const cfg = await loadConfig();
         const p = cfg.profiles[name];
-        const org = p?.tenant_slug ?? "?";
         const email = p?.user_email ?? "?";
-        console.log(`✓ active profile: ${name} (org: ${org}, email: ${email})`);
+        console.log(`✓ active profile: ${name} (${email})`);
       }),
     { args: [{ slot: 0, resource: "profiles" }] },
   );

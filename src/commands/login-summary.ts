@@ -7,7 +7,6 @@
 // Kept out of login.ts so they unit-test without the OAuth device flow, the
 // keyring, or the network.
 import type { ProfileSource } from "../config/profile-resolve";
-import { formatRole } from "../ui/format-role";
 
 /**
  * Option A: `login` sets the just-authenticated profile as the GLOBAL active
@@ -25,30 +24,37 @@ export function shouldSetActiveProfile(opts: {
 
 export interface LoginSummaryInput {
   email: string;
-  org: string; // me.tenant_slug
-  roles: string[]; // me.roles
   profile: string; // resolved profile name
   source: ProfileSource;
   storeKind: "keyring" | "file" | "memory";
+  storeChosen: boolean; // --keyring or --no-keyring was passed
   setActive: boolean; // result of shouldSetActiveProfile()
+  verbose: boolean; // --verbose
 }
 
-/** Compose the multi-line `reoclo login` success block. */
+/**
+ * Compose the multi-line `reoclo login` success block. The organization the
+ * sign-in token was issued for is never shown: it is not a target, because a
+ * command's organization comes only from --org, $REOCLO_ORG or a .reoclo file.
+ * The profile and credential store are shown only when the login chose them
+ * (--profile / $REOCLO_PROFILE, --keyring / --no-keyring) or under --verbose,
+ * except that tokens kept outside the OS keyring are always reported.
+ */
 export function formatLoginSummary(i: LoginSummaryInput): string {
   const lines: string[] = [];
   lines.push(`✓ authenticated as ${i.email}`);
-  lines.push(`  organization: ${i.org}`);
-  if (i.roles.length > 0) {
-    lines.push(`  role:         ${i.roles.map(formatRole).join(", ")}`);
+  if (i.verbose || i.source !== "default") {
+    const sourceTag =
+      i.source === "env"
+        ? "  (from $REOCLO_PROFILE)"
+        : i.source === "flag"
+          ? "  (from --profile)"
+          : "";
+    lines.push(`  profile:      ${i.profile}${sourceTag}`);
   }
-  const sourceTag =
-    i.source === "env"
-      ? "  (from $REOCLO_PROFILE)"
-      : i.source === "flag"
-        ? "  (from --profile)"
-        : "";
-  lines.push(`  profile:      ${i.profile}${sourceTag}`);
-  lines.push(`  credentials:  ${i.storeKind}`);
+  if (i.verbose || i.storeChosen || i.storeKind !== "keyring") {
+    lines.push(`  credentials:  ${i.storeKind}`);
+  }
   if (!i.setActive) {
     const why =
       i.source === "env"
