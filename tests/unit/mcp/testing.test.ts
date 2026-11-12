@@ -87,10 +87,12 @@ test("repository tools resolve owner/name and enable, refresh and start a run", 
   await call(registry, "set_repository_tests", { repository: "acme/web", enabled: true });
   await call(registry, "start_test_run", { repository: "acme/web", test: "unit", ref: "main", sha: "abcdef1" });
   await call(registry, "start_test_run", { repository: "acme/web", test: "unit" });
+  await call(registry, "start_test_run", { repository: "acme/web", test: "unit", inputs: { room_link: "https://rooms.example/r/1", users: "50" } });
+  await call(registry, "start_test_run", { repository: "acme/web", test: "unit", inputs: {} });
   expect(api.calls("POST", `/tenants/${T}/repositories/${REPO_ID}/tests/refresh`)).toHaveLength(1);
   expect(api.calls("PATCH", `/tenants/${T}/repositories/${REPO_ID}/test-settings`)[0]?.body).toEqual({ enabled: true });
   const starts = api.calls("POST", `/tenants/${T}/repositories/${REPO_ID}/tests/unit/runs`).map((r) => r.body);
-  expect(starts).toEqual([{ ref: "main", sha: "abcdef1" }, {}]);
+  expect(starts).toEqual([{ ref: "main", sha: "abcdef1" }, {}, { inputs: { room_link: "https://rooms.example/r/1", users: "50" } }, {}]);
 });
 
 test("run tools accept a run number and cancel, rerun and read the run", async () => {

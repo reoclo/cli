@@ -71,18 +71,20 @@ export function registerTestingTools(server: McpServer, ctx: McpRegistrationCont
       return client.patch(`/tenants/${tenantId}/repositories/${found.id}/test-settings`, { enabled });
     });
 
-  tool("start_test_run", "Start a run of a test file. Tests must be enabled for the repository; the test must allow manual runs.",
+  tool("start_test_run", "Start a run of a test file. Tests must be enabled for the repository; the test must allow manual runs. Pass inputs for the values the test file declares under on.manual.inputs; an unknown name or a missing required input is refused with a message that names it.",
     {
       repository,
       test: z.string().min(1).describe("Test name (the file name without .yml)"),
       ref: z.string().min(1).optional().describe("Branch to test (default: the repository's default branch)"),
       sha: z.string().regex(/^[0-9a-f]{7,64}$/).optional().describe("Commit to test (default: the head of the branch)"),
+      inputs: z.record(z.string(), z.string()).optional().describe("Values for the inputs the test file declares, as name to value. Secret inputs are accepted too; their values are never shown back."),
     },
-    async ({ tenantId, client }, { repository: repo, test, ref, sha }) => {
+    async ({ tenantId, client }, { repository: repo, test, ref, sha, inputs }) => {
       const found = await resolveTestRepository(client, tenantId, repo, noRemote);
       return client.post(`/tenants/${tenantId}/repositories/${found.id}/tests/${encodeURIComponent(test)}/runs`, {
         ...(ref === undefined ? {} : { ref }),
         ...(sha === undefined ? {} : { sha }),
+        ...(inputs === undefined || Object.keys(inputs).length === 0 ? {} : { inputs }),
       });
     });
 

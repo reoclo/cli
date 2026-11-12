@@ -170,6 +170,26 @@ test("tests run without --wait starts the run and exits 0 at once", async () => 
   expect(r.out).toContain("run #5 started");
 });
 
+test("tests run --input sends the inputs by name, keeps a value that contains '=' and sends no key when none are given", async () => {
+  const fake = serve(runRoutes([["queued", "pending", null]]));
+  const path = `/tenants/${T}/repositories/${REPO}/tests/unit/runs`;
+  const given = await cli(["tests", "run", "unit", "--repo", "acme/web", "--input", "room_link=https://rooms.example/r?id=4821", "--input", "note="]);
+  expect(given.code).toBe(0);
+  expect(fake.calls("POST", path)[0]?.body).toEqual({ inputs: { room_link: "https://rooms.example/r?id=4821", note: "" } });
+  expect((await cli(["tests", "run", "unit", "--repo", "acme/web"])).code).toBe(0);
+  expect(fake.calls("POST", path)[1]?.body).toEqual({});
+});
+
+test("tests run shows the API's message naming the inputs it refused and exits 1", async () => {
+  serve({
+    ...runRoutes([["queued", "pending", null]]),
+    [`POST /tenants/${T}/repositories/${REPO}/tests/unit/runs`]: () => Response.json({ detail: "Unknown inputs: 'nope'. Missing required inputs: 'room_link'" }, { status: 422 }),
+  });
+  const r = await cli(["tests", "run", "unit", "--repo", "acme/web", "--input", "nope=1"]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("Unknown inputs: 'nope'. Missing required inputs: 'room_link'");
+});
+
 test("runs, show, logs, cancel and rerun take a run number", async () => {
   const fake = serve(runRoutes([["passed", "passed", 0]]));
   expect((await cli(["tests", "runs", "--repo", "acme/web", "--state", "passed"])).out).toContain("unit");

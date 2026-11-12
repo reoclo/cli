@@ -20,6 +20,7 @@ import { globalOutput, printList, printMutation, printObject, resolveFormat, typ
 import { confirmOrExit } from "../ui/prompt";
 import { badUsage, parseEnum } from "../util/parse-flag";
 import { parseLimit } from "../util/parse-limit";
+import { parseInputs } from "../util/test-inputs";
 import { followRun, streamLogs, type FollowDeps } from "./tests-follow";
 import { registerTestFiles } from "./tests-files";
 import { readOriginRemote } from "./up";
@@ -30,6 +31,7 @@ const DETACHED_EXIT = 130;
 const TRUST_WARNING = (repo: string): string =>
   `Anyone who can push to ${repo} will be able to run commands on machines in your cloud account. Reoclo records who enabled this.`;
 
+const collect = (value: string, previous: string[]): string[] => [...previous, value];
 const out = (line: string): void => void process.stdout.write(`${line}\n`);
 const err = (line: string): void => void process.stderr.write(`${line}\n`);
 
@@ -183,14 +185,20 @@ export function registerTests(program: Command): void {
     .option("--repo <repo>", REPO_HELP)
     .option("--ref <branch>", "branch to test (default: the repository's default branch)")
     .option("--sha <sha>", "commit to test (default: the head of the branch)")
+    .option("--input <KEY=VALUE>", "value for an input the test file declares (repeatable)", collect, [] as string[])
     .option("--wait", "follow the run, print the job logs and exit with its result; Ctrl+C asks whether to cancel it")
-    .action(async (name: string, opts: { repo?: string; ref?: string; sha?: string; wait?: boolean }) => {
+    .action(async (name: string, opts: { repo?: string; ref?: string; sha?: string; input: string[]; wait?: boolean }) => {
       if (!TEST_NAME.test(name)) throw badUsage(`invalid test name '${name}' (lowercase letters, digits and dashes)`);
       if (opts.sha !== undefined && !/^[0-9a-f]{7,64}$/i.test(opts.sha)) throw badUsage(`invalid --sha: '${opts.sha}'`);
+      const inputs = parseInputs(opts.input);
       const fmt = resolveFormat(globalOutput(program));
       const { client, tid } = await scope();
       const repo = await resolveTestRepository(client, tid, opts.repo, readOriginRemote);
-      const body = { ...(opts.ref === undefined ? {} : { ref: opts.ref }), ...(opts.sha === undefined ? {} : { sha: opts.sha.toLowerCase() }) };
+      const body = {
+        ...(opts.ref === undefined ? {} : { ref: opts.ref }),
+        ...(opts.sha === undefined ? {} : { sha: opts.sha.toLowerCase() }),
+        ...(Object.keys(inputs).length === 0 ? {} : { inputs }),
+      };
       const run = await client.post<TestRun>(`/tenants/${tid}/repositories/${repo.id}/tests/${name}/runs`, body);
       const started = `run #${run.number} started: ${run.test_name} at ${shortSha(run.commit_sha)} (${run.ref})`;
       if (!opts.wait) {
