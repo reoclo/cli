@@ -1,0 +1,69 @@
+# Publishes the npm packages for a release. The Woodpecker release pipeline
+# builds the binaries and publishes the GitHub release on this mirror; this
+# workflow waits for those binaries, checks them against SHA256SUMS, and
+# publishes them to npm through trusted publishing (OIDC), so the npm packages
+# carry the same binaries as Homebrew and the curl installer.
+#
+# Each @reoclo package on npmjs.com trusts this repository and this workflow
+# file (npm-publish.yml). Re-run a release with workflow_dispatch.
+name: npm publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (vX.Y.Z)
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@latest
+
+      - name: Wait for the release binaries
+        run: |
+          need="SHA256SUMS reoclo-linux-x64 reoclo-linux-arm64 reoclo-darwin-x64 reoclo-darwin-arm64 reoclo-windows-x64.exe"
+          for _ in $(seq 1 90); do
+            have="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[] | select(.state == "uploaded") | .name' 2>/dev/null || true)"
+            missing=""
+            for f in $need; do grep -qx "$f" <<<"$have" || missing="$missing $f"; done
+            if [ -z "$missing" ]; then echo "all binaries uploaded"; exit 0; fi
+            echo "waiting for:$missing"
+            sleep 20
+          done
+          echo "release $TAG is missing:$missing" >&2
+          exit 1
+
+      - name: Download and verify the binaries
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern SHA256SUMS --pattern 'reoclo-linux-x64' --pattern 'reoclo-linux-arm64' \
+            --pattern 'reoclo-darwin-x64' --pattern 'reoclo-darwin-arm64' --pattern 'reoclo-windows-x64.exe'
+          cd dist && sha256sum --check --ignore-missing SHA256SUMS
+
+      - run: bash scripts/publish-npm.sh
