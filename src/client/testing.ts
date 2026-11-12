@@ -112,7 +112,7 @@ export interface TestDefinition {
   path: string;
   sha: string;
   validation_error: string | null;
-  spec: { pool?: string; on?: { manual?: boolean; push?: { branches: string[] } | null }; jobs?: Record<string, unknown> } | null;
+  spec: { pool?: string; on?: { manual?: boolean | { inputs?: Record<string, unknown> }; push?: { branches: string[] } | null }; jobs?: Record<string, unknown> } | null;
 }
 export interface TestsOverview { tests_enabled: boolean; definitions: TestDefinition[] }
 

@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { registerTestPools } from "../../../src/commands/test-pools";
 import { registerTests } from "../../../src/commands/tests";
 import { summarizeTest } from "../../../src/commands/tests-files";
+import { parseInputs } from "../../../src/util/test-inputs";
 import { parseUnsetKeys, parseVariables } from "../../../src/util/test-vars";
 
 function group(name: string): Command {
@@ -39,7 +40,7 @@ describe("command surface", () => {
   });
 
   test("run takes the ref, sha and wait flags, and logs takes job and follow", () => {
-    for (const flag of ["--repo", "--ref", "--sha", "--wait"]) expect(longs(sub("tests", "run"))).toContain(flag);
+    for (const flag of ["--repo", "--ref", "--sha", "--input", "--wait"]) expect(longs(sub("tests", "run"))).toContain(flag);
     for (const flag of ["--job", "--follow"]) expect(longs(sub("tests", "logs"))).toContain(flag);
     expect(longs(sub("tests", "ls"))).toContain("--refresh");
   });
@@ -52,12 +53,29 @@ describe("usage errors exit 2 before any request", () => {
     expect((await failure(["tests", "runs", "--state", "sleeping"])).exitCode).toBe(2);
   });
 
+  test("an input without KEY=VALUE or given twice", async () => {
+    expect((await failure(["tests", "run", "unit", "--input", "novalue"])).exitCode).toBe(2);
+    expect((await failure(["tests", "run", "unit", "--input", "=x"])).exitCode).toBe(2);
+    expect((await failure(["tests", "run", "unit", "--input", "a=1", "--input", "a=2"])).message).toBe("input 'a' is given more than once");
+  });
+
   test("out-of-range pool numbers, a bad provider and an empty edit", async () => {
     const base = ["test-pools", "create", "--name", "p", "--credential", "c", "--location", "fsn1", "--server-type", "cx23"];
     expect((await failure([...base, "--max-machines", "51"])).exitCode).toBe(2);
     expect((await failure([...base, "--volume", "10"])).exitCode).toBe(2);
     expect((await failure([...base, "--provider", "gcp"])).exitCode).toBe(2);
     expect((await failure(["test-pools", "edit", "ci"])).message).toBe("no fields to update");
+  });
+});
+
+describe("run inputs", () => {
+  test("each --input is a name and a value, the value being everything after the first '='", () => {
+    expect(parseInputs([])).toEqual({});
+    expect(parseInputs(["room_link=https://x.example/r?id=1", "note=", "eq=="])).toEqual({ room_link: "https://x.example/r?id=1", note: "", eq: "=" });
+  });
+
+  test("a key that names an Object property is kept as a plain input", () => {
+    expect(Object.entries(parseInputs(["__proto__=1", "constructor=2"]))).toEqual([["__proto__", "1"], ["constructor", "2"]]);
   });
 });
 
