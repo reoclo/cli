@@ -28,9 +28,11 @@ class Reoclo < Formula
 
   def install
     bin.install Dir["reoclo-*"].first => "reoclo"
+    bin.install_symlink "reoclo" => "rc"
   end
 
   test do
     assert_match(/^{{VERSION}}$/, shell_output("#{bin}/reoclo --version").strip)
+    assert_match(/^{{VERSION}}$/, shell_output("#{bin}/rc --version").strip)
   end
 end
