@@ -3,7 +3,9 @@
   "version": "0.0.0-placeholder",
   "description": "Reoclo CLI",
   "license": "MIT",
-  "bin": { "reoclo": "./bin.js", "rc": "./bin.js" },
+  "homepage": "https://reoclo.com",
+  "repository": { "type": "git", "url": "git+https://github.com/reoclo/cli.git" },
+  "bin": { "reoclo": "bin.js", "rc": "bin.js" },
   "engines": { "node": ">=18" },
   "optionalDependencies": {
     "@reoclo/cli-linux-x64":    "0.0.0-placeholder",
