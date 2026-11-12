@@ -1,7 +1,6 @@
 // src/commands/dashboard.ts
 import type { Command } from "commander";
 import { bootstrap, requireTenantId } from "../client/bootstrap";
-import { getActiveProfile } from "../config/store";
 import { globalOutput, printList, printObject, resolveFormat } from "../ui/output";
 
 interface ActivityEntry {
@@ -57,9 +56,9 @@ export function registerDashboard(program: Command): void {
       }
 
       // Header: which organization this dashboard reflects. Slug is friendlier
-      // than the UUID; pulled from the active profile (set at login time).
-      const profile = await getActiveProfile();
-      const slug = profile?.tenant_slug ?? "";
+      // than the UUID; it is the one --org / $REOCLO_ORG / .reoclo named, never
+      // the profile's sign-in org.
+      const slug = ctx.orgSlug ?? "";
       const header = slug ? `Organization: ${slug} (${tid})` : `Organization: ${tid}`;
       process.stdout.write(`${header}\n\n`);
       process.stdout.write("Counts\n");

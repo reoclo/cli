@@ -87,7 +87,6 @@ describe("profileRows", () => {
     expect(row).toEqual({
       active: "*",
       name: "prod",
-      organization: "acme",
       email: "dev@acme.com",
       auth: "api key",
       api: "https://api.reoclo.com",

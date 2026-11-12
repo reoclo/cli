@@ -10,6 +10,7 @@ import { resolveCommandProfileWithSource } from "../config/profile-resolve";
 import { formatLoginSummary } from "./login-summary";
 import { buildProfileWithCapabilities, deviceLogin, type LoginFlowOptions } from "../auth/device-login";
 import { openBrowser } from "../ui/open-browser";
+import { verboseLogger } from "../client/verbose";
 import {
   runAuthUpdateCheck,
   readUpdateCache,
@@ -75,12 +76,12 @@ async function runDeviceFlow(opts: LoginFlowOptions): Promise<void> {
   console.log(
     formatLoginSummary({
       email: me.email,
-      org: me.tenant_slug,
-      roles: me.roles ?? [],
       profile: profileName,
       source: opts.source,
       storeKind,
+      storeChosen: opts.keyring !== undefined,
       setActive,
+      verbose: verboseLogger() !== undefined,
     }),
   );
 }
