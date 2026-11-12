@@ -18,6 +18,7 @@ import { registerScheduledOperationTools } from "./scheduled-operations";
 import { registerSecretProjectTools } from "./secrets";
 import { registerServerTools } from "./servers";
 import { registerStatusPageTools } from "./status-pages";
+import { registerTestingTools } from "./testing";
 import { registerTunnelTools } from "./tunnels";
 import { registerVolumeTools } from "./volumes";
 
@@ -28,6 +29,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerApplicationTools(server, ctx);
   registerDeploymentTools(server, ctx);
   registerBuildTools(server, ctx);
+  registerTestingTools(server, ctx);
   registerGroupTools(server, ctx);
   registerLogTools(server, ctx);
   registerFindingTools(server, ctx);
