@@ -7,7 +7,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { ApiError } from "../client/errors";
 import { EXIT } from "../client/exit-codes";
 import { exitError } from "../client/repo-deploy";
-import { TEST_NAME, type TestValidation, type ValidatedTest } from "../client/testing";
+import { TEST_NAME, triggerList, type TestValidation, type ValidatedTest } from "../client/testing";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
 import { badUsage } from "../util/parse-flag";
 
@@ -81,7 +81,7 @@ function plural(count: number, word: string): string {
 
 export function summarizeTest(test: ValidatedTest): string {
   const steps = test.jobs.reduce((sum, job) => sum + job.steps, 0);
-  const triggers = [...(test.on.manual ? ["manual"] : []), ...(test.on.push ? [`push ${test.on.push.branches.join(" ")}`] : [])];
+  const triggers = triggerList({ ...test.on, inputs: (test.inputs ?? []).map((input) => input.name) });
   return `pool ${test.pool}, ${plural(test.jobs.length, "job")}, ${plural(steps, "step")}, on ${triggers.join(" and ") || "no trigger"}`;
 }
 
