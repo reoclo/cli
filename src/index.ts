@@ -49,6 +49,8 @@ import { registerGroups } from "./commands/groups";
 import { registerProxy } from "./commands/proxy";
 import { registerBuildPools } from "./commands/build-pools";
 import { registerBuilds } from "./commands/builds";
+import { registerTestPools } from "./commands/test-pools";
+import { registerTests } from "./commands/tests";
 import { registerUp } from "./commands/up";
 import {
   bootstrap,
@@ -150,6 +152,8 @@ if (import.meta.main) {
   registerProxy(program);
   registerBuildPools(program);
   registerBuilds(program);
+  registerTestPools(program);
+  registerTests(program);
   registerUp(program);
   registerDns(program);
 
@@ -218,9 +222,10 @@ if (import.meta.main) {
     "hosts",     // `hosts …` edits local hostnames through the tunnel daemon and the root helper; no login needed
   ]);
 
-  // Leaf commands that only talk to the local tunnel daemon. The daemon owns the
-  // credentials, so these need no login of their own.
+  // Leaf commands that only talk to the local tunnel daemon, which owns the
+  // credentials, or that only write a local file (`tests init`). None needs a login.
   const LOCAL_ONLY_PATHS = new Set([
+    "tests init",
     "tunnel status",
     "tunnel up",
     "tunnel down",
