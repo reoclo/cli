@@ -48,6 +48,16 @@ publish() {
     return
   fi
   echo "  $name@$VER"
+  # npm silently drops package.json fields it considers invalid (npm 12 drops
+  # a bin path written as "./bin.js"), which would publish a shim with no
+  # commands. Refuse to publish anything npm had to correct.
+  local check
+  check="$(cd "$dir" && npm publish --access public --dry-run 2>&1)"
+  if grep -q "auto-corrected" <<<"$check"; then
+    echo "$check" >&2
+    echo "npm: $name's package.json needs fixing before it can be published" >&2
+    exit 1
+  fi
   (cd "$dir" && npm publish "${PUBLISH_ARGS[@]}")
 }
 
@@ -77,6 +87,7 @@ publish_platform win32  x64   reoclo-windows-x64.exe
 
 SHIM="$WORK/cli"
 cp -R packaging/npm-shim/. "$SHIM/"
+chmod 755 "$SHIM/bin.js"
 jq --arg ver "$VER" '.version = $ver | .optionalDependencies |= with_entries(.value = $ver)' \
   packaging/npm-shim/package.json > "$SHIM/package.json"
 publish "@reoclo/cli" "$SHIM"
