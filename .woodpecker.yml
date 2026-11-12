@@ -5,7 +5,9 @@
 #   - Gitea  (git.boxpositron.dev/reoclo/reoclo-cli)
 #   - GitHub (github.com/reoclo/cli)
 # Finally, refreshes the Homebrew tap at reoclo/homebrew-tap so
-# `brew install reoclo/tap/reoclo` resolves to the new version.
+# `brew install reoclo/tap/reoclo` resolves to the new version. The npm
+# packages are published from the GitHub mirror once its release has the
+# binaries (.github/workflows/npm-publish.yml).
 #
 # Required Woodpecker secrets (set at the repo level):
 #   gitea_release_token  — Gitea PAT with write:repository scope
