@@ -5,6 +5,7 @@ import type { McpRegistrationContext } from "./context";
 import { registerApplicationTools } from "./applications";
 import { registerAuthTools } from "./auth";
 import { registerBuildTools } from "./builds";
+import { registerDashboardTools } from "./dashboards";
 import { registerDeploymentTools } from "./deployments";
 import { registerDomainTools } from "./domains";
 import { registerFindingTools } from "./findings";
@@ -30,6 +31,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerDeploymentTools(server, ctx);
   registerBuildTools(server, ctx);
   registerTestingTools(server, ctx);
+  registerDashboardTools(server, ctx);
   registerGroupTools(server, ctx);
   registerLogTools(server, ctx);
   registerFindingTools(server, ctx);
