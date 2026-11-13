@@ -112,18 +112,35 @@ export interface TestDefinition {
   path: string;
   sha: string;
   validation_error: string | null;
-  spec: { pool?: string; on?: { manual?: boolean | { inputs?: Record<string, unknown> }; push?: { branches: string[] } | null }; jobs?: Record<string, unknown> } | null;
+  spec: { pool?: string; on?: { manual?: boolean | { inputs?: Record<string, unknown> }; push?: { branches: string[] } | null; pull_request?: { branches: string[] } | null }; jobs?: Record<string, unknown> } | null;
 }
 export interface TestsOverview { tests_enabled: boolean; definitions: TestDefinition[] }
 
 export interface ValidatedTest {
   name: string;
   pool: string;
-  on: { manual: boolean; push: { branches: string[] } | null };
+  on: { manual: boolean; push: { branches: string[] } | null; pull_request?: { branches: string[] } | null };
+  inputs?: Array<{ name: string }>;
   jobs: Array<{ key: string; image: string; needs: string[]; steps: number }>;
   order: string[];
 }
 export interface TestValidation { valid: boolean; error: string | null; test: ValidatedTest | null }
+
+interface TriggerSet {
+  manual: boolean;
+  inputs: readonly string[];
+  push?: { branches: string[] } | null;
+  pull_request?: { branches: string[] } | null;
+}
+
+/** Every trigger a test file has, as short phrases: manual (with input names), push and pull_request (with branches). */
+export function triggerList(on: TriggerSet): string[] {
+  return [
+    ...(on.manual ? [on.inputs.length > 0 ? `manual (inputs ${on.inputs.join(" ")})` : "manual"] : []),
+    ...(on.push ? [`push ${on.push.branches.join(" ")}`] : []),
+    ...(on.pull_request ? [`pull_request ${on.pull_request.branches.join(" ")}`] : []),
+  ];
+}
 
 export const LOG_START = -1;
 const LOG_PAGE = 5000;

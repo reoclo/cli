@@ -10,6 +10,7 @@ import {
   runExitCode,
   shortSha,
   TEST_NAME,
+  triggerList,
   type TestDefinition,
   type TestRun,
   type TestRunDetail,
@@ -65,11 +66,11 @@ function interactiveDeps(client: HttpClient, tid: string, write: (line: string) 
   return { deps, dispose: () => process.off("SIGINT", onSigint) };
 }
 
-function triggers(d: TestDefinition): string {
+export function triggers(d: TestDefinition): string {
   const on = d.spec?.on;
   if (!on) return "";
-  const push = on.push ? [`push ${on.push.branches.join(" ")}`] : [];
-  return [...(on.manual === false ? [] : ["manual"]), ...push].join(", ");
+  const inputs = typeof on.manual === "object" ? Object.keys(on.manual.inputs ?? {}) : [];
+  return triggerList({ ...on, manual: on.manual !== false, inputs }).join(", ");
 }
 
 function runRow(r: TestRun): Record<string, unknown> {

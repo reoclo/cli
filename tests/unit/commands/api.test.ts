@@ -30,6 +30,18 @@ describe("buildApiRequest", () => {
     expect(r.body).toBeUndefined();
   });
 
+  test("a path that already starts with /mcp is not doubled", () => {
+    expect(buildApiRequest({ path: "/mcp/tenants/x/servers/" }).path).toBe("/tenants/x/servers/");
+    expect(buildApiRequest({ path: "mcp/tenants/x" }).path).toBe("/tenants/x");
+    expect(buildApiRequest({ path: "/mcp" }).path).toBe("/");
+    expect(buildApiRequest({ path: "/mcp?a=1" }).path).toBe("/?a=1");
+  });
+
+  test("only a whole leading /mcp segment is stripped", () => {
+    expect(buildApiRequest({ path: "/mcpx/tenants" }).path).toBe("/mcpx/tenants");
+    expect(buildApiRequest({ path: "/tenants/x/mcp/y" }).path).toBe("/tenants/x/mcp/y");
+  });
+
   test("expands {tenant} everywhere in the path", () => {
     const r = buildApiRequest({
       path: "/tenants/{tenant}/application-groups/",

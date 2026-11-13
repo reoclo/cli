@@ -61,6 +61,9 @@ export function typedFieldValue(raw: string): unknown {
  */
 export function buildApiRequest(input: ApiRequestInput): ApiRequest {
   let path = input.path.startsWith("/") ? input.path : `/${input.path}`;
+  // The client prepends the API base (/mcp) itself; accept a path that already has it.
+  path = path.replace(/^\/mcp(?=[/?]|$)/, "");
+  if (!path.startsWith("/")) path = `/${path}`;
 
   if (path.includes("{tenant}")) {
     if (!input.tenantId) fail("path uses {tenant} but no organization is selected");
@@ -121,6 +124,19 @@ export function registerApi(program: Command): void {
     .command("api <path>")
     .description(
       "raw authenticated API request ({tenant} in the path expands to the current organization's tenant id)",
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "The path is relative to the API base, which the CLI adds for you: /mcp for signed-in",
+        "users and machine tokens, /api/automation/v1 for automation keys. A leading /mcp in",
+        "the path is accepted and not doubled.",
+        "",
+        "Example:",
+        "  reoclo api /tenants/{tenant}/servers/   # requests /mcp/tenants/<id>/servers/",
+        "",
+      ].join("\n"),
     )
     .option("-X, --method <verb>", "HTTP method (default GET, or POST when a body is given)")
     .option(

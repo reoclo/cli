@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
 import { registerTestPools } from "../../../src/commands/test-pools";
 import { registerTests } from "../../../src/commands/tests";
+import { triggers } from "../../../src/commands/tests";
 import { summarizeTest } from "../../../src/commands/tests-files";
 import { parseInputs } from "../../../src/util/test-inputs";
 import { parseUnsetKeys, parseVariables } from "../../../src/util/test-vars";
@@ -108,4 +109,36 @@ test("summarizeTest names the pool, jobs, steps and triggers", () => {
     order: ["a", "b"],
   });
   expect(summary).toBe("pool ci, 2 jobs, 3 steps, on manual and push main");
+});
+
+test("summarizeTest lists a pull-request-only file as pull_request, not manual", () => {
+  const summary = summarizeTest({
+    name: "pr",
+    pool: "ci",
+    on: { manual: false, push: null, pull_request: { branches: ["main", "release"] } },
+    jobs: [{ key: "a", image: "alpine", needs: [], steps: 1 }],
+    order: ["a"],
+  });
+  expect(summary).toBe("pool ci, 1 job, 1 step, on pull_request main release");
+});
+
+test("tests ls triggers lists a pull-request-only file as pull_request, and every trigger of a full one", () => {
+  const def = (on: unknown) => ({ name: "t", path: "p", sha: "s", validation_error: null, spec: { pool: "ci", on } }) as Parameters<typeof triggers>[0];
+  expect(triggers(def({ manual: false, pull_request: { branches: ["main"] } }))).toBe("pull_request main");
+  expect(triggers(def({ manual: { inputs: { target: {} } }, push: { branches: ["main"] }, pull_request: { branches: ["dev"] } }))).toBe(
+    "manual (inputs target), push main, pull_request dev",
+  );
+  expect(triggers(def({ push: { branches: ["main"] } }))).toBe("manual, push main");
+});
+
+test("summarizeTest lists every trigger with the manual input names", () => {
+  const summary = summarizeTest({
+    name: "all",
+    pool: "ci",
+    on: { manual: true, push: { branches: ["main"] }, pull_request: { branches: ["dev"] } },
+    inputs: [{ name: "target" }, { name: "verbose" }],
+    jobs: [{ key: "a", image: "alpine", needs: [], steps: 1 }],
+    order: ["a"],
+  });
+  expect(summary).toBe("pool ci, 1 job, 1 step, on manual (inputs target verbose) and push main and pull_request dev");
 });
