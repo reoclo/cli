@@ -20,6 +20,7 @@ import { registerSecretProjectTools } from "./secrets";
 import { registerServerTools } from "./servers";
 import { registerStatusPageTools } from "./status-pages";
 import { registerTestingTools } from "./testing";
+import { registerTrafficTools } from "./traffic";
 import { registerTunnelTools } from "./tunnels";
 import { registerVolumeTools } from "./volumes";
 
@@ -39,6 +40,7 @@ export function registerAllTools(server: McpServer, ctx: McpRegistrationContext)
   registerGitProviderTools(server, ctx);
   registerMonitorTools(server, ctx);
   registerStatusPageTools(server, ctx);
+  registerTrafficTools(server, ctx);
   registerTunnelTools(server, ctx);
   registerOtherTools(server, ctx);
   registerRuntimeTools(server, ctx);
