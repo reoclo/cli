@@ -3,8 +3,8 @@ import { Command } from "commander";
 import { registerBuildPools } from "../../../src/commands/build-pools";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 import { NotFoundError, ApiError } from "../../../src/client/errors";
-import { budgetNote, builderWarning, COST_DATA_UNAVAILABLE, costRoute } from "../../../src/commands/build-pools-costs";
-import { formatHourly, parseIdlePolicy, parseMoney } from "../../../src/util/ephemeral-pool";
+import { awakeSession, budgetNote, builderWarning, COST_DATA_UNAVAILABLE, costRoute } from "../../../src/commands/build-pools-costs";
+import { ephemeralFields, formatHourly, parseIdlePolicy, parseMoney } from "../../../src/util/ephemeral-pool";
 
 function pools(): Command {
   const program = new Command().name("reoclo");
@@ -24,7 +24,7 @@ describe("reoclo build-pools", () => {
   });
 
   test("create and set take the ephemeral pool flags", () => {
-    const flags = ["--cloud-credential", "--location", "--server-type", "--fallback-type", "--arch", "--snapshot", "--max-servers", "--idle-policy", "--max-lifetime", "--cache", "--budget", "--budget-currency"];
+    const flags = ["--cloud-credential", "--location", "--server-type", "--fallback-type", "--arch", "--snapshot", "--max-servers", "--idle-policy", "--max-lifetime", "--max-builder-age-days", "--cache", "--budget", "--budget-currency"];
     for (const name of ["create", "set"]) {
       const longs = sub(name).options.map((o) => o.long);
       for (const flag of flags) expect(longs).toContain(flag);
@@ -82,6 +82,30 @@ describe("reoclo build-pools", () => {
     expect(builderWarning({ ...sleeper, running_since: "2026-10-25T09:50:00Z" }, now)).toBe("past max lifetime");
     expect(builderWarning({ ...sleeper, running_since: null }, now)).toBe("past max lifetime");
     expect(builderWarning(sleeper, now)).toBe("past max lifetime");
+  });
+
+  test("a sleep builder shows its open session in minutes, and its state while it has none", () => {
+    const now = Date.parse("2026-10-25T12:00:00Z");
+    const sleeper = { id: "b", server_type: "cx33", location: "fsn1", provider_server_id: "1", deleted_at: null, max_lifetime_minutes: 120, error_code: null, cost: null, created_at: "2026-10-22T07:00:00Z" };
+    expect(awakeSession({ ...sleeper, state: "busy", running_since: "2026-10-25T11:35:00Z" }, now)).toBe(25);
+    expect(awakeSession({ ...sleeper, state: "stopped", running_since: null }, now)).toBe("stopped");
+    expect(awakeSession({ ...sleeper, state: "starting", running_since: null }, now)).toBe("starting");
+    expect(awakeSession({ ...sleeper, state: "ready", running_since: null }, now)).toBe("-");
+  });
+
+  test("--max-builder-age-days is sent as max_builder_age_days and must be 1 to 30", () => {
+    const flags = { fallbackType: [] as string[] };
+    expect(ephemeralFields({ ...flags, maxBuilderAgeDays: "14" })).toEqual({ max_builder_age_days: 14 });
+    for (const bad of ["0", "31", "2.5", "week"]) expect(() => ephemeralFields({ ...flags, maxBuilderAgeDays: bad })).toThrow();
+  });
+
+  test("set rejects an out-of-range --max-builder-age-days with exit 2 before any request", async () => {
+    const program = new Command().name("reoclo");
+    registerBuildPools(program);
+    const err = await program
+      .parseAsync(["node", "reoclo", "build-pools", "set", "p", "--max-builder-age-days", "31"])
+      .catch((e: unknown) => e);
+    expect((err as { exitCode?: number }).exitCode).toBe(2);
   });
 
   test("a 404 from a cost route becomes the cost-data message and keeps exit 5", async () => {

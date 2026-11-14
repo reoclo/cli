@@ -23,6 +23,7 @@ export interface EphemeralFlags {
   maxServers?: string;
   idlePolicy?: string;
   maxLifetime?: string;
+  maxBuilderAgeDays?: string;
   cache?: string;
   budget?: string;
   budgetCurrency?: string;
@@ -42,6 +43,7 @@ export function addEphemeralOptions(cmd: Command): Command {
     .option("--max-servers <n>", "ephemeral: builders that may exist at once (1-50, default 1)")
     .option("--idle-policy <policy>", "ephemeral: hour_aware (default), immediate or ttl:<minutes>")
     .option("--max-lifetime <minutes>", "ephemeral: delete a builder at this age (5-1440, default 120)")
+    .option("--max-builder-age-days <days>", "sleep pool: delete a stopped builder older than this many days (1-30, default 7)")
     .option("--cache <mode>", "ephemeral: registry (default) or none")
     .option("--budget <amount>", "ephemeral: monthly net budget, e.g. 25 or 25.50")
     .option("--budget-currency <code>", "ephemeral: budget currency (default EUR)");
@@ -68,7 +70,7 @@ function matching(raw: string, pattern: RegExp, flag: string): string {
 
 const EPHEMERAL_KEYS = [
   "cloudCredential", "location", "serverType", "arch", "snapshot", "stockImage", "maxServers",
-  "idlePolicy", "maxLifetime", "cache", "budget", "budgetCurrency",
+  "idlePolicy", "maxLifetime", "maxBuilderAgeDays", "cache", "budget", "budgetCurrency",
 ] as const satisfies ReadonlyArray<keyof EphemeralFlags>;
 
 export function hasEphemeralFlags(f: EphemeralFlags): boolean {
@@ -89,6 +91,7 @@ export function ephemeralFields(f: EphemeralFlags): Record<string, unknown> {
   if (f.maxServers !== undefined) body["max_servers"] = parseIntFlag(f.maxServers, "--max-servers", 1, 50);
   if (f.idlePolicy !== undefined) body["idle_policy"] = parseIdlePolicy(f.idlePolicy);
   if (f.maxLifetime !== undefined) body["max_lifetime_minutes"] = parseIntFlag(f.maxLifetime, "--max-lifetime", 5, 1440);
+  if (f.maxBuilderAgeDays !== undefined) body["max_builder_age_days"] = parseIntFlag(f.maxBuilderAgeDays, "--max-builder-age-days", 1, 30);
   if (f.cache !== undefined) body["cache"] = parseEnum(f.cache, ["none", "registry"] as const, "--cache");
   if (f.budget !== undefined) body["monthly_budget_cents"] = parseMoney(f.budget, "--budget");
   if (f.budgetCurrency !== undefined) {

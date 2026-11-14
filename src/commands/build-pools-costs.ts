@@ -80,6 +80,13 @@ function ageMinutes(b: Builder, now: number): number {
   return Math.max(0, Math.floor((end - Date.parse(b.created_at)) / 60_000));
 }
 
+/** How long a sleep-pool builder's current awake session has run, or its state while no session is open. */
+export function awakeSession(b: Builder, now: number): number | string {
+  if (NOT_RUNNING_STATES.has(b.state)) return b.state;
+  if (b.state === "deleted" || !b.running_since) return "-";
+  return Math.max(0, Math.floor((now - Date.parse(b.running_since)) / 60_000));
+}
+
 export function builderWarning(b: Builder, now: number): string {
   if (b.state === "deleted") return "";
   if (b.state === "failed" || (b.state === "deleting" && b.error_code)) return "failed, deleting";
@@ -174,15 +181,19 @@ export function registerBuildPoolCosts(g: Command, program: Command): void {
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const id = await resolveBuildPool(ctx.client, tid, pool);
+      const { mode } = await ctx.client.get<{ mode: string }>(`/tenants/${tid}/build-pools/${id}`);
       const res = await ctx.client.get<PaginatedResponse<Builder>>(`/tenants/${tid}/build-pools/${id}/builders?skip=${skip}&limit=${limit}`);
       const now = Date.now();
+      const sleeps = mode === "sleep";
       printList(res.items.map((b) => ({
         ...b, type: `${b.server_type}${b.location ? ` ${b.location}` : ""}`, age_minutes: ageMinutes(b, now),
+        ...(sleeps ? { awake_minutes: awakeSession(b, now) } : {}),
         billed_hours: b.cost?.billed_hours ?? 0, estimated_net: b.cost ? formatMinor(b.cost.net_minor_units, b.cost.currency) : "-",
         warning: builderWarning(b, now),
       })) as unknown as Array<Record<string, unknown>>, [
         { key: "id", label: "ID" }, { key: "provider_server_id", label: "INSTANCE ID" }, { key: "state", label: "STATE" },
-        { key: "type", label: "TYPE" }, { key: "age_minutes", label: "AGE (MIN)" }, { key: "billed_hours", label: "BILLED HOURS" },
+        { key: "type", label: "TYPE" }, { key: "age_minutes", label: "AGE (MIN)" },
+        ...(sleeps ? [{ key: "awake_minutes", label: "AWAKE (MIN)" }] : []), { key: "billed_hours", label: "BILLED HOURS" },
         { key: "estimated_net", label: "EST. NET" }, { key: "warning", label: "WARNING" },
       ], fmt);
     });
