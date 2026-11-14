@@ -52,6 +52,45 @@ test("env set + ls + rm round-trip", async () => {
   expect(outAfter).toContain("BAZ");
 });
 
+test("env set marks build options, ls shows them, and a plain update keeps them", async () => {
+  await $`bun run src/index.ts env set --app app-1 --public-build NEXT_PUBLIC_API_URL=https://api.example.com`
+    .env(baseEnv())
+    .quiet();
+  await $`bun run src/index.ts env set --app app-1 --build-secret NPM_TOKEN=t`.env(baseEnv()).quiet();
+  await $`bun run src/index.ts env set --app app-1 NEXT_PUBLIC_API_URL=https://v2.example.com`
+    .env(baseEnv())
+    .quiet();
+
+  const ls = await $`bun run src/index.ts env ls --app app-1`.env(baseEnv()).quiet();
+  const rows = ls.stdout.toString().split("\n");
+  expect(rows[0]).toMatch(/^KEY\s+SOURCE\s+BUILD\s+UPDATED/);
+  expect(rows.find((r) => r.startsWith("NEXT_PUBLIC_API_URL"))).toMatch(/\bvalue\s+public\b/);
+  expect(rows.find((r) => r.startsWith("NPM_TOKEN"))).toMatch(/\bvalue\s+secret\b/);
+
+  await $`bun run src/index.ts env set --app app-1 --no-public-build NEXT_PUBLIC_API_URL=x`
+    .env(baseEnv())
+    .quiet();
+  const json = await $`bun run src/index.ts env ls --app app-1 -o json`.env(baseEnv()).quiet();
+  const byKey = Object.fromEntries(
+    json
+      .stdout.toString()
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { key: string; build_public: boolean })
+      .map((row) => [row.key, row.build_public]),
+  );
+  expect(byKey).toEqual({ NEXT_PUBLIC_API_URL: false, NPM_TOKEN: false });
+});
+
+test("env set refuses both build options before calling the API", async () => {
+  const r = await $`bun run src/index.ts env set --app app-1 --public-build --build-secret X=1`
+    .env(baseEnv())
+    .nothrow()
+    .quiet();
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("both a public build value and a build secret");
+});
+
 test("env get exits 1 with informative message", async () => {
   const r = await $`bun run src/index.ts env get --app app-1 FOO`.env(baseEnv()).nothrow().quiet();
   expect(r.exitCode).toBe(1);
