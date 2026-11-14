@@ -35,6 +35,7 @@ interface BuildPool {
   location?: string | null;
   monthly_budget_cents?: number | null;
   budget_currency?: string;
+  max_builder_age_days?: number | null;
 }
 
 type PoolFlags = EphemeralFlags & { name?: string; server: string[]; maxConcurrent?: string; mode?: string };
@@ -125,7 +126,11 @@ export function registerBuildPools(program: Command): void {
       const tid = await requireTenantId(ctx);
       const id = await resolveBuildPool(ctx.client, tid, idOrName);
       const pool = await ctx.client.get<BuildPool>(`/tenants/${tid}/build-pools/${id}`);
-      printObject(pool as unknown as Record<string, unknown>, fmt);
+      // Only sleep pools use the builder age cap, so the table leaves it out for the others.
+      const shown = fmt === "text" && pool.mode !== "sleep"
+        ? Object.fromEntries(Object.entries(pool).filter(([key]) => key !== "max_builder_age_days"))
+        : (pool as unknown as Record<string, unknown>);
+      printObject(shown, fmt);
     });
 
   withCompletion(
