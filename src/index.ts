@@ -51,6 +51,7 @@ import { registerBuildPools } from "./commands/build-pools";
 import { registerBuilds } from "./commands/builds";
 import { registerTestPools } from "./commands/test-pools";
 import { registerTests } from "./commands/tests";
+import { registerTraffic } from "./commands/traffic";
 import { registerUp } from "./commands/up";
 import {
   bootstrap,
@@ -154,6 +155,7 @@ if (import.meta.main) {
   registerBuilds(program);
   registerTestPools(program);
   registerTests(program);
+  registerTraffic(program);
   registerUp(program);
   registerDns(program);
 
