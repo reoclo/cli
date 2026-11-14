@@ -1,6 +1,13 @@
 // src/client/resolve.ts
 import type { HttpClient } from "./http";
-import type { Application, GitProvider, PaginatedResponse, Repository, Server } from "./types";
+import type {
+  Application,
+  Domain,
+  GitProvider,
+  PaginatedResponse,
+  Repository,
+  Server,
+} from "./types";
 import { getSlice } from "../completion/cache";
 import { cacheList } from "../completion/populate";
 import type { Entry, IndexKind } from "../completion/types";
@@ -80,6 +87,19 @@ export async function resolveApp(
       return res.items;
     },
     "application",
+  );
+}
+
+export async function resolveDomain(
+  c: HttpClient,
+  tenantId: string,
+  identifier: string,
+): Promise<string> {
+  return resolve(
+    "domains",
+    identifier,
+    () => c.get<Domain[]>(`/tenants/${tenantId}/domains/`),
+    "domain",
   );
 }
 

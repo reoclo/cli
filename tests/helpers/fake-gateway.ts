@@ -33,6 +33,8 @@ export interface FakeGateway {
   configPatches: Array<Record<string, unknown>>;
   /** Query string of every findings list request. */
   findingRequests: string[];
+  /** Path (without the /mcp prefix) and query string of every traffic read request. */
+  trafficRequests: string[];
   /** JSON bodies POSTed to create a runner token. */
   runnerTokenBodies: Array<Record<string, unknown>>;
   /** Ids of runner tokens that were revoked. */
@@ -188,6 +190,7 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
 
   const configPatches: Array<Record<string, unknown>> = [];
   const findingRequests: string[] = [];
+  const trafficRequests: string[] = [];
   const runnerTokenBodies: Array<Record<string, unknown>> = [];
   const runnerTokenRevokes: string[] = [];
   const serverDeletes: string[] = [];
@@ -1788,6 +1791,78 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
         return Response.json({ items, total: filtered.length, page, page_size: pageSize });
       }
 
+      // GET /mcp/tenants/{tid}/traffic/summary and /routes
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/traffic/summary`) {
+        trafficRequests.push(`${url.pathname.replace("/mcp", "")}${url.search}`);
+        return Response.json({
+          current: {
+            requests: 1200,
+            rps: 0.33,
+            errors_5xx: 12,
+            error_rate: 0.01,
+            client_errors_4xx: 30,
+            p50_ms: 42,
+            p95_ms: 480,
+            p99_ms: 1500,
+            bytes_out: 5_242_880,
+            page_loads: 0,
+            bots: 100,
+            checks: 0,
+            sparkline: [],
+          },
+          previous: {
+            requests: 1000,
+            rps: 0.28,
+            errors_5xx: 0,
+            error_rate: 0,
+            client_errors_4xx: 30,
+            p50_ms: 40,
+            p95_ms: null,
+            p99_ms: null,
+            bytes_out: 4_194_304,
+            page_loads: 0,
+            bots: 0,
+            checks: 0,
+            sparkline: [],
+          },
+          series: [],
+          deploys: [],
+        });
+      }
+      if (url.pathname === `/mcp/tenants/${TENANT_ID}/traffic/routes`) {
+        trafficRequests.push(`${url.pathname.replace("/mcp", "")}${url.search}`);
+        return Response.json({
+          items: [
+            {
+              method: "GET",
+              route: "/users/:id",
+              requests: 900,
+              rps: 0.25,
+              error_rate: 0.005,
+              p50_ms: 30,
+              p95_ms: 250,
+              p99_ms: 900,
+              bytes_out: 2048,
+              sparkline: [],
+            },
+            {
+              method: "POST",
+              route: "/orders",
+              requests: 300,
+              rps: 0.08,
+              error_rate: 0.04,
+              p50_ms: null,
+              p95_ms: null,
+              p99_ms: null,
+              bytes_out: 0,
+              sparkline: [],
+            },
+          ],
+          other_requests: 7,
+          not_found_requests: 3,
+        });
+      }
+
       // /mcp/tenants/{tid}/tunnels/   (list)
       if (url.pathname === `/mcp/tenants/${TENANT_ID}/tunnels/`) {
         return Response.json([]);
@@ -1814,6 +1889,7 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
     dnsRecordRequests,
     configPatches,
     findingRequests,
+    trafficRequests,
     runnerTokenBodies,
     runnerTokenRevokes,
     serverDeletes,
