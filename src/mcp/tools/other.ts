@@ -67,13 +67,13 @@ export function registerOtherTools(
   // Environment variables (values masked)
   server.tool(
     "list_env_vars",
-    "List environment variable keys for an application (values are masked)",
+    "List an application's environment variable keys with their source (a value, or a secret project reference) and build option: build_public marks a public build value, build_secret a build secret. Values are never returned.",
     { ...ctx.orgParam, application_id: z.string().min(1).describe("Application ID") },
     async ({ application_id, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const envVars = await client.get(
-          `/tenants/${tenantId}/applications/${application_id}/env`,
+          `/tenants/${tenantId}/applications/${application_id}/env/`,
         );
         return asToolResult(envVars);
       } catch (error: unknown) {
@@ -84,19 +84,55 @@ export function registerOtherTools(
 
   server.tool(
     "set_env_var",
-    "Set or update an environment variable for an application",
+    "Set or update an environment variable for an application. Pass value, or secret_project_id to read the value from a secret project instead of storing it. build_exposure sets how pool builds may use it; leave it out to keep the variable's current setting.",
     {
       ...ctx.orgParam,
       application_id: z.string().min(1).describe("Application ID"),
       key: z.string().min(1).describe("Variable name"),
-      value: z.string().describe("Variable value"),
+      value: z.string().optional().describe("Variable value. Leave out when secret_project_id is set"),
+      secret_project_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Secret project id: the variable reads a key in this project instead of a stored value"),
+      secret_key: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Key in the secret project. Defaults to key"),
+      build_exposure: z
+        .enum(["none", "public_build_value", "build_secret"])
+        .optional()
+        .describe(
+          "public_build_value: pool build args may read it and it may ship in the image. build_secret: builds read it and the running container never gets it. none: neither",
+        ),
     },
-    async ({ application_id, key, value, ...args }) => {
+    async ({ application_id, key, value, secret_project_id, secret_key, build_exposure, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
-        const result = await client.post(
-          `/tenants/${tenantId}/applications/${application_id}/env`,
-          { key, value },
+        if ((value === undefined) === (secret_project_id === undefined)) {
+          throw new Error("Pass exactly one of value or secret_project_id");
+        }
+        if (secret_key !== undefined && secret_project_id === undefined) {
+          throw new Error("secret_key needs secret_project_id");
+        }
+        const source =
+          secret_project_id === undefined
+            ? { value }
+            : {
+                source: "reference",
+                secret_ref: { project_id: secret_project_id, secret_key: secret_key ?? key },
+              };
+        const exposure =
+          build_exposure === undefined
+            ? {}
+            : {
+                build_public: build_exposure === "public_build_value",
+                build_secret: build_exposure === "build_secret",
+              };
+        const result = await client.patch(
+          `/tenants/${tenantId}/applications/${application_id}/env/`,
+          { vars: [{ key, ...source, ...exposure }] },
         );
         return asToolResult(result);
       } catch (error: unknown) {

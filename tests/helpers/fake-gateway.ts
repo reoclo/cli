@@ -46,7 +46,18 @@ export interface FakeGateway {
 
 export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGateway {
   // In-memory state per gateway instance — reset on each fresh startFakeGateway().
-  const envVars = new Map<string, Map<string, string>>();
+  const envVars = new Map<
+    string,
+    Map<
+      string,
+      {
+        value?: string;
+        secret_ref?: { project_id: string; secret_key: string };
+        build_public: boolean;
+        build_secret: boolean;
+      }
+    >
+  >();
   const monitors = new Map<string, Record<string, unknown>>();
   const statusPages = new Map<string, Record<string, unknown>>();
   const incidents = new Map<string, Record<string, unknown>>();
@@ -618,21 +629,42 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
         if (!envVars.has(appId)) envVars.set(appId, new Map());
         const map = envVars.get(appId)!;
 
-        if (req.method === "GET") {
-          const items = Array.from(map.keys()).map((k) => ({
+        const listed = () =>
+          Array.from(map.entries()).map(([k, v]) => ({
             key: k,
+            build_public: v.build_public,
+            build_secret: v.build_secret,
+            source: v.secret_ref ? "reference" : "literal",
+            secret_ref: v.secret_ref ?? null,
             updated_at: "2026-01-01T00:00:00Z",
           }));
-          return Response.json(items);
+        if (req.method === "GET") {
+          return Response.json(listed());
         }
         if (req.method === "PATCH") {
-          const body = (await req.json()) as { vars: Array<{ key: string; value: string }> };
-          for (const v of body.vars) map.set(v.key, v.value);
-          const items = Array.from(map.keys()).map((k) => ({
-            key: k,
-            updated_at: "2026-01-01T00:00:00Z",
-          }));
-          return Response.json(items);
+          const body = (await req.json()) as {
+            vars: Array<{
+              key: string;
+              value?: string;
+              secret_ref?: { project_id: string; secret_key: string };
+              build_public?: boolean;
+              build_secret?: boolean;
+            }>;
+          };
+          // Like the API: an option the request leaves out keeps its stored value,
+          // and turning one on turns the other off.
+          for (const v of body.vars) {
+            const stored = map.get(v.key);
+            const secret = v.build_secret ?? ((stored?.build_secret ?? false) && v.build_public !== true);
+            const pub = v.build_public ?? ((stored?.build_public ?? false) && !secret);
+            map.set(v.key, {
+              value: v.value,
+              secret_ref: v.secret_ref,
+              build_public: pub,
+              build_secret: secret,
+            });
+          }
+          return Response.json(listed());
         }
       }
 
