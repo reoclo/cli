@@ -105,7 +105,7 @@ export function registerDomainTools(server: McpServer, ctx: McpRegistrationConte
 
   server.tool(
     "add_domain",
-    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated. Pass redirect to link the domain as a redirect. Pass ip_allowlist to restrict which source IPs can reach it; this only applies on servers running the managed proxy, and omitting it inherits the server default.",
+    "Add a domain to an organization, optionally linking it to an application. A verified root domain that has no application yet is linked in place rather than duplicated. Pass redirect to add the domain as a redirect: it runs on the application's server when application_id is given, otherwise on bound_server_id, which must run the managed or an external proxy (API 1.355.0 and later). Pass ip_allowlist to restrict which source IPs can reach it; this only applies on servers running the managed proxy, and omitting it inherits the server default.",
     {
       ...ctx.orgParam,
       fqdn: z

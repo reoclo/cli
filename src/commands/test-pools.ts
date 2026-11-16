@@ -4,7 +4,16 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { EXIT } from "../client/exit-codes";
 import type { HttpClient } from "../client/http";
 import { exitError } from "../client/repo-deploy";
-import { resolveTestPool, type TestMachine, type TestPool, type TestVariable } from "../client/testing";
+import {
+  hasStorageChanges,
+  poolStorageBody,
+  resolveTestPool,
+  type StorageChanges,
+  type TestMachine,
+  type TestPool,
+  type TestPoolStorage,
+  type TestVariable,
+} from "../client/testing";
 import type { PaginatedResponse } from "../client/types";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
 import { confirmOrExit } from "../ui/prompt";
@@ -37,6 +46,12 @@ interface PoolFlags {
   budgetCurrency?: string;
   var: string[];
   secret: string[];
+  storageCredential?: string;
+  storageBucket?: string;
+  storageRegion?: string;
+  storagePrefix?: string;
+  cacheRetention?: string;
+  artifactRetention?: string;
 }
 
 interface CloudCredential { id: string; label: string; provider: string }
@@ -58,7 +73,24 @@ function addPoolOptions(cmd: Command): Command {
     .option("--budget <amount>", "monthly net budget, e.g. 25 or 25.50")
     .option("--budget-currency <code>", "budget currency (default EUR on Hetzner, USD on AWS)")
     .option("--var <KEY=VALUE>", "plain variable passed to every job (repeatable)", collect, [] as string[])
-    .option("--secret <KEY=VALUE>", "write-only secret variable, never shown again (repeatable)", collect, [] as string[]);
+    .option("--secret <KEY=VALUE>", "write-only secret variable, never shown again (repeatable)", collect, [] as string[])
+    .option("--storage-credential <nameOrId>", "storage credential that reaches the bucket for caches and artifacts")
+    .option("--storage-bucket <name>", "bucket for caches and artifacts")
+    .option("--storage-region <region>", "bucket region, such as eu-central-1 (auto on Cloudflare R2)")
+    .option("--storage-prefix <prefix>", "key prefix inside the bucket (default: none)")
+    .option("--cache-retention <days>", "days a cache is kept, 1-365 (default 7)")
+    .option("--artifact-retention <days>", "days artifacts are kept, 1-365 (default 30)");
+}
+
+function storageChanges(f: PoolFlags): StorageChanges {
+  return {
+    credential: f.storageCredential,
+    bucket: f.storageBucket,
+    region: f.storageRegion,
+    prefix: f.storagePrefix,
+    cacheRetentionDays: f.cacheRetention === undefined ? undefined : parseIntFlag(f.cacheRetention, "--cache-retention", 1, 365),
+    artifactRetentionDays: f.artifactRetention === undefined ? undefined : parseIntFlag(f.artifactRetention, "--artifact-retention", 1, 365),
+  };
 }
 
 function matching(raw: string, pattern: RegExp, flag: string): string {
@@ -99,6 +131,12 @@ async function resolveCredential(client: HttpClient, tid: string, ref: string, p
 
 function describeVariables(vars: TestVariable[]): string {
   return vars.map((v) => (v.secret ? `${v.key} (secret)` : `${v.key}=${v.value ?? ""}`)).join(", ");
+}
+
+function describeStorage(storage: TestPoolStorage | null | undefined): string {
+  if (!storage) return "none (jobs with a cache or artifacts cannot run)";
+  const place = storage.prefix ? `${storage.bucket}/${storage.prefix}` : storage.bucket;
+  return `${place} in ${storage.region} with ${storage.credential_name ?? storage.credential_id}, caches ${storage.cache_retention_days} d, artifacts ${storage.artifact_retention_days} d`;
 }
 
 function poolRow(p: TestPool): Record<string, unknown> {
@@ -147,7 +185,10 @@ export function registerTestPools(program: Command): void {
       const tid = await requireTenantId(ctx);
       const id = await resolveTestPool(ctx.client, tid, ref);
       const pool = await ctx.client.get<TestPool>(`/tenants/${tid}/test-pools/${id}`);
-      printObject(fmt === "text" ? { ...pool, variables: describeVariables(pool.variables) } : { ...pool }, fmt);
+      printObject(
+        fmt === "text" ? { ...pool, variables: describeVariables(pool.variables), storage: describeStorage(pool.storage) } : { ...pool },
+        fmt,
+      );
     });
 
   addPoolOptions(
@@ -165,6 +206,7 @@ export function registerTestPools(program: Command): void {
     const slug = opts.slug === undefined ? undefined : matching(opts.slug, SLUG, "--slug");
     const fields = poolFields(opts);
     const variables = parseVariables(opts.var, opts.secret);
+    const storage = storageChanges(opts);
     const ctx = await bootstrap();
     const tid = await requireTenantId(ctx);
     const credential = await resolveCredential(ctx.client, tid, opts.credential ?? "", provider);
@@ -174,6 +216,7 @@ export function registerTestPools(program: Command): void {
       provider: credential.provider,
       cloud_credential_id: credential.id,
       variables,
+      ...(hasStorageChanges(storage) ? { storage: await poolStorageBody(ctx.client, tid, storage, null) } : {}),
     };
     const pool = await ctx.client.post<TestPool>(`/tenants/${tid}/test-pools`, body);
     printMutation(program, { ...pool }, `✓ test pool created: ${pool.name} (slug: ${pool.slug}, id: ${pool.id})`);
@@ -184,21 +227,27 @@ export function registerTestPools(program: Command): void {
       .command("edit <pool>")
       .description("update a test pool (the slug and provider cannot change)")
       .option("--name <name>", "new name")
-      .option("--unset-var <KEY>", "delete a variable (repeatable)", collect, [] as string[]),
-  ).action(async (ref: string, opts: PoolFlags & { unsetVar: string[] }) => {
+      .option("--unset-var <KEY>", "delete a variable (repeatable)", collect, [] as string[])
+      .option("--no-storage", "remove the pool's bucket (jobs with a cache or artifacts then cannot run)"),
+  ).action(async (ref: string, opts: PoolFlags & { unsetVar: string[]; storage: boolean }) => {
     const fields = poolFields(opts);
     const set = parseVariables(opts.var, opts.secret);
     const unset = parseUnsetKeys(opts.unsetVar, set);
-    if (Object.keys(fields).length === 0 && set.length === 0 && unset.length === 0 && opts.credential === undefined) {
+    const storage = storageChanges(opts);
+    const changesStorage = hasStorageChanges(storage);
+    if (!opts.storage && changesStorage) throw badUsage("--no-storage cannot be combined with the other storage options");
+    if (Object.keys(fields).length === 0 && set.length === 0 && unset.length === 0 && opts.credential === undefined && opts.storage && !changesStorage) {
       throw badUsage("no fields to update");
     }
     const ctx = await bootstrap();
     const tid = await requireTenantId(ctx);
     const id = await resolveTestPool(ctx.client, tid, ref);
-    if (opts.credential !== undefined) {
-      const current = await ctx.client.get<TestPool>(`/tenants/${tid}/test-pools/${id}`);
+    const current = opts.credential !== undefined || changesStorage ? await ctx.client.get<TestPool>(`/tenants/${tid}/test-pools/${id}`) : undefined;
+    if (opts.credential !== undefined && current !== undefined) {
       fields["cloud_credential_id"] = (await resolveCredential(ctx.client, tid, opts.credential, current.provider)).id;
     }
+    if (!opts.storage) fields["storage"] = null;
+    if (changesStorage) fields["storage"] = await poolStorageBody(ctx.client, tid, storage, current?.storage);
     const variables: Record<string, { value: string; secret: boolean } | null> = {};
     for (const v of set) variables[v.key] = { value: v.value, secret: v.secret };
     for (const key of unset) variables[key] = null;

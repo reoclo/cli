@@ -19,6 +19,7 @@ import {
 } from "../client/testing";
 import { globalOutput, printList, printMutation, printObject, resolveFormat, type OutputFormat } from "../ui/output";
 import { confirmOrExit } from "../ui/prompt";
+import { noInputReason } from "../ui/tty";
 import { badUsage, parseEnum } from "../util/parse-flag";
 import { parseLimit } from "../util/parse-limit";
 import { parseInputs } from "../util/test-inputs";
@@ -37,7 +38,7 @@ const out = (line: string): void => void process.stdout.write(`${line}\n`);
 const err = (line: string): void => void process.stderr.write(`${line}\n`);
 
 async function askCancel(): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
+  if (noInputReason() !== null) return false;
   const { createInterface } = await import("node:readline");
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   return new Promise((resolve) => {

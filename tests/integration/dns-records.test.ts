@@ -93,9 +93,8 @@ test("dns records rm without --yes and without a TTY aborts and deletes nothing"
   expect(gw.dnsRecordRequests).toEqual([]);
 });
 
-test("dns records rm requires --zone", async () => {
-  const r = await $`bun run src/index.ts dns records rm a1 --yes`.env(env()).nothrow().quiet();
-  expect(r.exitCode).not.toBe(0);
-  expect(r.stderr.toString()).toContain("--zone");
-  expect(gw.dnsRecordRequests).toEqual([]);
+test("dns records rm without --zone leaves finding the zone to the API", async () => {
+  const r = await $`bun run src/index.ts dns records rm a1 --yes`.env(env()).quiet();
+  expect(r.stdout.toString()).toContain("✓ record removed: a1");
+  expect(gw.dnsRecordRequests).toEqual([{ method: "DELETE", search: "", body: null }]);
 });

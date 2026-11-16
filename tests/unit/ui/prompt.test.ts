@@ -1,5 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { confirmAction, parseChoice } from "../../../src/ui/prompt";
+import { noInputReason } from "../../../src/ui/tty";
+
+describe("noInputReason", () => {
+  test("a terminal with no agent or CI around can be asked", () => {
+    expect(noInputReason({}, true)).toBeNull();
+  });
+
+  test("a coding agent's pseudo-terminal, CI or REOCLO_NO_INPUT cannot", () => {
+    expect(noInputReason({ CLAUDECODE: "1" }, true)).toBe("a coding agent runs this command (CLAUDECODE is set)");
+    expect(noInputReason({ PI_CODING_AGENT: "true" }, true)).toContain("PI_CODING_AGENT");
+    expect(noInputReason({ AI_AGENT: "claude-code_2-1-312_agent" }, true)).toContain("AI_AGENT");
+    expect(noInputReason({ CI: "true" }, true)).toBe("CI is set");
+    expect(noInputReason({ REOCLO_NO_INPUT: "1" }, true)).toBe("REOCLO_NO_INPUT is set");
+    expect(noInputReason({}, false)).toBe("stdin is not a terminal");
+  });
+
+  test("falsy values do not count", () => {
+    expect(noInputReason({ CI: "false", AI_AGENT: "0", REOCLO_NO_INPUT: "", CLAUDECODE: "off" }, true)).toBeNull();
+  });
+});
 
 describe("parseChoice", () => {
   test("an empty answer uses the default", () => {
@@ -40,5 +60,16 @@ describe("confirmAction", () => {
   test("without a TTY and without --yes it declines instead of waiting", async () => {
     expect(await withStdinTty(false, () => confirmAction("delete x? ", false))).toBe(false);
     expect(await withStdinTty(undefined, () => confirmAction("delete x? "))).toBe(false);
+  });
+
+  test("on a terminal nobody answers (REOCLO_NO_INPUT) it declines instead of waiting", async () => {
+    const previous = process.env["REOCLO_NO_INPUT"];
+    process.env["REOCLO_NO_INPUT"] = "1";
+    try {
+      expect(await withStdinTty(true, () => confirmAction("enable tests? ", false))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env["REOCLO_NO_INPUT"];
+      else process.env["REOCLO_NO_INPUT"] = previous;
+    }
   });
 });

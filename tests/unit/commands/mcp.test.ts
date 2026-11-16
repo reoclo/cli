@@ -95,6 +95,16 @@ test("resolveMcpBootstrap resolves the machine token's own tenant, not an ambien
   expect(tenantId).not.toBe("t-profile-org");
 });
 
+test("resolveMcpBootstrap serves an OAuth profile with no org bound instead of exiting", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-oauth", "login-org"), auth_kind: "oauth", token_type: "oauth" } },
+  });
+  const { ctx, tenantId } = await resolveMcpBootstrap();
+  expect(tenantId).toBeUndefined();
+  expect(ctx.orgSlug).toBeUndefined();
+});
+
 test("resolveMcpBootstrap throws exit 3 when the credential's own /auth/me carries no tenant (honest failure, not a near-empty tool list)", async () => {
   const server = Bun.serve({
     port: 0,

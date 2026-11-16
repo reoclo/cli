@@ -214,6 +214,18 @@ describe("domains add", () => {
     });
   });
 
+  test("builds a redirect that needs only a server", async () => {
+    const { client } = fakeClient();
+    const body = await buildAddBody(client, "T", "status.example.com", {
+      server: SERVER,
+      redirectTo: "https://status.example.org",
+      keepPath: true,
+    });
+    expect(body["application_id"]).toBeUndefined();
+    expect(body["bound_server_id"]).toBe(SERVER);
+    expect(body["redirect"]).toMatchObject({ target_url: "https://status.example.org", keep_path: true });
+  });
+
   test("misuse exits 2 before any request", async () => {
     const { client, gets } = fakeClient();
     expect(await asyncExitCodeOf(() => buildAddBody(client, "T", "a.example.com", { code: "301", keepPath: true }))).toBe(2);

@@ -7,7 +7,7 @@ import { bootstrap, requireTenantId } from "../client/bootstrap";
 import { ApiError } from "../client/errors";
 import { EXIT } from "../client/exit-codes";
 import { exitError } from "../client/repo-deploy";
-import { TEST_NAME, triggerList, type TestValidation, type ValidatedTest } from "../client/testing";
+import { resolveTestRepository, TEST_NAME, triggerList, type TestValidation, type ValidatedTest } from "../client/testing";
 import { globalOutput, printList, resolveFormat } from "../ui/output";
 import { badUsage } from "../util/parse-flag";
 
@@ -114,24 +114,28 @@ export function registerTestFiles(g: Command, program: Command): void {
     });
 
   g.command("validate [paths...]")
-    .description(`check test files against the API (default: every ${TESTS_DIR}/*.yml); exit 1 if any is invalid`)
-    .action(async (paths: string[]) => {
+    .description(
+      `check test files against the API and your test pools (default: every ${TESTS_DIR}/*.yml); exit 1 if any is invalid`,
+    )
+    .option("--repo <repo>", "also check that this linked repository (owner/name or id) has tests enabled")
+    .action(async (paths: string[], opts: { repo?: string }) => {
       const fmt = resolveFormat(globalOutput(program));
       const cwd = process.cwd();
       const files = collectFiles(repoRoot(cwd), paths);
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
+      const repository = opts.repo === undefined ? undefined : await resolveTestRepository(ctx.client, tid, opts.repo, () => null);
       const rows: Array<Record<string, unknown>> = [];
       for (const file of files) {
         const name = basename(file, extname(file));
         const content = readFileSync(file, "utf8");
         const result = await ctx.client
-          .post<TestValidation>(`/tenants/${tid}/tests/validate`, { name, content })
+          .post<TestValidation>(`/tenants/${tid}/tests/validate`, { name, content, ...(repository ? { repository_id: repository.id } : {}) })
           .catch((e: unknown): TestValidation => {
             if (e instanceof ApiError && e.status === 422) return { valid: false, error: e.message, test: null };
             throw e;
           });
-        rows.push({ path: relative(cwd, file), name, ...result });
+        rows.push({ path: relative(cwd, file), name, ...result, warnings: result.warnings ?? [] });
       }
       if (fmt === "text") {
         for (const row of rows) {
@@ -141,9 +145,10 @@ export function registerTestFiles(g: Command, program: Command): void {
               ? `✓ ${String(row["path"])}: valid (${summarizeTest(test)})\n`
               : `✗ ${String(row["path"])}: invalid: ${String(row["error"])}\n`,
           );
+          for (const warning of row["warnings"] as string[]) process.stdout.write(`  ! ${warning}\n`);
         }
       } else {
-        printList(rows, ["path", "name", "valid", "error", "test"], fmt);
+        printList(rows, ["path", "name", "valid", "error", "warnings", "test"], fmt);
       }
       if (rows.some((row) => row["valid"] !== true)) process.exitCode = EXIT.GENERIC;
     });
