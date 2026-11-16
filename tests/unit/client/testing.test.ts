@@ -3,6 +3,7 @@ import { FakeApi, repo, TID } from "../../helpers/fake-api";
 import {
   drainJobLogs,
   elapsed,
+  resolveRegistryCredentials,
   resolveTestPool,
   resolveTestRepository,
   resolveTestRun,
@@ -97,4 +98,21 @@ test("elapsed renders seconds and minutes", () => {
   expect(elapsed("2026-11-12T10:00:00Z", "2026-11-12T10:00:42Z")).toBe("42s");
   expect(elapsed("2026-11-12T10:00:00Z", "2026-11-12T10:01:05Z")).toBe("1m05s");
   expect(elapsed(null, null)).toBe("");
+});
+
+describe("resolveRegistryCredentials", () => {
+  const GHCR = "77777777-7777-7777-7777-777777777777";
+  const HUB = "88888888-8888-8888-8888-888888888888";
+  const api = (): FakeApi =>
+    new FakeApi().on("GET", `/tenants/${TID}/registry-credentials`, [{ id: GHCR, name: "ghcr" }, { id: HUB, name: "hub" }]);
+
+  test("names and ids both resolve, in the order given, each id once", async () => {
+    expect(await resolveRegistryCredentials(api(), TID, ["hub", "ghcr", HUB])).toEqual([HUB, GHCR]);
+  });
+
+  test("an unknown credential exits 5 and lists the ones that exist", async () => {
+    const error = (await resolveRegistryCredentials(api(), TID, ["quay"]).catch((e: unknown) => e)) as { exitCode?: number; message: string };
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toContain("available: ghcr, hub");
+  });
 });

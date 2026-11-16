@@ -61,6 +61,7 @@ export function registerTestingTools(server: McpServer, ctx: McpRegistrationCont
       pool: z.string().min(1).describe("Test pool slug or id"),
       name: z.string().min(1).max(120).optional(),
       server_type: z.string().regex(/^[a-z][a-z0-9.-]{1,49}$/).optional().describe("Machine type, such as cx33 on Hetzner or m7i.large on AWS"),
+      market: z.enum(["on_demand", "spot"]).optional().describe("on_demand or spot capacity; spot is AWS only"),
       max_machines: z.number().int().min(1).max(50).optional().describe("Machines the pool runs at once"),
       job_time_limit_minutes: z.number().int().min(5).max(7200).optional().describe("Longest a job may run"),
       volume_gb: z.number().int().min(20).max(500).optional().describe("Root volume of each machine"),
@@ -76,10 +77,10 @@ export function registerTestingTools(server: McpServer, ctx: McpRegistrationCont
         .nullable()
         .optional(),
     },
-    async ({ tenantId, client }, { pool, storage, name, server_type, max_machines, job_time_limit_minutes, volume_gb }) => {
+    async ({ tenantId, client }, { pool, storage, name, server_type, market, max_machines, job_time_limit_minutes, volume_gb }) => {
       const id = await resolveTestPool(client, tenantId, pool);
       // Built from the named fields, never from the args object, which also carries the organization.
-      const fields = { name, server_type, max_machines, job_time_limit_minutes, volume_gb };
+      const fields = { name, server_type, market, max_machines, job_time_limit_minutes, volume_gb };
       const body: Record<string, unknown> = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
       if (storage === null) body["storage"] = null;
       if (storage) {

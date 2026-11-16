@@ -139,11 +139,19 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
   const client = (): Promise<ControlClient> => deps.connect({ client: "mcp", agent: agent() });
   const signal = (): AbortSignal => (deps.waitSignal ?? (() => AbortSignal.timeout(60_000)))();
   const caPath = (): string | undefined => (deps.caPath ? deps.caPath() : existsSync(caCertFile()) ? caCertFile() : undefined);
-  const needOrg = (): string => {
-    if (deps.org === undefined) {
-      throw new Error("tunnels need an organization: start reoclo mcp with --org <slug>, set $REOCLO_ORG, or add a .reoclo file");
-    }
-    return deps.org;
+  // An unbound server (the context asks every tool for an organization) takes the slug as an argument; a bound one never does.
+  const unbound = deps.ctx.orgParam.organization !== undefined;
+  const orgArg: { organization?: z.ZodOptional<z.ZodString> } = unbound
+    ? { organization: z.string().min(1).optional().describe("Organization slug. Needed for an ad-hoc tunnel and for a tunnel to a server; call whoami to list yours.") }
+    : {};
+  const needOrg = (organization?: string): string => {
+    const org = deps.org ?? organization?.trim();
+    if (org) return org;
+    throw new Error(
+      unbound
+        ? "tunnels need an organization: pass the organization argument. Call whoami to list yours."
+        : "tunnels need an organization: start reoclo mcp with --org <slug>, set $REOCLO_ORG, or add a .reoclo file",
+    );
   };
 
   server.tool(
@@ -172,8 +180,9 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
       target: z.string().min(1).optional().describe("Ad-hoc: where the server connects, HOST:PORT or a bare port (127.0.0.1)"),
       kind: z.enum(["tcp", "udp"]).optional().describe("Ad-hoc: default tcp"),
       ttl_minutes: z.number().int().min(1).max(480).optional().describe("Ad-hoc: minutes before it closes. Default 60."),
+      ...orgArg,
     },
-    async ({ name, server: serverName, target, kind, ttl_minutes }) => {
+    async ({ name, server: serverName, target, kind, ttl_minutes, organization }) => {
       try {
         if (name !== undefined && (serverName !== undefined || target !== undefined)) {
           return result({ error: "pass either name, or server and target, not both" }, true);
@@ -189,7 +198,7 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
         }
         const view = await c.openAdHoc({
           server: serverName,
-          org: needOrg(),
+          org: needOrg(organization),
           profile: deps.profile,
           target,
           kind: kind ?? "tcp",
@@ -239,6 +248,7 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
       name: z.string().min(1).describe("Tunnel name: lowercase letters, digits and hyphens"),
       up: z.boolean().optional().describe("Bring the tunnel up after saving. Default true."),
       ...ADD_FIELDS,
+      ...orgArg,
     },
     async (args) => {
       try {
@@ -246,8 +256,8 @@ export function registerLocalTunnelTools(server: McpServer, deps: LocalTunnelDep
         let addCtx: AddContext | undefined;
         if (!local) {
           if (args.server === undefined) return result({ error: "server is required unless kind is local" }, true);
-          const org = needOrg();
-          const { tenantId, client: api } = await deps.ctx.resolveOrg();
+          const { tenantId, client: api } = await deps.ctx.resolveOrg(args.organization);
+          const org = needOrg(args.organization);
           const serverId = await resolveServer(api, tenantId, args.server);
           const servers = await api.get<Server[]>(`/tenants/${tenantId}/servers/`);
           const found = servers.find((s) => s.id === serverId);

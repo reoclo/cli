@@ -41,6 +41,8 @@ export interface TestPool {
   server_type: string;
   fallback_server_types: string[];
   arch: string;
+  market?: string;
+  registry_credential_ids?: string[];
   image: string | null;
   stock_image: string;
   volume_gb: number;
@@ -93,6 +95,24 @@ export async function resolveStorageCredential(client: ApiClient, tid: string, r
     `storage credential '${ref}' not found${available ? `. available: ${available}` : ". The organization has none yet; an admin adds one under Settings, Storage credentials"}`,
     EXIT.NOT_FOUND,
   );
+}
+
+interface RegistryCredentialRef { id: string; name: string }
+
+export async function listRegistryCredentials(client: ApiClient, tid: string): Promise<RegistryCredentialRef[]> {
+  return client.get<RegistryCredentialRef[]>(`/tenants/${tid}/registry-credentials`);
+}
+
+/** Registry credential ids for names or ids, each id once and in the order given. */
+export async function resolveRegistryCredentials(client: ApiClient, tid: string, refs: readonly string[]): Promise<string[]> {
+  const all = await listRegistryCredentials(client, tid);
+  const ids = refs.map((ref) => {
+    const found = all.find((c) => c.id === ref) ?? all.find((c) => c.name === ref);
+    if (found) return found.id;
+    const available = all.map((c) => c.name).join(", ");
+    throw exitError(`registry credential '${ref}' not found${available ? `. available: ${available}` : ""}`, EXIT.NOT_FOUND);
+  });
+  return [...new Set(ids)];
 }
 
 /** The whole `storage` object the API takes: the changes laid over the pool's current bucket. */

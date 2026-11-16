@@ -85,6 +85,45 @@ test("test-pools edit patches only what changed and unsets by key", async () => 
   });
 });
 
+const GHCR = "77777777-7777-7777-7777-777777777777";
+const HUB = "88888888-8888-8888-8888-888888888888";
+const registryRoutes: Routes = { [`GET /tenants/${T}/registry-credentials`]: [{ id: GHCR, name: "ghcr" }, { id: HUB, name: "hub" }] };
+
+test("test-pools create sends the market and the registry credentials by id, each once", async () => {
+  const fake = serve({ ...poolRoutes, ...registryRoutes, [`POST /tenants/${T}/test-pools`]: (req) => ({ ...pool, ...(req.body as object) }) });
+  const r = await cli(["test-pools", "create", "--name", "CI", "--credential", "hetzner-main", "--location", "fsn1", "--server-type", "cx23", "--market", "spot", "--registry", "ghcr", "--registry", GHCR, "--registry", "hub"]);
+  expect(r.code).toBe(0);
+  const body = fake.calls("POST", `/tenants/${T}/test-pools`)[0]?.body as Record<string, unknown>;
+  expect(body["market"]).toBe("spot");
+  expect(body["registry_credential_ids"]).toEqual([GHCR, HUB]);
+});
+
+test("test-pools edit replaces the registries, clears them with --no-registries and changes the market", async () => {
+  const fake = serve({ ...poolRoutes, ...registryRoutes, [`PATCH /tenants/${T}/test-pools/${POOL}`]: pool });
+  expect((await cli(["test-pools", "edit", "ci", "--registry", "hub"])).code).toBe(0);
+  expect((await cli(["test-pools", "edit", "ci", "--no-registries", "--market", "on_demand"])).code).toBe(0);
+  expect(fake.calls("PATCH", `/tenants/${T}/test-pools/${POOL}`).map((r) => r.body)).toEqual([
+    { registry_credential_ids: [HUB] },
+    { market: "on_demand", registry_credential_ids: [] },
+  ]);
+  const unknown = await cli(["test-pools", "edit", "ci", "--registry", "quay"]);
+  expect(unknown.code).toBe(5);
+  expect(unknown.err).toContain("available: ghcr, hub");
+});
+
+test("test-pools get shows the market and the registry names in text, and the raw ids in json", async () => {
+  serve({
+    ...poolRoutes,
+    ...registryRoutes,
+    [`GET /tenants/${T}/test-pools/${POOL}`]: { ...pool, market: "spot", registry_credential_ids: [GHCR, HUB] },
+  });
+  const text = (await cli(["-o", "text", "test-pools", "get", "ci"])).out;
+  expect(text).toMatch(/market\s+spot/);
+  expect(text).toMatch(/registries\s+ghcr, hub/);
+  const json = JSON.parse((await cli(["-o", "json", "test-pools", "get", "ci"])).out) as Record<string, unknown>;
+  expect(json["registry_credential_ids"]).toEqual([GHCR, HUB]);
+});
+
 test("test-pools rm asks first and only deletes with --yes", async () => {
   const fake = serve({ ...poolRoutes, [`DELETE /tenants/${T}/test-pools/${POOL}`]: null });
   const refused = await cli(["test-pools", "rm", "ci"]);

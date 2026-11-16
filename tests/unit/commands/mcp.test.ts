@@ -23,7 +23,16 @@ import { expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveMcpBootstrap } from "../../../src/commands/mcp";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  buildSignedOutMcpContext,
+  resolveMcpBootstrap,
+  resolveMcpStart,
+  signedOutMcpError,
+} from "../../../src/commands/mcp";
+import { createMcpServer } from "../../../src/mcp/server";
+import { rejectionOf } from "../../helpers/rejection";
 
 let tmp: string;
 beforeEach(() => {
@@ -129,4 +138,56 @@ test("resolveMcpBootstrap throws exit 3 when the credential's own /auth/me carri
   }
   expect(caught).toBeInstanceOf(Error);
   expect((caught as { exitCode?: number }).exitCode).toBe(3);
+});
+
+test("resolveMcpStart answers a missing sign-in with the error to serve, not a throw", async () => {
+  const start = await resolveMcpStart();
+  expect("signedOut" in start).toBe(true);
+  if ("signedOut" in start) {
+    expect((start.signedOut as Error & { exitCode?: number }).exitCode).toBe(3);
+    expect(start.signedOut.message).toContain("reoclo login");
+  }
+});
+
+test("resolveMcpStart still throws for a credential that is malformed (exit 2)", async () => {
+  process.env.REOCLO_MACHINE_TOKEN = "not-a-machine-token";
+  const err = await rejectionOf(resolveMcpStart());
+  expect((err as { exitCode?: number }).exitCode).toBe(2);
+});
+
+test("resolveMcpStart serves a signed-in profile as before", async () => {
+  seedConfig(tmp, {
+    active_profile: "default",
+    profiles: { default: { ...profileRecord("tok-oauth", "login-org"), auth_kind: "oauth", token_type: "oauth" } },
+  });
+  const start = await resolveMcpStart();
+  expect("ctx" in start).toBe(true);
+});
+
+test("a signed-out server lists every tool, fails each with the login instruction and keeps the guides", async () => {
+  const server = createMcpServer(buildSignedOutMcpContext(signedOutMcpError(new Error("not authenticated"))));
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "agent-x", version: "1" });
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  const names = (await client.listTools()).tools.map((tool) => tool.name);
+  expect(names).toContain("list_servers");
+  expect(names).toContain("whoami");
+  expect(names).toContain("get_test_pool");
+
+  const refused: Array<[string, Record<string, unknown>]> = [
+    ["whoami", {}],
+    ["list_servers", {}],
+    ["list_test_pools", {}],
+    ["get_test_pool", { pool: "ci" }],
+  ];
+  for (const [name, args] of refused) {
+    const res = await client.callTool({ name, arguments: args });
+    const text = (res.content as Array<{ text: string }>).map((c) => c.text).join("");
+    expect({ name, isError: res.isError }).toEqual({ name, isError: true });
+    expect(text).toContain("reoclo login");
+  }
+
+  const guides = await client.callTool({ name: "list_guides", arguments: {} });
+  expect(guides.isError).not.toBe(true);
+  await client.close();
 });

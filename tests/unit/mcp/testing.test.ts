@@ -80,6 +80,12 @@ test("update_test_pool sends only the fields given, and null storage removes the
   expect((await call(registry, "update_test_pool", { pool: "ci" })).isError).toBe(true);
 });
 
+test("update_test_pool sends market", async () => {
+  const { registry, api } = harness();
+  await call(registry, "update_test_pool", { pool: "ci", market: "spot" });
+  expect(api.calls("PATCH", `/tenants/${T}/test-pools/${POOL_ID}`)[0]?.body).toEqual({ market: "spot" });
+});
+
 test("update_test_pool gives a pool its first bucket from a credential name", async () => {
   const { registry, api } = harness();
   await call(registry, "update_test_pool", { pool: "ci", storage: { credential: "r2", bucket: "ci-cache", region: "auto" } });

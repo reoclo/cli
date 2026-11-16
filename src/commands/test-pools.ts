@@ -6,7 +6,9 @@ import type { HttpClient } from "../client/http";
 import { exitError } from "../client/repo-deploy";
 import {
   hasStorageChanges,
+  listRegistryCredentials,
   poolStorageBody,
+  resolveRegistryCredentials,
   resolveTestPool,
   type StorageChanges,
   type TestMachine,
@@ -24,6 +26,7 @@ import { parseUnsetKeys, parseVariables } from "../util/test-vars";
 
 const HARD_LIMIT = 100;
 const PROVIDERS = ["hetzner", "aws"] as const;
+const MARKETS = ["on_demand", "spot"] as const;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const LOCATION = /^[a-z0-9-]{1,50}$/;
 const SERVER_TYPE = /^[a-z][a-z0-9.-]{1,49}$/;
@@ -37,6 +40,8 @@ interface PoolFlags {
   serverType?: string;
   fallbackType: string[];
   arch?: string;
+  market?: string;
+  registry: string[];
   image?: string;
   stockImage?: string;
   volume?: string;
@@ -65,6 +70,8 @@ function addPoolOptions(cmd: Command): Command {
     .option("--server-type <type>", "machine type, such as cx33 on Hetzner or m7i.large on AWS")
     .option("--fallback-type <type>", "fallback machine type, tried in order (repeatable, up to 10)", collect, [] as string[])
     .option("--arch <arch>", "amd64 (default) or arm64")
+    .option("--market <market>", "on_demand (default) or spot; spot is AWS only")
+    .option("--registry <nameOrId>", "registry credential jobs pull images with (repeatable; edit replaces the pool's list)", collect, [] as string[])
     .option("--image <id>", "Hetzner snapshot id or AWS AMI id (edit: 'none' goes back to the stock image)")
     .option("--stock-image <name>", "stock image when no --image is set (default ubuntu-24.04)")
     .option("--volume <gb>", "root volume in GB, 20-500 (default 50)")
@@ -108,6 +115,7 @@ function poolFields(f: PoolFlags): Record<string, unknown> {
     body["fallback_server_types"] = f.fallbackType.map((t) => matching(t, SERVER_TYPE, "--fallback-type"));
   }
   if (f.arch !== undefined) body["arch"] = parseEnum(f.arch, ["amd64", "arm64"] as const, "--arch");
+  if (f.market !== undefined) body["market"] = parseEnum(f.market, MARKETS, "--market");
   if (f.image !== undefined) body["image"] = f.image === "none" ? null : f.image;
   if (f.stockImage !== undefined) body["stock_image"] = matching(f.stockImage, STOCK_IMAGE, "--stock-image");
   if (f.volume !== undefined) body["volume_gb"] = parseIntFlag(f.volume, "--volume", 20, 500);
@@ -137,6 +145,10 @@ function describeStorage(storage: TestPoolStorage | null | undefined): string {
   if (!storage) return "none (jobs with a cache or artifacts cannot run)";
   const place = storage.prefix ? `${storage.bucket}/${storage.prefix}` : storage.bucket;
   return `${place} in ${storage.region} with ${storage.credential_name ?? storage.credential_id}, caches ${storage.cache_retention_days} d, artifacts ${storage.artifact_retention_days} d`;
+}
+
+function describeRegistries(ids: string[] | undefined, names: Map<string, string>): string {
+  return ids && ids.length > 0 ? ids.map((id) => names.get(id) ?? id).join(", ") : "none";
 }
 
 function poolRow(p: TestPool): Record<string, unknown> {
@@ -185,8 +197,14 @@ export function registerTestPools(program: Command): void {
       const tid = await requireTenantId(ctx);
       const id = await resolveTestPool(ctx.client, tid, ref);
       const pool = await ctx.client.get<TestPool>(`/tenants/${tid}/test-pools/${id}`);
+      if (fmt !== "text") {
+        printObject({ ...pool }, fmt);
+        return;
+      }
+      const { registry_credential_ids: registryIds, ...rest } = pool;
+      const names = new Map((registryIds?.length ? await listRegistryCredentials(ctx.client, tid) : []).map((c) => [c.id, c.name]));
       printObject(
-        fmt === "text" ? { ...pool, variables: describeVariables(pool.variables), storage: describeStorage(pool.storage) } : { ...pool },
+        { ...rest, variables: describeVariables(pool.variables), storage: describeStorage(pool.storage), registries: describeRegistries(registryIds, names) },
         fmt,
       );
     });
@@ -210,6 +228,7 @@ export function registerTestPools(program: Command): void {
     const ctx = await bootstrap();
     const tid = await requireTenantId(ctx);
     const credential = await resolveCredential(ctx.client, tid, opts.credential ?? "", provider);
+    if (opts.registry.length > 0) fields["registry_credential_ids"] = await resolveRegistryCredentials(ctx.client, tid, opts.registry);
     const body = {
       ...fields,
       ...(slug === undefined ? {} : { slug }),
@@ -228,15 +247,21 @@ export function registerTestPools(program: Command): void {
       .description("update a test pool (the slug and provider cannot change)")
       .option("--name <name>", "new name")
       .option("--unset-var <KEY>", "delete a variable (repeatable)", collect, [] as string[])
-      .option("--no-storage", "remove the pool's bucket (jobs with a cache or artifacts then cannot run)"),
-  ).action(async (ref: string, opts: PoolFlags & { unsetVar: string[]; storage: boolean }) => {
+      .option("--no-storage", "remove the pool's bucket (jobs with a cache or artifacts then cannot run)")
+      .option("--no-registries", "remove every registry credential from the pool"),
+  ).action(async (ref: string, opts: PoolFlags & { unsetVar: string[]; storage: boolean; registries: boolean }) => {
     const fields = poolFields(opts);
     const set = parseVariables(opts.var, opts.secret);
     const unset = parseUnsetKeys(opts.unsetVar, set);
     const storage = storageChanges(opts);
     const changesStorage = hasStorageChanges(storage);
     if (!opts.storage && changesStorage) throw badUsage("--no-storage cannot be combined with the other storage options");
-    if (Object.keys(fields).length === 0 && set.length === 0 && unset.length === 0 && opts.credential === undefined && opts.storage && !changesStorage) {
+    if (!opts.registries && opts.registry.length > 0) throw badUsage("--no-registries cannot be combined with --registry");
+    const changesRegistries = !opts.registries || opts.registry.length > 0;
+    if (
+      Object.keys(fields).length === 0 && set.length === 0 && unset.length === 0 && opts.credential === undefined &&
+      opts.storage && !changesStorage && !changesRegistries
+    ) {
       throw badUsage("no fields to update");
     }
     const ctx = await bootstrap();
@@ -247,6 +272,7 @@ export function registerTestPools(program: Command): void {
       fields["cloud_credential_id"] = (await resolveCredential(ctx.client, tid, opts.credential, current.provider)).id;
     }
     if (!opts.storage) fields["storage"] = null;
+    if (changesRegistries) fields["registry_credential_ids"] = opts.registries ? await resolveRegistryCredentials(ctx.client, tid, opts.registry) : [];
     if (changesStorage) fields["storage"] = await poolStorageBody(ctx.client, tid, storage, current?.storage);
     const variables: Record<string, { value: string; secret: boolean } | null> = {};
     for (const v of set) variables[v.key] = { value: v.value, secret: v.secret };

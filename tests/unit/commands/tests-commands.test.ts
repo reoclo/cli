@@ -34,9 +34,9 @@ describe("command surface", () => {
   });
 
   test("pool create and edit take the pool fields and variables, edit also unsets", () => {
-    const shared = ["--credential", "--location", "--server-type", "--fallback-type", "--arch", "--image", "--stock-image", "--volume", "--max-machines", "--job-time-limit", "--budget", "--budget-currency", "--var", "--secret", "--storage-credential", "--storage-bucket", "--storage-region", "--storage-prefix", "--cache-retention", "--artifact-retention"];
+    const shared = ["--credential", "--location", "--server-type", "--fallback-type", "--arch", "--image", "--stock-image", "--volume", "--max-machines", "--job-time-limit", "--budget", "--budget-currency", "--var", "--secret", "--storage-credential", "--storage-bucket", "--storage-region", "--storage-prefix", "--cache-retention", "--artifact-retention", "--market", "--registry"];
     for (const leaf of ["create", "edit"]) for (const flag of shared) expect(longs(sub("test-pools", leaf))).toContain(flag);
-    for (const flag of ["--unset-var", "--no-storage"]) expect(longs(sub("test-pools", "edit"))).toContain(flag);
+    for (const flag of ["--unset-var", "--no-storage", "--no-registries"]) expect(longs(sub("test-pools", "edit"))).toContain(flag);
     for (const flag of ["--slug", "--provider"]) expect(longs(sub("test-pools", "create"))).toContain(flag);
   });
 
@@ -67,6 +67,15 @@ describe("usage errors exit 2 before any request", () => {
     expect((await failure([...base, "--volume", "10"])).exitCode).toBe(2);
     expect((await failure([...base, "--provider", "gcp"])).exitCode).toBe(2);
     expect((await failure(["test-pools", "edit", "ci"])).message).toBe("no fields to update");
+  });
+
+  test("a bad market, and --no-registries with --registry", async () => {
+    const base = ["test-pools", "create", "--name", "p", "--credential", "c", "--location", "fsn1", "--server-type", "cx23"];
+    expect((await failure([...base, "--market", "preemptible"])).exitCode).toBe(2);
+    expect((await failure(["test-pools", "edit", "ci", "--market", "cheap"])).exitCode).toBe(2);
+    expect((await failure(["test-pools", "edit", "ci", "--no-registries", "--registry", "ghcr"])).message).toBe(
+      "--no-registries cannot be combined with --registry",
+    );
   });
 
   test("out-of-range retention and --no-storage with a storage option", async () => {

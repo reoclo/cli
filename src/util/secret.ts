@@ -1,7 +1,7 @@
 // src/util/secret.ts
 //
-// Read a secret value (registry credential password) either from stdin
-// (`--password-stdin`) or via a masked TTY prompt. Tests target the stream
+// Read a secret value (a registry password, a storage secret key) either from
+// stdin (`--password-stdin` or the command's own flag) or via a masked TTY prompt. Tests target the stream
 // reader directly; the public `readSecret` orchestrates the TTY-vs-stdin
 // decision.
 
@@ -16,7 +16,7 @@ export class MissingSecretError extends Error {
 }
 
 /** Read a stream to EOF and return the trimmed-of-trailing-newline string. */
-export async function readSecretFromStream(stream: NodeJS.ReadableStream): Promise<string> {
+export async function readSecretFromStream(stream: NodeJS.ReadableStream, stdinFlag = "--password-stdin"): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -24,7 +24,7 @@ export async function readSecretFromStream(stream: NodeJS.ReadableStream): Promi
   const raw = Buffer.concat(chunks).toString("utf8");
   const trimmed = raw.replace(/\r?\n$/, "");
   if (trimmed.length === 0) {
-    throw new MissingSecretError("--password-stdin: empty input");
+    throw new MissingSecretError(`${stdinFlag}: empty input`);
   }
   return trimmed;
 }
@@ -74,7 +74,7 @@ export async function promptMasked(label: string, deps: PromptDeps = {}): Promis
     rl.on("close", () => {
       restore();
       if (!answered) {
-        reject(new MissingSecretError("password prompt closed before input"));
+        reject(new MissingSecretError(`${label} prompt closed before input`));
       }
     });
 
@@ -92,7 +92,7 @@ export async function promptMasked(label: string, deps: PromptDeps = {}): Promis
       rl.close();
       const trimmed = answer.trim();
       if (trimmed.length === 0) {
-        reject(new MissingSecretError("password required: prompt returned empty"));
+        reject(new MissingSecretError(`${label} required: prompt returned empty`));
         return;
       }
       resolve(trimmed);
@@ -102,10 +102,12 @@ export async function promptMasked(label: string, deps: PromptDeps = {}): Promis
 }
 
 export interface ReadSecretOpts {
-  /** True when the user passed --password-stdin. */
+  /** True when the user passed the stdin flag. */
   fromStdin: boolean;
-  /** Prompt label for TTY mode (e.g. "registry password"). */
+  /** What the secret is called in prompts and errors (e.g. "registry password"). */
   promptLabel?: string;
+  /** The flag that reads the secret from stdin, named in errors. Default --password-stdin. */
+  stdinFlag?: string;
 }
 
 /**
@@ -114,10 +116,11 @@ export interface ReadSecretOpts {
  */
 export async function readSecret(opts: ReadSecretOpts): Promise<string> {
   if (opts.fromStdin) {
-    return readSecretFromStream(process.stdin);
+    return readSecretFromStream(process.stdin, opts.stdinFlag);
   }
+  const label = opts.promptLabel ?? "password";
   if (!process.stdin.isTTY) {
-    throw new MissingSecretError();
+    throw new MissingSecretError(`${label} required: pass ${opts.stdinFlag ?? "--password-stdin"} or run interactively`);
   }
-  return promptMasked(opts.promptLabel ?? "password");
+  return promptMasked(label);
 }
