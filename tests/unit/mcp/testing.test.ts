@@ -11,8 +11,10 @@ const RUN_ID = "22222222-2222-2222-2222-222222222222";
 const JOB_ID = "33333333-3333-3333-3333-333333333333";
 const REPO_ID = "11111111-1111-1111-1111-111111111111";
 const POOL_ID = "44444444-4444-4444-4444-444444444444";
+const STORE_ID = "55555555-5555-5555-5555-555555555555";
+const BUCKET = { credential_id: STORE_ID, credential_name: "r2", region: "auto", bucket: "ci-cache", prefix: "flow", cache_retention_days: 7, artifact_retention_days: 30 };
 
-function harness(): { registry: Registered[]; api: FakeApi } {
+function harness(pool: Record<string, unknown> = { id: POOL_ID }): { registry: Registered[]; api: FakeApi } {
   const registry: Registered[] = [];
   const server = {
     tool(name: string, ...rest: unknown[]) {
@@ -22,7 +24,9 @@ function harness(): { registry: Registered[]; api: FakeApi } {
   const api = new FakeApi()
     .on("GET", `/tenants/${T}/repositories/`, { items: [{ id: REPO_ID, full_name: "acme/web", name: "web" }] })
     .on("GET", `/tenants/${T}/test-pools`, { items: [{ id: POOL_ID, slug: "ci", name: "CI" }], total: 1, skip: 0, limit: 100 })
-    .on("GET", `/tenants/${T}/test-pools/${POOL_ID}`, { id: POOL_ID })
+    .on("GET", `/tenants/${T}/test-pools/${POOL_ID}`, pool)
+    .on("PATCH", `/tenants/${T}/test-pools/${POOL_ID}`, (req) => ({ id: POOL_ID, ...(req.body as object) }))
+    .on("GET", `/tenants/${T}/storage-credentials`, { items: [{ id: STORE_ID, name: "r2" }], total: 1, skip: 0, limit: 100 })
     .on("GET", `/tenants/${T}/test-pools/${POOL_ID}/machines`, { items: [] })
     .on("GET", `/tenants/${T}/repositories/${REPO_ID}/tests`, { tests_enabled: true, definitions: [] })
     .on("POST", `/tenants/${T}/repositories/${REPO_ID}/tests/refresh`, { tests_enabled: true, definitions: [] })
@@ -63,8 +67,37 @@ test("the test server tools are registered", () => {
     "rerun_test_run",
     "set_repository_tests",
     "start_test_run",
+    "update_test_pool",
     "validate_test_file",
   ]);
+});
+
+test("update_test_pool sends only the fields given, and null storage removes the bucket", async () => {
+  const { registry, api } = harness();
+  await call(registry, "update_test_pool", { pool: "ci", max_machines: 4, name: undefined });
+  await call(registry, "update_test_pool", { pool: "ci", storage: null });
+  expect(api.calls("PATCH", `/tenants/${T}/test-pools/${POOL_ID}`).map((r) => r.body)).toEqual([{ max_machines: 4 }, { storage: null }]);
+  expect((await call(registry, "update_test_pool", { pool: "ci" })).isError).toBe(true);
+});
+
+test("update_test_pool gives a pool its first bucket from a credential name", async () => {
+  const { registry, api } = harness();
+  await call(registry, "update_test_pool", { pool: "ci", storage: { credential: "r2", bucket: "ci-cache", region: "auto" } });
+  expect(api.calls("PATCH", `/tenants/${T}/test-pools/${POOL_ID}`)[0]?.body).toEqual({
+    storage: { credential_id: STORE_ID, bucket: "ci-cache", region: "auto", prefix: "" },
+  });
+  const missing = await call(registry, "update_test_pool", { pool: "ci", storage: { bucket: "ci-cache" } });
+  expect(missing.isError).toBe(true);
+  expect(missing.content[0]?.text).toContain("storage credential, region");
+});
+
+test("update_test_pool keeps the rest of an existing bucket when one field changes", async () => {
+  const { registry, api } = harness({ id: POOL_ID, storage: BUCKET });
+  await call(registry, "update_test_pool", { pool: "ci", storage: { bucket: "ci-cache-2", cache_retention_days: 14 } });
+  expect(api.calls("PATCH", `/tenants/${T}/test-pools/${POOL_ID}`)[0]?.body).toEqual({
+    storage: { credential_id: STORE_ID, bucket: "ci-cache-2", region: "auto", prefix: "flow", cache_retention_days: 14, artifact_retention_days: 30 },
+  });
+  expect(api.calls("GET", `/tenants/${T}/storage-credentials`)).toHaveLength(0);
 });
 
 test("pool tools take a slug and reach the pool and machine routes", async () => {
@@ -126,5 +159,9 @@ test("get_test_job_logs finds the job by key and returns the cursor to read on f
 test("validate_test_file posts the name and the file text", async () => {
   const { registry, api } = harness();
   await call(registry, "validate_test_file", { name: "unit", content: "version: 1\n" });
-  expect(api.calls("POST", `/tenants/${T}/tests/validate`)[0]?.body).toEqual({ name: "unit", content: "version: 1\n" });
+  await call(registry, "validate_test_file", { name: "unit", content: "version: 1\n", repository: "acme/web" });
+  expect(api.calls("POST", `/tenants/${T}/tests/validate`).map((r) => r.body)).toEqual([
+    { name: "unit", content: "version: 1\n" },
+    { name: "unit", content: "version: 1\n", repository_id: REPO_ID },
+  ]);
 });

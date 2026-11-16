@@ -9,10 +9,13 @@ import {
   confirm, select, multiselect, isCancel, cancel,
 } from "@clack/prompts";
 
+import { noInputReason } from "./tty";
+
 export { intro, outro, log, note };
 
+/** A person can answer prompts and see the spinner: both ends are terminals and no agent or CI runs us. */
 export function isInteractive(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  return noInputReason() === null && Boolean(process.stdout.isTTY);
 }
 
 function abortIfCancelled<T>(value: T | symbol): T {

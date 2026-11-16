@@ -1,4 +1,5 @@
 // src/ui/prompt.ts
+import { noInputReason } from "./tty";
 
 /**
  * Map a user's reply to a numbered menu (1-based) onto a 0-based index. An empty
@@ -13,10 +14,14 @@ export function parseChoice(answer: string, count: number, defaultIndex: number)
   return n - 1;
 }
 
-/** Ask a yes/no question on the TTY. Returns false immediately when stdin
- *  is not a TTY (non-interactive callers must opt in another way). */
+/** Ask a yes/no question on the TTY. Returns false at once, saying why on stderr, when no one can
+ *  answer (see noInputReason); non-interactive callers must opt in another way, such as --yes. */
 export async function promptYesNo(question: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
+  const reason = noInputReason();
+  if (reason !== null) {
+    process.stderr.write(`not asking "${question.trim()}": ${reason}\n`);
+    return false;
+  }
   const { createInterface } = await import("node:readline");
   return new Promise((resolve) => {
     const rl = createInterface({
@@ -32,7 +37,7 @@ export async function promptYesNo(question: string): Promise<boolean> {
 }
 
 /** True when the action may go ahead: `--yes` was passed, or the user answered
- *  yes on the TTY. Without a TTY and without `--yes` it is false, never a hang. */
+ *  yes on the TTY. When no one can answer and `--yes` is missing it is false, never a hang. */
 export async function confirmAction(question: string, yes?: boolean): Promise<boolean> {
   if (yes) return true;
   return promptYesNo(question);
@@ -47,14 +52,14 @@ export async function confirmOrExit(question: string, yes?: boolean): Promise<vo
 }
 
 /** Present a numbered menu and return the chosen 0-based index. Returns
- *  `defaultIndex` immediately when stdin is not a TTY. `labels` is rendered
+ *  `defaultIndex` immediately when no one can answer. `labels` is rendered
  *  1-based; the default option is marked. */
 export async function promptChoice(
   title: string,
   labels: string[],
   defaultIndex = 0,
 ): Promise<number> {
-  if (!process.stdin.isTTY || labels.length === 0) return defaultIndex;
+  if (noInputReason() !== null || labels.length === 0) return defaultIndex;
   process.stdout.write(`${title}\n`);
   labels.forEach((label, i) => {
     const marker = i === defaultIndex ? " (default)" : "";

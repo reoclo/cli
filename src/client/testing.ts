@@ -49,8 +49,80 @@ export interface TestPool {
   monthly_budget_cents: number | null;
   budget_currency: string;
   variables: TestVariable[];
+  storage?: TestPoolStorage | null;
   live_machines: number;
   month_cost_cents: number | null;
+}
+
+/** The pool's bucket for caches and artifacts. The secret key is never returned. */
+export interface TestPoolStorage {
+  credential_id: string;
+  credential_name?: string | null;
+  region: string;
+  bucket: string;
+  prefix: string;
+  cache_retention_days: number;
+  artifact_retention_days: number;
+}
+
+/** What a caller changes about a pool's bucket; anything left out keeps the pool's current value. */
+export interface StorageChanges {
+  /** Storage credential name or id. */
+  credential?: string;
+  bucket?: string;
+  region?: string;
+  prefix?: string;
+  cacheRetentionDays?: number;
+  artifactRetentionDays?: number;
+}
+
+interface StorageCredential { id: string; name: string }
+
+export async function resolveStorageCredential(client: ApiClient, tid: string, ref: string): Promise<string> {
+  if (isUuid(ref)) return ref;
+  const all: StorageCredential[] = [];
+  for (let skip = 0; ; skip += POOL_PAGE) {
+    const res = await client.get<PaginatedResponse<StorageCredential>>(`/tenants/${tid}/storage-credentials?skip=${skip}&limit=${POOL_PAGE}`);
+    all.push(...res.items);
+    if (res.items.length < POOL_PAGE) break;
+  }
+  const found = all.find((c) => c.name === ref);
+  if (found) return found.id;
+  const available = all.map((c) => c.name).join(", ");
+  throw exitError(
+    `storage credential '${ref}' not found${available ? `. available: ${available}` : ". The organization has none yet; an admin adds one under Settings, Storage credentials"}`,
+    EXIT.NOT_FOUND,
+  );
+}
+
+/** The whole `storage` object the API takes: the changes laid over the pool's current bucket. */
+export async function poolStorageBody(
+  client: ApiClient,
+  tid: string,
+  changes: StorageChanges,
+  current: TestPoolStorage | null | undefined,
+): Promise<Record<string, unknown>> {
+  const credentialId = changes.credential === undefined ? current?.credential_id : await resolveStorageCredential(client, tid, changes.credential);
+  const bucket = changes.bucket ?? current?.bucket;
+  const region = changes.region ?? current?.region;
+  const missing = ([[credentialId, "storage credential"], [bucket, "bucket"], [region, "region"]] as const)
+    .filter(([value]) => value === undefined)
+    .map(([, label]) => label);
+  if (missing.length > 0) throw badUsage(`the pool has no storage bucket yet, so it also needs a ${missing.join(", ")}`);
+  const cacheDays = changes.cacheRetentionDays ?? current?.cache_retention_days;
+  const artifactDays = changes.artifactRetentionDays ?? current?.artifact_retention_days;
+  return {
+    credential_id: credentialId,
+    bucket,
+    region,
+    prefix: changes.prefix ?? current?.prefix ?? "",
+    ...(cacheDays === undefined ? {} : { cache_retention_days: cacheDays }),
+    ...(artifactDays === undefined ? {} : { artifact_retention_days: artifactDays }),
+  };
+}
+
+export function hasStorageChanges(changes: StorageChanges): boolean {
+  return Object.values(changes).some((value) => value !== undefined);
 }
 
 export interface TestMachine {
@@ -124,7 +196,8 @@ export interface ValidatedTest {
   jobs: Array<{ key: string; image: string; needs: string[]; steps: number }>;
   order: string[];
 }
-export interface TestValidation { valid: boolean; error: string | null; test: ValidatedTest | null }
+/** `warnings` (API 1.353.0 and later): why a valid file still could not start a run, such as a missing pool. */
+export interface TestValidation { valid: boolean; error: string | null; test: ValidatedTest | null; warnings?: string[] }
 
 interface TriggerSet {
   manual: boolean;

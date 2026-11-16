@@ -9,11 +9,13 @@ import { exitError } from "../../client/repo-deploy";
 import { EXIT } from "../../client/exit-codes";
 import { LimitSchema } from "../../client/enums";
 import {
+  poolStorageBody,
   resolveTestPool,
   resolveTestRepository,
   resolveTestRun,
   RUN_STATES,
   type TestLogPage,
+  type TestPool,
   type TestRunDetail,
 } from "../../client/testing";
 import type { McpRegistrationContext, OrgScope } from "./context";
@@ -49,6 +51,51 @@ export function registerTestingTools(server: McpServer, ctx: McpRegistrationCont
   tool("get_test_pool", "Get one test pool: machine type, limits, budget, and variable names (secret values are never returned)",
     { pool: z.string().min(1).describe("Test pool slug or id") },
     async ({ tenantId, client }, { pool }) => client.get(`/tenants/${tenantId}/test-pools/${await resolveTestPool(client, tenantId, pool)}`));
+
+  const retention = (what: string, fallback: number): z.ZodOptional<z.ZodNumber> =>
+    z.number().int().min(1).max(365).optional().describe(`Days ${what} are kept, 1 to 365 (default ${fallback})`);
+
+  tool("update_test_pool",
+    "Change a test pool. Send only the fields to change. storage sets the bucket that keeps caches and artifacts: fields left out keep the pool's current values, a pool without a bucket needs credential, bucket and region, and null removes the bucket.",
+    {
+      pool: z.string().min(1).describe("Test pool slug or id"),
+      name: z.string().min(1).max(120).optional(),
+      server_type: z.string().regex(/^[a-z][a-z0-9.-]{1,49}$/).optional().describe("Machine type, such as cx33 on Hetzner or m7i.large on AWS"),
+      max_machines: z.number().int().min(1).max(50).optional().describe("Machines the pool runs at once"),
+      job_time_limit_minutes: z.number().int().min(5).max(7200).optional().describe("Longest a job may run"),
+      volume_gb: z.number().int().min(20).max(500).optional().describe("Root volume of each machine"),
+      storage: z
+        .object({
+          credential: z.string().min(1).optional().describe("Storage credential name or id"),
+          bucket: z.string().min(1).optional(),
+          region: z.string().min(1).optional().describe("Bucket region, such as eu-central-1 (auto on Cloudflare R2)"),
+          prefix: z.string().optional().describe("Key prefix inside the bucket; empty for none"),
+          cache_retention_days: retention("caches", 7),
+          artifact_retention_days: retention("artifacts", 30),
+        })
+        .nullable()
+        .optional(),
+    },
+    async ({ tenantId, client }, { pool, storage, name, server_type, max_machines, job_time_limit_minutes, volume_gb }) => {
+      const id = await resolveTestPool(client, tenantId, pool);
+      // Built from the named fields, never from the args object, which also carries the organization.
+      const fields = { name, server_type, max_machines, job_time_limit_minutes, volume_gb };
+      const body: Record<string, unknown> = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+      if (storage === null) body["storage"] = null;
+      if (storage) {
+        const current = await client.get<TestPool>(`/tenants/${tenantId}/test-pools/${id}`);
+        body["storage"] = await poolStorageBody(client, tenantId, {
+          credential: storage.credential,
+          bucket: storage.bucket,
+          region: storage.region,
+          prefix: storage.prefix,
+          cacheRetentionDays: storage.cache_retention_days,
+          artifactRetentionDays: storage.artifact_retention_days,
+        }, current.storage);
+      }
+      if (Object.keys(body).length === 0) throw exitError("pass at least one field to change", EXIT.MISUSE);
+      return client.patch(`/tenants/${tenantId}/test-pools/${id}`, body);
+    });
 
   tool("list_test_pool_machines", "List the machines a test pool has created, newest first",
     { pool: z.string().min(1).describe("Test pool slug or id"), limit: LimitSchema.optional().describe("Max results (default 20)") },
@@ -136,10 +183,15 @@ export function registerTestingTools(server: McpServer, ctx: McpRegistrationCont
   tool("rerun_test_run", "Start a new run of the same test at the same commit as an earlier run", { run },
     async ({ tenantId, client }, { run: ref }) => client.post(`/tenants/${tenantId}/test-runs/${await resolveTestRun(client, tenantId, ref)}/rerun`));
 
-  tool("validate_test_file", "Check the text of a test file against the API, without running it. Answers valid with a summary of the test, or the error.",
+  tool("validate_test_file",
+    "Check the text of a test file against the API, without running it. Answers valid with a summary of the test, or the error. warnings lists what would still stop a run: a missing pool, a pool without the bucket a job needs, or, when repository is given, a repository with tests disabled.",
     {
       name: z.string().min(1).describe("Test name, the file name without .yml"),
       content: z.string().describe("The file's text"),
+      repository: repository.optional(),
     },
-    ({ tenantId, client }, { name, content }) => client.post(`/tenants/${tenantId}/tests/validate`, { name, content }));
+    async ({ tenantId, client }, { name, content, repository: repo }) => {
+      const found = repo === undefined ? undefined : await resolveTestRepository(client, tenantId, repo, noRemote);
+      return client.post(`/tenants/${tenantId}/tests/validate`, { name, content, ...(found ? { repository_id: found.id } : {}) });
+    });
 }

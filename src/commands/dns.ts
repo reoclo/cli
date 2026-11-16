@@ -98,8 +98,10 @@ export function listPath(tid: string, name: string, type?: RecordType): string {
   return `/tenants/${tid}/dns/records?${query.join("&")}`;
 }
 
-export function removePath(tid: string, recordId: string, zone: string): string {
-  return `/tenants/${tid}/dns/records/${encodeURIComponent(recordId.trim())}?zone=${encodeURIComponent(zone.trim())}`;
+/** Without a zone the API searches the zones it covers for the record. */
+export function removePath(tid: string, recordId: string, zone?: string): string {
+  const path = `/tenants/${tid}/dns/records/${encodeURIComponent(recordId.trim())}`;
+  return zone === undefined ? path : `${path}?zone=${encodeURIComponent(zone.trim())}`;
 }
 
 export function recordRows(records: DnsRecord[]): Array<Record<string, string>> {
@@ -185,17 +187,18 @@ export function registerDns(program: Command): void {
   records
     .command("rm <recordId>")
     .description("remove a TXT, CNAME or MX record by id (see `dns records ls`)")
-    .requiredOption("--zone <zone>", "zone the record belongs to, such as example.com")
+    .option("--zone <zone>", "zone the record belongs to, such as example.com (default: found from the id)")
     .option("--yes", "skip confirmation prompt")
-    .action(async (recordId: string, opts: { zone: string; yes?: boolean }) => {
-      await confirmOrExit(`remove record ${recordId} from ${opts.zone}? [y/N]: `, opts.yes);
+    .action(async (recordId: string, opts: { zone?: string; yes?: boolean }) => {
+      const from = opts.zone === undefined ? "" : ` from ${opts.zone}`;
+      await confirmOrExit(`remove record ${recordId}${from}? [y/N]: `, opts.yes);
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       await ctx.client.del<void>(removePath(tid, recordId, opts.zone));
       printMutation(
         program,
-        { id: recordId, zone: opts.zone, removed: true },
-        `✓ record removed: ${recordId} from ${opts.zone}`,
+        { id: recordId, ...(opts.zone === undefined ? {} : { zone: opts.zone }), removed: true },
+        `✓ record removed: ${recordId}${from}`,
       );
     });
 }

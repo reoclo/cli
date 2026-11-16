@@ -54,9 +54,9 @@ describe("reoclo dns records", () => {
     for (const flag of ["--ttl", "--priority", "--zone"]) expect(flags).toContain(flag);
   });
 
-  test("rm requires --zone and has --yes so it can run non-interactively", () => {
+  test("rm takes an optional --zone and has --yes so it can run non-interactively", () => {
     const rm = sub("rm");
-    expect(rm.options.find((o) => o.long === "--zone")?.mandatory).toBe(true);
+    expect(rm.options.find((o) => o.long === "--zone")?.mandatory).toBe(false);
     expect(rm.options.map((o) => o.long)).toContain("--yes");
   });
 });
@@ -136,6 +136,7 @@ describe("request paths", () => {
   test("rm sends the record id in the path and the zone name in the query, encoded", () => {
     expect(removePath("t1", "abc123", "example.com")).toBe("/tenants/t1/dns/records/abc123?zone=example.com");
     expect(removePath("t1", "../x", "a b")).toBe("/tenants/t1/dns/records/..%2Fx?zone=a%20b");
+    expect(removePath("t1", " abc123 ")).toBe("/tenants/t1/dns/records/abc123");
   });
 });
 

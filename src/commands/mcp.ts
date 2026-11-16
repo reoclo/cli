@@ -1,9 +1,10 @@
 // src/commands/mcp.ts
 import type { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { bootstrap, requireTenantId, type ResolvedContext } from "../client/bootstrap";
 import { createMcpServer } from "../mcp/server";
-import type { McpRegistrationContext } from "../mcp/tools/context";
+import type { McpRegistrationContext, OrgScope } from "../mcp/tools/context";
 import type { HttpClient } from "../client/http";
 import { startTokenRefreshLoop, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { loadConfig } from "../config/store";
@@ -11,8 +12,14 @@ import { jwtExpiresAt } from "../auth/renew";
 
 export interface McpBootstrapResult {
   ctx: ResolvedContext;
-  tenantId: string;
+  /** The org every tool acts on, or undefined when nothing binds one and each call names it. */
+  tenantId: string | undefined;
 }
+
+const UNBOUND_ORG_DESCRIPTION =
+  "Organization slug. Required: nothing binds this server to one. Call whoami to list the organizations you can act on.";
+const MISSING_ORG_MESSAGE =
+  "organization is required: this reoclo mcp is not bound to one. Call whoami to list your organizations, or start reoclo mcp with --org <slug>.";
 
 /**
  * Bootstrap + resolve the tenant the MCP server registers tools under.
@@ -30,6 +37,11 @@ export interface McpBootstrapResult {
  * tenant_id) and throws an honest exit 3 for the genuinely tenantless case,
  * instead of a silently near-empty tool list.
  *
+ * An OAuth profile with no `--org` / $REOCLO_ORG / `.reoclo` has no org at all
+ * (there is no default org). The server starts anyway, and every tool takes an
+ * `organization` argument instead (see {@link buildUnboundMcpContext}): failing
+ * here would only show the MCP client a dropped connection.
+ *
  * Exported so tests can drive this exact resolution path without also
  * spinning up the stdio transport / background refresh loop that the rest of
  * the action performs. Resolved up front — before the server starts serving —
@@ -37,17 +49,18 @@ export interface McpBootstrapResult {
  * handler.
  */
 export async function resolveMcpBootstrap(): Promise<McpBootstrapResult> {
-  const ctx = await bootstrap({ mcpSource: true });
+  const ctx = await bootstrap({ mcpSource: true, orgRequired: false });
+  if (ctx.authKind === "oauth" && ctx.orgSlug === undefined) return { ctx, tenantId: undefined };
   const tenantId = await requireTenantId(ctx);
   return { ctx, tenantId };
 }
 
 /**
- * The CLI host's tool context. The org is fixed for the life of the process:
- * `bootstrap()` has already applied `--org` / $REOCLO_ORG / `.reoclo` (minting
- * an in-memory tenant_switch token when it differs from the login org) and
- * rejected an OAuth profile with no binding (exit 4). So no `organization`
- * argument is exposed, and any value a client passes anyway is ignored.
+ * The CLI host's tool context when an org is bound. The org is fixed for the
+ * life of the process: `bootstrap()` has already applied `--org` / $REOCLO_ORG /
+ * `.reoclo` (minting an in-memory tenant_switch token when it differs from the
+ * login org). So no `organization` argument is exposed, and any value a client
+ * passes anyway is ignored. With no binding, see {@link buildUnboundMcpContext}.
  */
 export function buildCliMcpContext(client: HttpClient, tenantId: string): McpRegistrationContext {
   return {
@@ -55,6 +68,35 @@ export function buildCliMcpContext(client: HttpClient, tenantId: string): McpReg
     orgParam: {},
     resolveOrg: () => Promise.resolve({ tenantId, client }),
   };
+}
+
+/**
+ * The CLI host's tool context when nothing binds an org. Every tenant-scoped
+ * tool requires an `organization` slug, resolved per call the same way `--org`
+ * is (`resolve`, normally a bootstrap with that org) and kept for the life of
+ * the process. A failed resolution is not kept, so the next call tries again.
+ */
+export function buildUnboundMcpContext(client: HttpClient, resolve: (org: string) => Promise<OrgScope>): McpRegistrationContext {
+  const scopes = new Map<string, Promise<OrgScope>>();
+  return {
+    client,
+    orgParam: { organization: z.string().min(1).describe(UNBOUND_ORG_DESCRIPTION) },
+    resolveOrg: (organization?: unknown) => {
+      const org = typeof organization === "string" ? organization.trim() : "";
+      if (!org) return Promise.reject(new Error(MISSING_ORG_MESSAGE));
+      const known = scopes.get(org);
+      if (known) return known;
+      const scope = resolve(org);
+      scopes.set(org, scope);
+      scope.catch(() => scopes.delete(org));
+      return scope;
+    },
+  };
+}
+
+async function orgScopeFor(org: string): Promise<OrgScope> {
+  const ctx = await bootstrap({ org, mcpSource: true });
+  return { tenantId: await requireTenantId(ctx), client: ctx.client };
 }
 
 export function registerMcp(program: Command): void {
@@ -111,7 +153,8 @@ export function registerMcp(program: Command): void {
       }
 
       try {
-        const mcpContext = buildCliMcpContext(ctx.client, tenantId);
+        const mcpContext =
+          tenantId === undefined ? buildUnboundMcpContext(ctx.client, orgScopeFor) : buildCliMcpContext(ctx.client, tenantId);
         const server = createMcpServer(mcpContext);
         // Loaded on demand: the tunnel tools reach the daemon on this machine, and the hosted MCP has no such daemon.
         const { registerLocalTunnelTools } = await import("../mcp/local/tunnels");

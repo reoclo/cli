@@ -255,8 +255,11 @@ export async function buildAddBody(
   if (opts.redirectTo === undefined && (opts.code !== undefined || !opts.keepPath)) {
     throw exitError("--code and --no-keep-path need --redirect-to", EXIT.MISUSE);
   }
-  if (opts.redirectTo !== undefined && opts.app === undefined) {
-    throw exitError("--redirect-to needs --app: a redirect belongs to an application", EXIT.MISUSE);
+  if (opts.redirectTo !== undefined && opts.app === undefined && opts.server === undefined) {
+    throw exitError(
+      "--redirect-to needs --app or --server: a redirect runs on its application's server, or on the server you name",
+      EXIT.MISUSE,
+    );
   }
   if (opts.redirectTo !== undefined && opts.port !== undefined) {
     throw exitError("--port does not apply to a redirect", EXIT.MISUSE);
@@ -390,7 +393,7 @@ export function registerDomains(program: Command): void {
     .option("--app <nameOrId>", "link the domain to this application")
     .option("--server <nameOrId>", "server that serves the domain")
     .option("--port <n>", "container port to route to")
-    .option("--redirect-to <target>", "redirect to a domain (example.com[/path]) or a URL (https://...)")
+    .option("--redirect-to <target>", "redirect to a domain (example.com[/path]) or a URL (https://...); needs --app or --server")
     .option("--code <code>", "redirect status code: 301 (default), 302, 307 or 308")
     .option("--no-keep-path", "do not append the request path and query to the redirect target")
     .option("--allow <cidr>", "only allow this IP or CIDR range (repeatable)", collectAllow)
