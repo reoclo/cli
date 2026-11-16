@@ -6,6 +6,7 @@
 // decision.
 
 import type { Interface as ReadLineInterface } from "node:readline";
+import { noInputReason } from "../ui/tty";
 
 export class MissingSecretError extends Error {
   exitCode = 5;
@@ -119,8 +120,10 @@ export async function readSecret(opts: ReadSecretOpts): Promise<string> {
     return readSecretFromStream(process.stdin, opts.stdinFlag);
   }
   const label = opts.promptLabel ?? "password";
-  if (!process.stdin.isTTY) {
-    throw new MissingSecretError(`${label} required: pass ${opts.stdinFlag ?? "--password-stdin"} or run interactively`);
+  // Agent shells and CI look like terminals but nobody answers there, so ask the shared check, not isTTY.
+  const reason = noInputReason();
+  if (reason !== null) {
+    throw new MissingSecretError(`not prompting for the ${label}: ${reason}; pass ${opts.stdinFlag ?? "--password-stdin"}`);
   }
   return promptMasked(label);
 }

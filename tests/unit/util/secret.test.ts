@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { Interface as ReadlineInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { readSecretFromStream, MissingSecretError } from "../../../src/util/secret";
+import { readSecret, readSecretFromStream, MissingSecretError } from "../../../src/util/secret";
 
 function streamFrom(text: string): NodeJS.ReadableStream {
   return Readable.from([text]);
@@ -74,4 +74,24 @@ test("promptMasked restores process.stdout.write when readline closes without an
   expect(process.stdout.write).toBe(origWrite);
 
   process.stdin.isTTY = wasTTY;
+});
+
+test("readSecret refuses at once in a coding agent's terminal and names the stdin flag", async () => {
+  const wasTTY = process.stdin.isTTY;
+  const was = process.env["CLAUDECODE"];
+  process.stdin.isTTY = true;
+  process.env["CLAUDECODE"] = "1";
+  try {
+    const error = await readSecret({ fromStdin: false, promptLabel: "secret access key", stdinFlag: "--secret-key-stdin" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(MissingSecretError);
+    expect(String(error)).toContain("not prompting for the secret access key");
+    expect(String(error)).toContain("pass --secret-key-stdin");
+  } finally {
+    process.stdin.isTTY = wasTTY;
+    if (was === undefined) delete process.env["CLAUDECODE"];
+    else process.env["CLAUDECODE"] = was;
+  }
 });
