@@ -4,6 +4,7 @@
 // `status-pages components` command modules. It lives here rather than in
 // either command module so the two do not have to import each other.
 
+import type { StatusPageTheme } from "./enums";
 import type { HttpClient } from "./http";
 import { cacheList } from "../completion/populate";
 
@@ -14,6 +15,11 @@ export interface StatusPage {
   is_published: boolean;
   domain_id: string | null;
   custom_hostname: string | null;
+  branding?: { theme?: StatusPageTheme } | null;
+}
+
+export function statusPageTheme(page: Pick<StatusPage, "branding">): StatusPageTheme {
+  return page.branding?.theme ?? "light";
 }
 
 /** Collection routes take a trailing slash, item routes do not. This returns the stem. */

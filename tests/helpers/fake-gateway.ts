@@ -1013,6 +1013,7 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
             is_published: false,
             label: body.label ?? null,
             description: body.description ?? null,
+            branding: body.branding ?? null,
           };
           statusPages.set(id, sp);
           return Response.json(sp);
