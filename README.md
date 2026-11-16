@@ -27,6 +27,7 @@ Commands:
   build-pools             manage build pools (groups of build servers)
   builds                  build history on build servers
   test-pools              manage test pools (machines that run your test files)
+  storage-credentials     manage the storage keys test pools use for caches and artifacts
   tests                   test files and test runs on test servers
   deployments             deployment history
   logs                    tail or query application logs

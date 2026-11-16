@@ -49,6 +49,7 @@ import { registerGroups } from "./commands/groups";
 import { registerProxy } from "./commands/proxy";
 import { registerBuildPools } from "./commands/build-pools";
 import { registerBuilds } from "./commands/builds";
+import { registerStorageCredentials } from "./commands/storage-credentials";
 import { registerTestPools } from "./commands/test-pools";
 import { registerTests } from "./commands/tests";
 import { registerTraffic } from "./commands/traffic";
@@ -154,6 +155,7 @@ if (import.meta.main) {
   registerBuildPools(program);
   registerBuilds(program);
   registerTestPools(program);
+  registerStorageCredentials(program);
   registerTests(program);
   registerTraffic(program);
   registerUp(program);

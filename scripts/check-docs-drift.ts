@@ -47,6 +47,7 @@ const COMMANDS = [
   "repos",
   "servers",
   "shell",
+  "storage-credentials",
   "test-pools",
   "tests",
   "tunnel",

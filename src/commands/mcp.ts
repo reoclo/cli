@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { bootstrap, requireTenantId, type ResolvedContext } from "../client/bootstrap";
+import { EXIT } from "../client/exit-codes";
 import { createMcpServer } from "../mcp/server";
 import type { McpRegistrationContext, OrgScope } from "../mcp/tools/context";
 import type { HttpClient } from "../client/http";
@@ -14,6 +15,11 @@ export interface McpBootstrapResult {
   ctx: ResolvedContext;
   /** The org every tool acts on, or undefined when nothing binds one and each call names it. */
   tenantId: string | undefined;
+}
+
+/** What `reoclo mcp` serves when no credential could be loaded: the error every tool answers with. */
+export interface McpSignedOut {
+  signedOut: Error;
 }
 
 const UNBOUND_ORG_DESCRIPTION =
@@ -94,6 +100,39 @@ export function buildUnboundMcpContext(client: HttpClient, resolve: (org: string
   };
 }
 
+/**
+ * Start-up for the stdio server. A missing or unusable sign-in (exit 3 from
+ * `bootstrap()` or the tenant lookup) does not stop the server: an MCP client
+ * shows a process that exits as a closed connection and nothing else. Any other
+ * failure, such as a malformed credential in the environment (exit 2), still throws.
+ */
+export async function resolveMcpStart(): Promise<McpBootstrapResult | McpSignedOut> {
+  try {
+    return await resolveMcpBootstrap();
+  } catch (err) {
+    if (err instanceof Error && (err as Error & { exitCode?: number }).exitCode === EXIT.AUTH) return { signedOut: err };
+    throw err;
+  }
+}
+
+/** What every tool answers with when nobody is signed in: run `reoclo login`, then restart the server. */
+export function signedOutMcpError(cause: Error): Error {
+  return new Error(`Not signed in to Reoclo. Run 'reoclo login' in a terminal, then restart this MCP server. (${cause.message})`);
+}
+
+/**
+ * The tool context when nobody is signed in: every tool, tenant-scoped or not,
+ * fails with `error`. Guide tools do not use the context and keep working.
+ */
+export function buildSignedOutMcpContext(error: Error): McpRegistrationContext {
+  const refuse = (): Promise<never> => Promise.reject(error);
+  return {
+    client: new Proxy({}, { get: () => refuse }) as HttpClient,
+    orgParam: {},
+    resolveOrg: refuse,
+  };
+}
+
 async function orgScopeFor(org: string): Promise<OrgScope> {
   const ctx = await bootstrap({ org, mcpSource: true });
   return { tenantId: await requireTenantId(ctx), client: ctx.client };
@@ -107,7 +146,9 @@ export function registerMcp(program: Command): void {
     // active profile).
     .description("start the stdio MCP server")
     .action(async () => {
-      const { ctx, tenantId } = await resolveMcpBootstrap();
+      const start = await resolveMcpStart();
+      const signedOut = "signedOut" in start ? signedOutMcpError(start.signedOut) : undefined;
+      const ctx = "ctx" in start ? start.ctx : undefined;
 
       // stdout is sacred for MCP protocol framing — redirect any incidental
       // console.log to stderr while the server is running.
@@ -125,7 +166,7 @@ export function registerMcp(program: Command): void {
       // --org token is minted in memory and never stored, so its expiry comes
       // from the token itself: the profile's expiry says nothing about it.
       let stopRefresh: (() => void) | undefined;
-      if (ctx.refresh) {
+      if (ctx?.refresh) {
         const expiresAtOf = ctx.orgSwitched
           ? (token: string): Promise<string | undefined> => Promise.resolve(jwtExpiresAt(token))
           : async (): Promise<string | undefined> =>
@@ -154,16 +195,20 @@ export function registerMcp(program: Command): void {
 
       try {
         const mcpContext =
-          tenantId === undefined ? buildUnboundMcpContext(ctx.client, orgScopeFor) : buildCliMcpContext(ctx.client, tenantId);
+          "signedOut" in start
+            ? buildSignedOutMcpContext(signedOutMcpError(start.signedOut))
+            : start.tenantId === undefined
+              ? buildUnboundMcpContext(start.ctx.client, orgScopeFor)
+              : buildCliMcpContext(start.ctx.client, start.tenantId);
         const server = createMcpServer(mcpContext);
         // Loaded on demand: the tunnel tools reach the daemon on this machine, and the hosted MCP has no such daemon.
         const { registerLocalTunnelTools } = await import("../mcp/local/tunnels");
         const { connectToDaemon } = await import("../tunnels/control-client");
         registerLocalTunnelTools(server, {
           ctx: mcpContext,
-          org: ctx.orgSlug,
-          profile: ctx.profileName,
-          connect: (identity) => connectToDaemon({ identity }),
+          org: ctx?.orgSlug,
+          profile: ctx?.profileName ?? "",
+          connect: (identity) => (signedOut ? Promise.reject(signedOut) : connectToDaemon({ identity })),
         });
         await server.connect(new StdioServerTransport());
       } finally {

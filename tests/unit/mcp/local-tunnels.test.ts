@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import type { HttpClient } from "../../../src/client/http";
 import { createMcpServer } from "../../../src/mcp/server";
 import { registerLocalTunnelTools, shapeTunnel, type LocalTunnelDeps } from "../../../src/mcp/local/tunnels";
@@ -421,5 +422,70 @@ describe("shapeTunnel", () => {
     const failing = shapeTunnel(view({ state: "needs_sign_in", action: "Run reoclo login", detail: "expired" }));
     expect(failing).toMatchObject({ action: "Run reoclo login", detail: "expired" });
     expect(shapeTunnel(view({}))).not.toHaveProperty("action");
+  });
+});
+
+describe("an unbound server", () => {
+  const seen: unknown[] = [];
+
+  async function connectUnbound(): Promise<Client> {
+    seen.length = 0;
+    return connectTools({
+      org: undefined,
+      ctx: {
+        client: apiClient,
+        orgParam: { organization: z.string().min(1) },
+        resolveOrg: (organization?: unknown) => {
+          seen.push(organization);
+          return Promise.resolve({ tenantId: "t1", client: apiClient });
+        },
+      },
+    });
+  }
+
+  const properties = async (client: Client, tool: string): Promise<{ props: string[]; required: string[] }> => {
+    const found = (await client.listTools()).tools.find((t) => t.name === tool);
+    const schema = found?.inputSchema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
+    return { props: Object.keys(schema?.properties ?? {}), required: schema?.required ?? [] };
+  };
+
+  it("offers an optional organization argument on the two tools that need one, and a bound server does not", async () => {
+    const client = await connectUnbound();
+    for (const tool of ["open_tunnel", "save_tunnel"]) {
+      const { props, required } = await properties(client, tool);
+      expect(props).toContain("organization");
+      expect(required).not.toContain("organization");
+    }
+    await client.close();
+    expect((await properties(mcp, "open_tunnel")).props).not.toContain("organization");
+    expect((await properties(mcp, "save_tunnel")).props).not.toContain("organization");
+  });
+
+  it("opens an ad-hoc tunnel under the organization it is given", async () => {
+    const client = await connectUnbound();
+    const { isError, body } = await call("open_tunnel", { server: "prod-1", target: "127.0.0.1:5432", organization: "beta" }, client);
+    expect(isError).toBe(false);
+    expect(body["org"]).toBe("beta");
+    await client.close();
+  });
+
+  it("asks for the organization when an ad-hoc tunnel or a saved server tunnel has none", async () => {
+    const client = await connectUnbound();
+    const open = await call("open_tunnel", { server: "prod-1", target: "5432" }, client);
+    expect(open.isError).toBe(true);
+    expect(String(open.body["error"])).toContain("organization argument");
+    const save = await call("save_tunnel", { name: "db", server: "prod-1", target: "5432" }, client);
+    expect(save.isError).toBe(true);
+    expect(String(save.body["error"])).toContain("organization");
+    await client.close();
+  });
+
+  it("saves a tunnel under the organization it is given and resolves the server there", async () => {
+    const client = await connectUnbound();
+    const { isError, body } = await call("save_tunnel", { name: "db", server: "prod-1", target: "5432", organization: "beta" }, client);
+    expect(isError).toBe(false);
+    expect(body["org"]).toBe("beta");
+    expect(seen).toEqual(["beta"]);
+    await client.close();
   });
 });
