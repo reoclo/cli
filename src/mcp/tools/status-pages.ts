@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import type { McpRegistrationContext } from "./context";
 import { asToolError, asToolResult } from "./common";
+import { StatusPageThemeSchema } from "../../client/enums";
 
 const COMPONENT_SOURCE_KINDS = ["domain", "server", "application", "monitor", "manual"] as const;
 
@@ -22,6 +23,10 @@ const COMPONENT_STATUSES = [
   "maintenance",
   "unknown",
 ] as const;
+
+const THEME_DESCRIPTION =
+  "Page theme: light (default), dark, system (follows the visitor's device setting), " +
+  "or survey_sheet (Reoclo's paper map style with blue grid rules)";
 
 interface VerifiedDomain {
   id: string;
@@ -82,8 +87,9 @@ export function registerStatusPageTools(
       title: z.string().min(1).max(80).describe("Page title shown to visitors"),
       label: z.string().max(120).optional().describe("Short label"),
       description: z.string().optional().describe("Page description"),
+      theme: StatusPageThemeSchema.optional().describe(THEME_DESCRIPTION),
     },
-    async ({ title, label, description, ...args }) => {
+    async ({ title, label, description, theme, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const pages = `/tenants/${tenantId}/status-pages`;
@@ -92,6 +98,7 @@ export function registerStatusPageTools(
             title,
             ...(label !== undefined ? { label } : {}),
             ...(description !== undefined ? { description } : {}),
+            ...(theme !== undefined ? { branding: { theme } } : {}),
           }),
         );
       } catch (error: unknown) {
@@ -102,7 +109,7 @@ export function registerStatusPageTools(
 
   server.tool(
     "update_status_page",
-    "Update a status page's title, label, description, or published state",
+    "Update a status page's title, label, description, theme, or published state. Changing the theme leaves the rest of the page's branding as it is.",
     {
       ...ctx.orgParam,
       status_page_id: z.string().min(1).describe("Status page ID"),
@@ -113,8 +120,9 @@ export function registerStatusPageTools(
         .boolean()
         .optional()
         .describe("Whether the page is visible to the public"),
+      theme: StatusPageThemeSchema.optional().describe(THEME_DESCRIPTION),
     },
-    async ({ status_page_id, title, label, description, is_published, ...args }) => {
+    async ({ status_page_id, title, label, description, is_published, theme, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
         const pages = `/tenants/${tenantId}/status-pages`;
@@ -123,6 +131,7 @@ export function registerStatusPageTools(
         if (label !== undefined) body.label = label;
         if (description !== undefined) body.description = description;
         if (is_published !== undefined) body.is_published = is_published;
+        if (theme !== undefined) body.branding = { theme };
         return asToolResult(await client.patch(`${pages}/${status_page_id}`, body));
       } catch (error: unknown) {
         return asToolError(error);

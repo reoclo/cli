@@ -52,12 +52,27 @@ describe("reoclo status-pages", () => {
     expect(create.options.every((o) => !o.mandatory)).toBe(true);
   });
 
-  test("update has --title/--label/--description/--published", () => {
+  test("update has --title/--label/--description/--published/--theme", () => {
     const flags = sub("update").options.map((o) => o.long);
     expect(flags).toContain("--title");
     expect(flags).toContain("--label");
     expect(flags).toContain("--description");
     expect(flags).toContain("--published");
+    expect(flags).toContain("--theme");
+  });
+
+  test.each(["create", "update"])("%s rejects an unknown --theme with exit 2 before any API call", async (name) => {
+    const args = name === "create" ? ["create"] : ["update", "some-page"];
+    const p = new Command();
+    registerStatusPages(p);
+    const err = await p
+      .parseAsync(["node", "reoclo", "status-pages", ...args, "--theme", "neon"])
+      .then(
+        () => null,
+        (e: unknown) => e as Error & { exitCode?: number },
+      );
+    expect(err?.exitCode).toBe(2);
+    expect(err?.message).toContain("light, dark, system, survey_sheet");
   });
 
   test("link requires --hostname and infers the root domain by default", () => {

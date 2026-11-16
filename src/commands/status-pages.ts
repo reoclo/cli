@@ -8,10 +8,12 @@ import {
   listStatusPages,
   resolveStatusPage,
   statusPagesPath as pagesPath,
+  statusPageTheme,
   type StatusPage,
 } from "../client/status-pages";
+import { STATUS_PAGE_THEMES } from "../client/enums";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
-import { parseBool } from "../util/parse-flag";
+import { parseBool, parseEnum } from "../util/parse-flag";
 import {
   listVerifiedDomains,
   matchVerifiedDomainForHostname,
@@ -67,6 +69,8 @@ async function verifiedDomainForLink(
   return vd;
 }
 
+const THEME_FLAG_HELP = `page theme: ${STATUS_PAGE_THEMES.join(", ")}`;
+
 export function registerStatusPages(program: Command): Command {
   const g = program.command("status-pages").description("manage status pages");
 
@@ -99,8 +103,10 @@ export function registerStatusPages(program: Command): Command {
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const sp = await resolveStatusPage(ctx.client, tid, page);
-        const full = await ctx.client.get<Record<string, unknown>>(`${pagesPath(tid)}/${sp.id}`);
-        printObject(full, fmt);
+        const full = await ctx.client.get<StatusPage & Record<string, unknown>>(
+          `${pagesPath(tid)}/${sp.id}`,
+        );
+        printObject({ ...full, theme: statusPageTheme(full) }, fmt);
       }),
     { args: [{ slot: 0, resource: "status-pages" }] },
   );
@@ -115,6 +121,7 @@ export function registerStatusPages(program: Command): Command {
       "--verified-domain <rootOrId>",
       "verified root domain for --hostname (inferred when omitted)",
     )
+    .option("--theme <theme>", `${THEME_FLAG_HELP} (default light)`)
     .action(
       async (opts: {
         title?: string;
@@ -122,6 +129,7 @@ export function registerStatusPages(program: Command): Command {
         description?: string;
         hostname?: string;
         verifiedDomain?: string;
+        theme?: string;
       }) => {
         if (opts.verifiedDomain && !opts.hostname) {
           const e = new Error("--verified-domain requires --hostname") as Error & {
@@ -130,12 +138,15 @@ export function registerStatusPages(program: Command): Command {
           e.exitCode = 2;
           throw e;
         }
+        const theme =
+          opts.theme !== undefined ? parseEnum(opts.theme, STATUS_PAGE_THEMES, "--theme") : undefined;
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
         const body: Record<string, unknown> = {};
         if (opts.title !== undefined) body.title = opts.title;
         if (opts.label !== undefined) body.label = opts.label;
         if (opts.description !== undefined) body.description = opts.description;
+        if (theme !== undefined) body.branding = { theme };
         if (opts.hostname !== undefined) {
           const vd = await verifiedDomainForLink(
             ctx.client,
@@ -163,11 +174,22 @@ export function registerStatusPages(program: Command): Command {
       .option("--label <label>", "short label")
       .option("--description <text>", "page description")
       .option("--published <bool>", "publish state (true|false)")
+      .option("--theme <theme>", THEME_FLAG_HELP)
       .action(
         async (
           page: string,
-          opts: { title?: string; label?: string; description?: string; published?: string },
+          opts: {
+            title?: string;
+            label?: string;
+            description?: string;
+            published?: string;
+            theme?: string;
+          },
         ) => {
+          const theme =
+            opts.theme !== undefined
+              ? parseEnum(opts.theme, STATUS_PAGE_THEMES, "--theme")
+              : undefined;
           const ctx = await bootstrap();
           const tid = await requireTenantId(ctx);
           const sp = await resolveStatusPage(ctx.client, tid, page);
@@ -178,6 +200,7 @@ export function registerStatusPages(program: Command): Command {
           if (opts.published !== undefined) {
             body.is_published = parseBool(opts.published, "--published");
           }
+          if (theme !== undefined) body.branding = { theme };
           if (Object.keys(body).length === 0) {
             const e = new Error("nothing to update. Pass at least one option.") as Error & {
               exitCode: number;

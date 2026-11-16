@@ -90,3 +90,8 @@ export const ComponentStatusSchema = z.enum(COMPONENT_STATUSES);
 // Shared positive-integer schema for `limit` params in MCP tools. The CLI
 // equivalent is `parseLimit` in src/util/parse-limit.ts.
 export const LimitSchema = z.number().int().positive();
+
+/** Themes the API accepts at a status page's `branding.theme`. A page without one renders as light. */
+export const STATUS_PAGE_THEMES = ["light", "dark", "system", "survey_sheet"] as const;
+export type StatusPageTheme = (typeof STATUS_PAGE_THEMES)[number];
+export const StatusPageThemeSchema = z.enum(STATUS_PAGE_THEMES);
