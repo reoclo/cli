@@ -140,7 +140,7 @@ export async function requireTenantId(ctx: ResolvedContext): Promise<string> {
   const me = await ctx.client.get<Me>("/auth/me");
   if (!me.tenant_id) {
     const err = new Error(
-      "no tenant resolved from /auth/me — run 'reoclo login', or check the credential",
+      "no tenant resolved from /auth/me: run 'reoclo login', or check the credential",
     ) as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;
@@ -270,7 +270,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   // than surfacing a confusing "not authenticated" below.
   if (projectConfig?.profile && profileName === projectConfig.profile && !profile) {
     const err = new Error(
-      `.reoclo selects profile '${projectConfig.profile}', but it doesn't exist — ` +
+      `.reoclo selects profile '${projectConfig.profile}', but it doesn't exist: ` +
         `run 'reoclo login --profile ${projectConfig.profile}'`,
     ) as Error & { exitCode: number };
     err.exitCode = 3;
@@ -358,7 +358,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
           "REOCLO_MACHINE_TOKEN (agents) instead.\n",
       );
     }
-    const err = new Error("not authenticated — run 'reoclo login'") as Error & { exitCode: number };
+    const err = new Error("not authenticated: run 'reoclo login'") as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;
   }

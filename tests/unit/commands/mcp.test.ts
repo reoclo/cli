@@ -165,7 +165,7 @@ test("resolveMcpStart serves a signed-in profile as before", async () => {
 });
 
 test("a signed-out server lists every tool, fails each with the login instruction and keeps the guides", async () => {
-  const server = createMcpServer(buildSignedOutMcpContext(signedOutMcpError(new Error("not authenticated"))));
+  const server = createMcpServer(buildSignedOutMcpContext(signedOutMcpError(new Error("not authenticated: run 'reoclo login'"))));
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "agent-x", version: "1" });
   await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
@@ -184,7 +184,7 @@ test("a signed-out server lists every tool, fails each with the login instructio
     const res = await client.callTool({ name, arguments: args });
     const text = (res.content as Array<{ text: string }>).map((c) => c.text).join("");
     expect({ name, isError: res.isError }).toEqual({ name, isError: true });
-    expect(text).toContain("reoclo login");
+    expect(text.split("reoclo login")).toHaveLength(2); // named once, not repeated by the wrapper
   }
 
   const guides = await client.callTool({ name: "list_guides", arguments: {} });
