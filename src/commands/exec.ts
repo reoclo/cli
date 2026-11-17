@@ -311,7 +311,7 @@ export function registerExec(program: Command): void {
       ) => {
         if (!commandParts || commandParts.length === 0) {
           const e = new Error(
-            "no command given — use: reoclo exec <server> -- <command>",
+            "no command given. Use: reoclo exec <server> -- <command>",
           ) as Error & { exitCode: number };
           e.exitCode = 2;
           throw e;

@@ -113,7 +113,7 @@ export async function runImport(
 
   if (conflicting.length > 0 && !opts.skipExisting) {
     throw new Error(
-      `${conflicting.length} secret(s) already exist in ${deps.projectLabel} — ` +
+      `${conflicting.length} secret(s) already exist in ${deps.projectLabel}; ` +
         `re-run with --skip-existing to skip them: ${conflicting.join(", ")}`,
     );
   }

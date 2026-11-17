@@ -22,7 +22,7 @@ export function registerVolumeTools(server: McpServer, ctx: McpRegistrationConte
     "List Docker volumes on a server. Each entry reports in_use/used_by " +
       "(which containers hold it) and protected (platform volumes that " +
       "cannot be deleted or pruned). A non-null partial_error means the " +
-      "listing itself failed on the server — treat it as an error, not an " +
+      "listing itself failed on the server; treat it as an error, not an " +
       "empty/healthy list.",
     {
       ...ctx.orgParam,

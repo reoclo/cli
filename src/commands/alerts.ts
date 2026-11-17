@@ -458,7 +458,7 @@ function resolveMuteExpiry(duration: string): string {
   const match = duration.match(/^(\d+)([smhd])$/);
   if (!match) {
     process.stderr.write(
-      `Error: invalid duration "${duration}" — use e.g. 30m, 2h, 7d\n`,
+      `Error: invalid duration "${duration}": use e.g. 30m, 2h, 7d\n`,
     );
     process.exit(1);
   }
@@ -495,7 +495,7 @@ async function parseChannels(
   for (const ch of spec.split(",")) {
     const trimmed = ch.trim();
     if (!trimmed.startsWith("channel:")) {
-      throw new Error(`Invalid channel ref: "${trimmed}" — expected format: channel:<id>`);
+      throw new Error(`Invalid channel ref "${trimmed}": expected format channel:<id>`);
     }
     out.push(await resolveChannelRef(ctx, tid, trimmed.slice("channel:".length)));
   }

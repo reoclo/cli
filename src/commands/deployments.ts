@@ -72,7 +72,7 @@ export function registerDeployments(program: Command): void {
         );
         if (fmt === "text" && res.items.length === 0) {
           process.stderr.write(
-            "note: no deployments. 'deployments' tracks Reoclo-managed app deploys — not raw " +
+            "note: no deployments. 'deployments' tracks Reoclo-managed app deploys, not raw " +
               "Docker Swarm services. Use 'reoclo containers ls' for running containers/services.\n",
           );
         }

@@ -220,7 +220,7 @@ export async function pollForToken(
       continue;
     }
     if (errorCode === "expired_token") {
-      throw new DeviceFlowError("expired_token", "device code expired — run login again");
+      throw new DeviceFlowError("expired_token", "device code expired: run login again");
     }
     if (errorCode === "access_denied") {
       throw new DeviceFlowError("access_denied", "authorization cancelled by user");
@@ -242,7 +242,7 @@ export async function pollForToken(
     // Unknown error
     throw new DeviceFlowError(
       "network",
-      `token poll error: ${errorCode || res.status} — ${errBody.error_description ?? ""}`,
+      `token poll error: ${errorCode || res.status}, ${errBody.error_description ?? ""}`,
     );
   }
 }

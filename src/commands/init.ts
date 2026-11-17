@@ -108,7 +108,7 @@ export async function chooseInitOrg(opts: {
   const [first] = opts.memberships;
   if (!first) {
     const err = new Error(
-      "no organizations are granted to this login — run 'reoclo login' and authorize one",
+      "no organizations are granted to this login: run 'reoclo login' and authorize one",
     ) as Error & { exitCode: number };
     err.exitCode = 3;
     throw err;
@@ -229,7 +229,7 @@ export function registerInit(program: Command): void {
           try {
             existing = JSON.parse(readFileSync(mcpPath, "utf8"));
           } catch {
-            process.stderr.write("  warning: .mcp.json was not valid JSON — rewriting it\n");
+            process.stderr.write("  warning: .mcp.json was not valid JSON: rewriting it\n");
           }
         }
         writeFileSync(mcpPath, `${JSON.stringify(mergeMcpServer(existing), null, 2)}\n`);

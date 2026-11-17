@@ -60,7 +60,7 @@ export function formatLoginSummary(i: LoginSummaryInput): string {
       i.source === "env"
         ? "it's used automatically while $REOCLO_PROFILE is set"
         : "it was selected with --profile for this login only";
-    lines.push(`  note: '${i.profile}' isn't your active profile — ${why};`);
+    lines.push(`  note: '${i.profile}' isn't your active profile: ${why};`);
     lines.push(`        run 'reoclo profile use ${i.profile}' to make it the default.`);
   }
   return lines.join("\n");

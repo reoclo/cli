@@ -164,7 +164,7 @@ export async function fetchAvailableSkills(opts: {
     const tar = spawnSync("tar", ["-xzf", tarball, "-C", extractDir], { stdio: "ignore" });
     if (tar.error) {
       throw new Error(
-        "could not run 'tar' to extract skills — install tar, or clone manually:\n" +
+        "could not run 'tar' to extract skills; install tar, or clone manually:\n" +
           "  git clone https://github.com/reoclo/skills.git ~/.claude/skills",
       );
     }

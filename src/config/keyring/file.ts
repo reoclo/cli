@@ -29,7 +29,7 @@ export class FileStore implements TokenStore {
     const owner = this.refreshProfileFor(profile);
     const name = owner ?? profile;
     const p = cfg.profiles[name];
-    if (!p) throw new Error(`profile '${name}' missing — call saveProfile first`);
+    if (!p) throw new Error(`profile '${name}' missing: call saveProfile first`);
     if (owner) await saveProfile(name, { ...p, refresh_token: token });
     else await saveProfile(name, { ...p, token, token_ref: undefined });
   }

@@ -141,7 +141,7 @@ export function registerShell(program: Command): void {
 
         if (!ttyOk && !opts.allowNoTty) {
           const e = new Error(
-            "reoclo shell requires an interactive TTY — use 'reoclo exec' for one-shot commands",
+            "reoclo shell requires an interactive TTY: use 'reoclo exec' for one-shot commands",
           ) as Error & { exitCode: number };
           e.exitCode = 2;
           throw e;

@@ -280,5 +280,5 @@ export function formatUpdateNotice(
   method: InstallMethod,
 ): string {
   const bare = latest.replace(/^v/, "");
-  return `⚡ reoclo ${bare} available (you have ${current}) — ${upgradeCommandFor(method, bare)}`;
+  return `⚡ reoclo ${bare} available (you have ${current}): ${upgradeCommandFor(method, bare)}`;
 }

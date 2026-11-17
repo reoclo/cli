@@ -81,7 +81,7 @@ export function registerRuntimeTools(
         .record(z.string(), z.string().nullable())
         .optional()
         .describe(
-          "Label patch — null value removes the key. Reserved Reoclo labels are protected.",
+          "Label patch: null value removes the key. Reserved Reoclo labels are protected.",
         ),
       ports: z
         .array(
@@ -102,7 +102,7 @@ export function registerRuntimeTools(
         .min(0)
         .max(200)
         .optional()
-        .describe("Swarm services only — replica count"),
+        .describe("Replica count (Swarm services only)"),
     },
     async ({ server_id, container_name, env, labels, ports, persist, replicas, ...args }) => {
       try {
@@ -133,7 +133,7 @@ export function registerRuntimeTools(
   server.tool(
     "scale_container",
     "Scale a Docker Swarm service to N replicas. Plain (non-Swarm) containers " +
-      "return a 409 error pointing to the recreate path — convert the container " +
+      "return a 409 error pointing to the recreate path: convert the container " +
       "to a Swarm service first if you need scaling.",
     {
       ...ctx.orgParam,
@@ -165,7 +165,7 @@ export function registerRuntimeTools(
     "Add or remove container labels. Pass null as a value to remove a key. " +
       "Reserved Reoclo labels (reoclo.app.id, reoclo.tenant.slug, etc.) return 400. " +
       "reoclo.application_id is the canonical way to claim a manually-deployed " +
-      "container into an application — requires app:label:write capability.",
+      "container into an application. Requires app:label:write capability.",
     {
       ...ctx.orgParam,
       server_id: z.string().uuid().describe("Server ID"),

@@ -63,7 +63,7 @@ export function loadConfig(): Promise<ConfigFile> {
     const merged = { ...EMPTY, ...(JSON.parse(raw) as ConfigFile) };
     return Promise.resolve(migrateGlobalConfig(merged).cfg);
   } catch {
-    return Promise.reject(new Error(`corrupt config at ${path} — delete the file and re-run 'reoclo login'`));
+    return Promise.reject(new Error(`corrupt config at ${path}: delete the file and re-run 'reoclo login'`));
   }
 }
 

@@ -115,12 +115,12 @@ describe("shouldRunUpdateCheck", () => {
 describe("formatUpdateNotice", () => {
   test("names both versions and the install-specific command", () => {
     expect(formatUpdateNotice("0.48.0", "0.49.0", "homebrew")).toBe(
-      "⚡ reoclo 0.49.0 available (you have 0.48.0) — brew upgrade reoclo/tap/reoclo",
+      "⚡ reoclo 0.49.0 available (you have 0.48.0): brew upgrade reoclo/tap/reoclo",
     );
   });
   test("uses the package-manager command for managed installs", () => {
     expect(formatUpdateNotice("0.48.0", "0.49.0", "npm")).toBe(
-      "⚡ reoclo 0.49.0 available (you have 0.48.0) — npm i -g @reoclo/cli@0.49.0",
+      "⚡ reoclo 0.49.0 available (you have 0.48.0): npm i -g @reoclo/cli@0.49.0",
     );
   });
 });

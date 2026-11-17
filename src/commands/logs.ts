@@ -49,8 +49,8 @@ export function noLogsNotice(serverId?: string): void {
   const scope = serverId ? "this server" : "this tenant";
   notice(
     `no ingested logs matched for ${scope}. ` +
-      "If log ingestion isn't active yet this stays empty regardless of the query — " +
-      "use 'reoclo containers logs <server> <name>' or 'reoclo logs tail' for live container logs.",
+      "If log ingestion isn't active yet this stays empty regardless of the query. " +
+      "Use 'reoclo containers logs <server> <name>' or 'reoclo logs tail' for live container logs.",
   );
 }
 
@@ -435,7 +435,7 @@ export function registerLogs(program: Command): void {
       printObject(r, fmt);
       if (fmt === "text" && ingestionLooksInactive(r)) {
         notice(
-          "log ingestion is not active for this tenant (0 streams / 0 bytes) — " +
+          "log ingestion is not active for this tenant (0 streams / 0 bytes); " +
             "the retention window applies only once streams start arriving. " +
             "Until then, use 'reoclo containers logs' / 'reoclo logs tail' for live container logs.",
         );
@@ -472,7 +472,7 @@ export function registerLogs(program: Command): void {
         if (containers.length === 0 && journalUnits.length === 0) {
           notice(
             "no log sources reported for this server. The runner snapshot may be stale or " +
-              "unavailable — try 'reoclo containers refresh', then " +
+              "unavailable. Try 'reoclo containers refresh', then " +
               "'reoclo containers ls --server <server>' for the live container list.",
           );
           return;
