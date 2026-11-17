@@ -468,7 +468,7 @@ export async function bootstrap(opts: BootstrapOptions = {}): Promise<ResolvedCo
   if (orgOverride && orgOverride !== profile?.tenant_slug) {
     if (!profile || profile.auth_kind !== "oauth") {
       const err = new Error(
-        "--org / $REOCLO_ORG requires an OAuth profile — run 'reoclo login'",
+        "--org / $REOCLO_ORG requires an OAuth profile: run 'reoclo login'",
       ) as Error & { exitCode: number };
       err.exitCode = 4;
       throw err;

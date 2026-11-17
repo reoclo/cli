@@ -281,7 +281,7 @@ Examples:
     .addHelpText(
       "after",
       `
-Env var VALUES are masked with '***' by default — a running container often
+Env var VALUES are masked with '***' by default, because a running container often
 holds live production secrets (DB URIs, cloud keys, API tokens). Keys stay
 visible. Pass --show-secrets to reveal the values.
 `,
@@ -298,7 +298,7 @@ visible. Pass --show-secrets to reveal the values.
       printObject(response, fmt);
       if (hiddenCount > 0 && fmt === "text") {
         process.stderr.write(
-          `note: ${hiddenCount} env value(s) hidden — pass --show-secrets to reveal\n`,
+          `note: ${hiddenCount} env value(s) hidden: pass --show-secrets to reveal\n`,
         );
       }
     });

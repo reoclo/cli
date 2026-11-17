@@ -87,7 +87,7 @@ export async function mintTenantSwitchToken(
     } catch {
       // non-JSON body — surface as-is
     }
-    throw new TenantSwitchError(`tenant_switch failed: ${res.status} — ${detail}`, res.status);
+    throw new TenantSwitchError(`tenant_switch failed: ${res.status}, ${detail}`, res.status);
   }
   const data = (await res.json()) as { access_token: string };
   return data.access_token;

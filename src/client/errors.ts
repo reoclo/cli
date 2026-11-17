@@ -53,7 +53,7 @@ export class ReauthRequiredError extends ApiError {
     const message =
       kind === "missing"
         ? `no stored session to refresh for profile '${profile}'`
-        : `session for profile '${profile}' could not be refreshed — the refresh token was rejected (it may be expired or revoked)`;
+        : `session for profile '${profile}' could not be refreshed: the refresh token was rejected (it may be expired or revoked)`;
     const verb = kind === "missing" ? "sign in" : "re-authenticate";
     super(401, message, "", `Run 'reoclo login --profile ${profile}' to ${verb}.`);
     this.name = "ReauthRequiredError";

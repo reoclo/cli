@@ -159,7 +159,7 @@ export async function discoverFromCompose(composeFilePath: string): Promise<Disc
 
     if (container_port === null) {
       process.stderr.write(
-        `warning: service "${serviceKey}" is managed by Reoclo but has no exposed or mapped port — skipping\n`,
+        `warning: service "${serviceKey}" is managed by Reoclo but has no exposed or mapped port: skipping\n`,
       );
       continue;
     }
@@ -180,16 +180,16 @@ export function parseServicesList(input: string): DiscoveredService[] {
     if (!trimmed) continue;
     const colonIdx = trimmed.lastIndexOf(":");
     if (colonIdx === -1) {
-      throw exitErr(`invalid services entry "${trimmed}" — expected format "container_name:port"`, 2);
+      throw exitErr(`invalid services entry "${trimmed}": expected format "container_name:port"`, 2);
     }
     const name = trimmed.slice(0, colonIdx).trim();
     const portStr = trimmed.slice(colonIdx + 1).trim();
     const port = parseInt(portStr, 10);
     if (!name) {
-      throw exitErr(`invalid services entry "${trimmed}" — container name is empty`, 2);
+      throw exitErr(`invalid services entry "${trimmed}": container name is empty`, 2);
     }
     if (isNaN(port) || port <= 0) {
-      throw exitErr(`invalid services entry "${trimmed}" — port "${portStr}" is not a valid number`, 2);
+      throw exitErr(`invalid services entry "${trimmed}": port "${portStr}" is not a valid number`, 2);
     }
     results.push({ container_name: name, container_port: port, image_tag: null });
   }
@@ -322,7 +322,7 @@ export function registerDeploy(program: Command): void {
       const hasCompose = (opts.composeFile ?? "").trim() !== "";
       const hasServices = (opts.services ?? "").trim() !== "";
       if (hasCompose && hasServices) {
-        throw exitErr("--compose-file and --services are mutually exclusive — provide only one", 2);
+        throw exitErr("--compose-file and --services are mutually exclusive: provide only one", 2);
       }
       if (!hasCompose && !hasServices) {
         throw exitErr("provide either --compose-file or --services", 2);
@@ -361,7 +361,7 @@ export function registerDeploy(program: Command): void {
 
         for (const name of session.unmatched) {
           process.stderr.write(
-            `warning: container "${name}" has no matching Reoclo application — skipping\n`,
+            `warning: container "${name}" has no matching Reoclo application: skipping\n`,
           );
         }
 
@@ -384,7 +384,7 @@ export function registerDeploy(program: Command): void {
           printObject(result, fmt);
         } else {
           for (const r of syncResp.results) {
-            process.stdout.write(`${r.container_name}: ${r.status}${r.reason ? ` — ${r.reason}` : ""}\n`);
+            process.stdout.write(`${r.container_name}: ${r.status}${r.reason ? ` (${r.reason})` : ""}\n`);
           }
           if (summary.syncedFqdns.length > 0) {
             process.stdout.write(`synced fqdns: ${summary.syncedFqdns.join(", ")}\n`);
@@ -427,7 +427,7 @@ export function registerDeploy(program: Command): void {
           }
           if (outcome.unsupported) {
             process.stderr.write(
-              "warning: this Reoclo API has no deploy status endpoint — skipping --wait (upgrade the server to API >= 1.75.0)\n",
+              "warning: this Reoclo API has no deploy status endpoint: skipping --wait (upgrade the server to API >= 1.75.0)\n",
             );
           } else {
             process.stderr.write("proxy routes converged\n");

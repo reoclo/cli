@@ -167,7 +167,7 @@ export class DeploySyncClient {
 
   async sync(req: DeploySyncRequest): Promise<DeploySyncResponse> {
     if (!this.sessionToken) {
-      throw exitErr("no deploy session — call createSession first", 1);
+      throw exitErr("no deploy session: call createSession first", 1);
     }
     const { status, json } = await this.send("POST", "/external-deploy/sync", this.sessionToken, req);
     // 200 (mixed/ok) and 409 (all-conflict) both carry the structured body; the
@@ -186,7 +186,7 @@ export class DeploySyncClient {
    */
   async status(): Promise<DeployStatusResponse | null> {
     if (!this.sessionToken) {
-      throw exitErr("no deploy session — call createSession first", 1);
+      throw exitErr("no deploy session: call createSession first", 1);
     }
     const { status, json } = await this.send("GET", "/external-deploy/status", this.sessionToken);
     if (status === 404) return null;

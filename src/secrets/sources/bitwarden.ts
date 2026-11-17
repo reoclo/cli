@@ -43,7 +43,7 @@ async function readBitwarden(
 ): Promise<ImportedSecret[]> {
   if (!deps.env.BWS_ACCESS_TOKEN) {
     const e = new Error(
-      "BWS_ACCESS_TOKEN is not set — export your Bitwarden Secrets Manager access token before importing.",
+      "BWS_ACCESS_TOKEN is not set: export your Bitwarden Secrets Manager access token before importing.",
     ) as Error & { exitCode: number };
     e.exitCode = 4;
     throw e;
@@ -72,7 +72,7 @@ async function resolveBwsProjectId(name: string, deps: BitwardenDeps): Promise<s
     throw new Error(`no Bitwarden project named "${name}"`);
   }
   throw new Error(
-    `multiple Bitwarden projects named "${name}" — pass the project id instead`,
+    `multiple Bitwarden projects named "${name}": pass the project id instead`,
   );
 }
 
@@ -83,7 +83,7 @@ async function runBws(args: string[], deps: BitwardenDeps): Promise<CommandResul
   } catch (e) {
     if (e && typeof e === "object" && (e as { code?: string }).code === "ENOENT") {
       throw new Error(
-        'the "bws" CLI was not found — install Bitwarden Secrets Manager CLI: https://bitwarden.com/help/secrets-manager-cli/',
+        'the "bws" CLI was not found: install Bitwarden Secrets Manager CLI: https://bitwarden.com/help/secrets-manager-cli/',
       );
     }
     throw e;

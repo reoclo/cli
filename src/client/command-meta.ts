@@ -29,7 +29,7 @@ export function ensureCapabilityOrExit(
   if (!capabilities || capabilities.length === 0) return;
   if (capabilities.includes(verb)) return;
   const err = new Error(
-    `missing capability "${verb}" — ask your organization admin to grant it (or assign a role that includes it)`,
+    `missing capability "${verb}": ask your organization admin to grant it (or assign a role that includes it)`,
   ) as Error & { exitCode: number };
   err.exitCode = 13;
   throw err;

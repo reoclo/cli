@@ -24,6 +24,11 @@ function str(v: unknown, fallback = ""): string {
   return typeof v === "string" && v.length > 0 ? v : fallback;
 }
 
+/** "name (note)", or just the name when there is no note. */
+function withNote(label: string, note: string): string {
+  return note ? `${label} (${note})` : label;
+}
+
 export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
   servers: {
     kind: "servers",
@@ -32,7 +37,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       const id = str(r.id);
       const value = str(r.slug, id);
       const name = str(r.name, value);
-      return { id, value, name, desc: `${name} — ${str(r.status)}` };
+      return { id, value, name, desc: withNote(name, str(r.status)) };
     },
   },
   apps: {
@@ -59,7 +64,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
     toEntry: (r) => {
       const id = str(r.id);
       const value = str(r.fqdn, id);
-      return { id, value, name: value, desc: `${value} — ${str(r.status)}` };
+      return { id, value, name: value, desc: withNote(value, str(r.status)) };
     },
   },
   tunnels: {
@@ -76,7 +81,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
     toEntry: (r) => {
       const id = str(r.id);
       const name = str(r.name, id);
-      return { id, value: id, name, desc: `${name} — ${str(r.status)}` };
+      return { id, value: id, name, desc: withNote(name, str(r.status)) };
     },
   },
   "status-pages": {
@@ -103,7 +108,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
     toEntry: (r) => {
       const id = str(r.id);
       const name = str(r.name, id);
-      return { id, value: id, name, desc: `${name} — ${str(r.status)}` };
+      return { id, value: id, name, desc: withNote(name, str(r.status)) };
     },
   },
   repos: {
@@ -130,7 +135,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       const value = str(r.slug, id);
       const name = str(r.name, value);
       const providerType = str(r.provider_type);
-      return { id, value, name, desc: `${name} — ${providerType}` };
+      return { id, value, name, desc: withNote(name, providerType) };
     },
   },
   "alert-codes": {
@@ -165,7 +170,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       const id = str(r.id);
       const code = str(r.alert_code, "*");
       const reason = str(r.reason);
-      return { id, value: id, name: id, desc: reason ? `${code} — ${reason}` : code };
+      return { id, value: id, name: id, desc: withNote(code, reason) };
     },
   },
   "channel-ids": {
@@ -175,7 +180,7 @@ export const RESOURCE_REGISTRY: Record<IndexKind, ResourceDef> = {
       const id = str(r.id);
       const name = str(r.name, id);
       const kind = str(r.kind);
-      return { id, value: id, name, desc: kind ? `${name} — ${kind}` : name };
+      return { id, value: id, name, desc: withNote(name, kind) };
     },
   },
   "channel-kinds": {

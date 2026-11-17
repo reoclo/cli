@@ -20,7 +20,7 @@ describe("RESOURCE_REGISTRY", () => {
       id: "srv-1",
       value: "prod-web",
       name: "Prod Web",
-      desc: "Prod Web — ACTIVE",
+      desc: "Prod Web (ACTIVE)",
     });
   });
 
@@ -38,7 +38,7 @@ describe("RESOURCE_REGISTRY", () => {
     // domains — fqdn and status present
     expect(
       RESOURCE_REGISTRY.domains.toEntry({ id: "d1", fqdn: "x.com", status: "verified" }),
-    ).toEqual({ id: "d1", value: "x.com", name: "x.com", desc: "x.com — verified" });
+    ).toEqual({ id: "d1", value: "x.com", name: "x.com", desc: "x.com (verified)" });
 
     // tunnels — mode present, id used as value/name
     expect(
@@ -48,12 +48,12 @@ describe("RESOURCE_REGISTRY", () => {
     // servers fallback — slug and name absent, status absent
     expect(
       RESOURCE_REGISTRY.servers.toEntry({ id: "x" }),
-    ).toEqual({ id: "x", value: "x", name: "x", desc: "x — " });
+    ).toEqual({ id: "x", value: "x", name: "x", desc: "x" });
   });
 
   test("monitors toEntry maps id/name/status", () => {
     const e = RESOURCE_REGISTRY.monitors.toEntry({ id: "m1", name: "API", status: "active" });
-    expect(e).toEqual({ id: "m1", value: "m1", name: "API", desc: "API — active" });
+    expect(e).toEqual({ id: "m1", value: "m1", name: "API", desc: "API (active)" });
   });
 
   test("status-pages toEntry maps id/title", () => {
@@ -70,7 +70,7 @@ describe("RESOURCE_REGISTRY", () => {
 
   test("monitors toEntry falls back when name/status absent", () => {
     const e = RESOURCE_REGISTRY.monitors.toEntry({ id: "m1" });
-    expect(e).toEqual({ id: "m1", value: "m1", name: "m1", desc: "m1 — " });
+    expect(e).toEqual({ id: "m1", value: "m1", name: "m1", desc: "m1" });
   });
 
   test("status-pages toEntry falls back when title absent", () => {
@@ -88,13 +88,13 @@ describe("RESOURCE_REGISTRY", () => {
       id: "so1", name: "nightly-restart", status: "ACTIVE",
     });
     expect(e).toEqual({
-      id: "so1", value: "so1", name: "nightly-restart", desc: "nightly-restart — ACTIVE",
+      id: "so1", value: "so1", name: "nightly-restart", desc: "nightly-restart (ACTIVE)",
     });
   });
 
   test("schedule toEntry falls back when name/status absent", () => {
     const e = RESOURCE_REGISTRY.schedule.toEntry({ id: "so1" });
-    expect(e).toEqual({ id: "so1", value: "so1", name: "so1", desc: "so1 — " });
+    expect(e).toEqual({ id: "so1", value: "so1", name: "so1", desc: "so1" });
   });
 });
 

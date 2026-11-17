@@ -180,7 +180,7 @@ async function runInstall(opts: InstallOpts): Promise<void> {
         `${target.scriptPath} already exists with different content. Overwrite? [y/N] `,
       );
       if (!ok) {
-        process.stderr.write("aborted — re-run with --force to overwrite without prompting\n");
+        process.stderr.write("aborted: re-run with --force to overwrite without prompting\n");
         const err = new Error("install aborted") as Error & { exitCode: number };
         err.exitCode = 1;
         throw err;
@@ -242,7 +242,7 @@ export async function warmCache(profile?: string): Promise<boolean> {
   } catch (err) {
     if (err instanceof NotFoundError) {
       process.stderr.write(
-        "completion: this Reoclo API does not support `completion warm` yet — skipping\n",
+        "completion: this Reoclo API does not support `completion warm` yet: skipping\n",
       );
       return false;
     }

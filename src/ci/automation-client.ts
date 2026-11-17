@@ -17,7 +17,7 @@ function exitErr(message: string, code: number): Error & { exitCode: number } {
 export function requireAutomationKey(ctx: Pick<ResolvedContext, "tokenType">): void {
   if (ctx.tokenType !== "automation") {
     throw exitErr(
-      "this command requires a Reoclo automation key (rca_*) — set REOCLO_AUTOMATION_KEY",
+      "this command requires a Reoclo automation key (rca_*): set REOCLO_AUTOMATION_KEY",
       4,
     );
   }

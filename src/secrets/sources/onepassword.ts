@@ -123,7 +123,7 @@ async function runOp(args: string[], deps: OnePasswordDeps): Promise<CommandResu
   } catch (e) {
     if (e && typeof e === "object" && (e as { code?: string }).code === "ENOENT") {
       throw new Error(
-        'the "op" CLI was not found — install the 1Password CLI: https://developer.1password.com/docs/cli/get-started/',
+        'the "op" CLI was not found: install the 1Password CLI: https://developer.1password.com/docs/cli/get-started/',
       );
     }
     throw e;

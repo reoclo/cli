@@ -460,7 +460,7 @@ Saved tunnels (kept up by the tunnel daemon):
             const bound = ready.forwards[i];
             if (!bound) {
               console.error(
-                `tunnel: internal error — TunnelSession returned ${ready.forwards.length} ready forwards but ${parsed.forwards.length} were requested`,
+                `tunnel: internal error: TunnelSession returned ${ready.forwards.length} ready forwards but ${parsed.forwards.length} were requested`,
               );
               await session.stop();
               process.exit(1);
@@ -480,7 +480,7 @@ Saved tunnels (kept up by the tunnel daemon):
             const bound = ready.reverses?.[i];
             if (!bound) {
               console.error(
-                `tunnel: internal error — TunnelSession returned ${ready.reverses?.length ?? 0} ready reverses but ${parsed.reverses.length} were requested`,
+                `tunnel: internal error: TunnelSession returned ${ready.reverses?.length ?? 0} ready reverses but ${parsed.reverses.length} were requested`,
               );
               await session.stop();
               process.exit(1);
@@ -644,14 +644,14 @@ export function deriveDirectUrl(streamsUrl: string): string {
   } catch {
     // Not a valid URL — return as-is; the WebSocket dial will fail clearly.
     process.stderr.write(
-      `tunnel: warning — could not parse streams URL ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`,
+      `tunnel: warning: could not parse streams URL ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`,
     );
     return streamsUrl;
   }
   const newHost = parsed.hostname.replace(/^streams\./, "direct.");
   if (newHost === parsed.hostname) {
     process.stderr.write(
-      `tunnel: warning — could not derive direct URL from ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`,
+      `tunnel: warning: could not derive direct URL from ${streamsUrl}; set REOCLO_DIRECT_URL explicitly\n`,
     );
     return streamsUrl;
   }

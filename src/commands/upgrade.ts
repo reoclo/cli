@@ -389,12 +389,12 @@ async function selfUpgradeRawBinary(currentPath: string, tag: string): Promise<v
 
   if (!isWritable(currentPath)) {
     throw new Error(
-      `cannot write to ${currentPath} — re-run with elevated privileges (e.g. sudo) or upgrade your install dir's owner`,
+      `cannot write to ${currentPath}: re-run with elevated privileges (e.g. sudo) or upgrade your install dir's owner`,
     );
   }
   const dir = dirname(currentPath);
   if (!isWritable(dir)) {
-    throw new Error(`cannot write to install directory ${dir} — re-run with elevated privileges`);
+    throw new Error(`cannot write to install directory ${dir}: re-run with elevated privileges`);
   }
 
   const ghBase = `https://github.com/reoclo/cli/releases/download/${tag}`;

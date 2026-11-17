@@ -55,7 +55,7 @@ export function registerGitProviderTools(
 
   server.tool(
     "create_git_provider",
-    "Create a new tenant-scoped Gitea git provider. Other provider types (e.g. GitHub) and platform-scoped providers must be configured outside this tool. Optional `api_url`, `webhook_secret`, `config`, and `allowed_organizations` fields are not exposed here — use the REST API directly if you need them.",
+    "Create a new tenant-scoped Gitea git provider. Other provider types (e.g. GitHub) and platform-scoped providers must be configured outside this tool. Optional `api_url`, `webhook_secret`, `config`, and `allowed_organizations` fields are not exposed here: use the REST API directly if you need them.",
     {
       ...ctx.orgParam,
       name: z.string().min(2).max(100).describe("Display name for the git provider"),
