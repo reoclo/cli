@@ -104,7 +104,7 @@ export function registerOrg(program: Command): void {
     .action(async () => {
       const profile = await getActiveProfile();
       if (!profile) {
-        process.stderr.write("not authenticated — run 'reoclo login'\n");
+        process.stderr.write("not authenticated: run 'reoclo login'\n");
         process.exit(3);
       }
       // Report the EFFECTIVE org for this directory — honoring `--org`,

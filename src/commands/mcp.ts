@@ -115,9 +115,11 @@ export async function resolveMcpStart(): Promise<McpBootstrapResult | McpSignedO
   }
 }
 
-/** What every tool answers with when nobody is signed in: run `reoclo login`, then restart the server. */
+/** What every tool answers with when nobody is signed in. The cause already names the command to run
+ *  (`reoclo login`, or `reoclo login --profile <name>` for a missing profile), so it leads the message. */
 export function signedOutMcpError(cause: Error): Error {
-  return new Error(`Not signed in to Reoclo. Run 'reoclo login' in a terminal, then restart this MCP server. (${cause.message})`);
+  const reason = cause.message.charAt(0).toUpperCase() + cause.message.slice(1);
+  return new Error(`${reason}. Do that in a terminal, then restart this MCP server.`);
 }
 
 /**
