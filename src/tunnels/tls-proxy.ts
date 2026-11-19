@@ -79,7 +79,7 @@ export class TlsProxy {
       const e = err as NodeJS.ErrnoException;
       throw new TlsProxyError(
         e.code === "EADDRINUSE"
-          ? `port ${this.opts.port} is already in use, so HTTPS tunnels cannot listen; free it or set https_port in tunnels.yaml and restart the daemon`
+          ? `port ${this.opts.port} is already in use, so HTTPS tunnels cannot listen until it is free; the daemon keeps trying. To use another port, set https_port in tunnels.yaml and restart the daemon`
           : `could not listen on 127.0.0.1:${this.opts.port}: ${e.message}`,
       );
     }

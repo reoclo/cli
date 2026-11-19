@@ -213,6 +213,8 @@ interface Runtime {
   retryTimer?: unknown;
   /** The local listener could not bind. */
   localError?: string;
+  bindTimer?: unknown;
+  bindAttempt: number;
   /** The runner refused the reverse listener. */
   failure?: { state: "failed" | "forbidden"; detail: string };
   adhoc?: { expiresAt: number; ttlTimer?: unknown };
@@ -246,6 +248,15 @@ const realTimers: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
+
+// A listener that cannot bind tries again, so a port another process held (often a daemon that was
+// replaced) is taken as soon as it is free, with no restart or "Try again".
+const LISTEN_RETRY_FIRST_MS = 5_000;
+const LISTEN_RETRY_MAX_MS = 60_000;
+
+function listenRetryDelay(attempt: number): number {
+  return Math.min(LISTEN_RETRY_MAX_MS, LISTEN_RETRY_FIRST_MS * 2 ** attempt);
+}
 
 export function splitHostPort(value: string): { host: string; port: number } {
   const i = value.lastIndexOf(":");
@@ -293,6 +304,8 @@ export class TunnelManager {
   private proxy?: TlsProxy;
   private proxyStarting?: Promise<void>;
   private proxyError?: string;
+  private proxyRetry?: unknown;
+  private proxyAttempt = 0;
   private helper: { installed: boolean; status?: HelperStatus; error?: string } = { installed: false };
   private hostsQueue: Promise<void> = Promise.resolve();
   private readonly tailscale: Tailscale;
@@ -353,8 +366,7 @@ export class TunnelManager {
     await this.shares.stopAll();
     for (const entry of [...this.pools.values()]) await this.disposePool(entry);
     await this.hostsQueue;
-    await this.proxy?.stop();
-    this.proxy = undefined;
+    await this.stopProxy();
   }
 
   list(): TunnelView[] {
@@ -677,6 +689,11 @@ export class TunnelManager {
       rt.retryTimer = undefined;
     }
     rt.attempt = 0;
+    if (rt.bindTimer !== undefined) {
+      this.timers.clear(rt.bindTimer);
+      rt.bindTimer = undefined;
+    }
+    rt.bindAttempt = 0;
     rt.localError = undefined;
     rt.failure = undefined;
     if (rt.adhoc?.ttlTimer !== undefined) {
@@ -829,6 +846,7 @@ export class TunnelManager {
 
   private async bind(rt: Runtime, cfg: ForwardTunnel): Promise<void> {
     if (rt.server || rt.udp) return;
+    const previous = rt.localError;
     rt.localError = undefined;
     const target = splitHostPort(cfg.target);
     const remote = { remoteHost: target.host, remotePort: target.port };
@@ -851,14 +869,29 @@ export class TunnelManager {
         sock.on("message", (buf, rinfo) => this.onDatagram(rt, sock, buf, rinfo, remote));
         rt.udp = sock;
       }
+      rt.bindAttempt = 0;
+      if (previous) this.log(`tunnel ${cfg.name}: listening on 127.0.0.1:${cfg.local_port} again`);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       rt.localError =
         e.code === "EADDRINUSE"
           ? `local port ${cfg.local_port} is already in use`
           : `could not listen on 127.0.0.1:${cfg.local_port}: ${e.message}`;
-      this.log(`tunnel ${cfg.name}: ${rt.localError}`);
+      if (rt.localError !== previous) this.log(`tunnel ${cfg.name}: ${rt.localError}`);
+      this.scheduleRebind(rt);
     }
+  }
+
+  private scheduleRebind(rt: Runtime): void {
+    if (rt.bindTimer !== undefined || !rt.active) return;
+    const delay = listenRetryDelay(rt.bindAttempt);
+    rt.bindAttempt++;
+    rt.bindTimer = this.timers.set(() => {
+      rt.bindTimer = undefined;
+      const cfg = rt.cfg;
+      if (!rt.active || !isForward(cfg)) return;
+      void this.bind(rt, cfg).then(() => this.emitTunnel(rt));
+    }, delay);
   }
 
   private async bindHttps(rt: Runtime, cfg: HttpsTunnel | LocalTunnel): Promise<void> {
@@ -883,16 +916,35 @@ export class TunnelManager {
     });
     try {
       await proxy.start();
+      if (this.proxyError) this.log(`https: listening on port ${this.file.https_port} again`);
       this.proxy = proxy;
       this.proxyError = undefined;
+      this.proxyAttempt = 0;
     } catch (err) {
-      this.proxyError = err instanceof Error ? err.message : String(err);
-      this.log(`https: ${this.proxyError}`);
+      const error = err instanceof Error ? err.message : String(err);
+      if (error !== this.proxyError) this.log(`https: ${error}`);
+      this.proxyError = error;
+      this.scheduleProxyRetry();
     }
     for (const rt of this.routes.values()) this.emitTunnel(rt);
   }
 
+  private scheduleProxyRetry(): void {
+    if (this.proxyRetry !== undefined || this.stopping || this.routes.size === 0) return;
+    const delay = listenRetryDelay(this.proxyAttempt);
+    this.proxyAttempt++;
+    this.proxyRetry = this.timers.set(() => {
+      this.proxyRetry = undefined;
+      if (!this.stopping && this.routes.size > 0) void this.ensureProxy();
+    }, delay);
+  }
+
   private async stopProxy(): Promise<void> {
+    if (this.proxyRetry !== undefined) {
+      this.timers.clear(this.proxyRetry);
+      this.proxyRetry = undefined;
+    }
+    this.proxyAttempt = 0;
     const proxy = this.proxy;
     this.proxy = undefined;
     this.proxyError = undefined;
@@ -1247,6 +1299,7 @@ export class TunnelManager {
       closedOut: 0,
       connecting: false,
       attempt: 0,
+      bindAttempt: 0,
       path: viaOf(cfg) === "tailscale" ? "tailscale" : "relay",
       tailnetPeers: new Set(),
       udpAssoc: new Map(),

@@ -25,6 +25,9 @@ describe("launchdPlist", () => {
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(plist).toMatch(/<key>SuccessfulExit<\/key>\s*<false\/>/);
   });
+  it("runs at the priority of an app, not the throttled background tier", () => {
+    expect(plist).toContain("<key>ProcessType</key>\n  <string>Interactive</string>");
+  });
   it("logs to the daemon log and passes the environment", () => {
     expect(plist.match(/\/Users\/me\/\.reoclo\/tunnels\/tunneld\.log/g)).toHaveLength(2);
     expect(plist).toContain("<key>REOCLO_CONFIG_DIR</key>");

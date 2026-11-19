@@ -241,10 +241,11 @@ export class ControlClient {
   }
 }
 
-/** True when a daemon answers on the socket. */
-export async function daemonResponding(socket: string = socketPath(), timeoutMs = 500): Promise<boolean> {
+/** True when a daemon answers on the socket. Any answer counts: a daemon older than /v1/ping says 404. */
+export async function daemonResponding(socket: string = socketPath(), timeoutMs = 2_000): Promise<boolean> {
   try {
-    await new ControlClient(socket).request("GET", "/v1/status", undefined, timeoutMs);
+    const res = await fetch("http://localhost/v1/ping", { unix: socket, signal: AbortSignal.timeout(timeoutMs) });
+    await res.arrayBuffer();
     return true;
   } catch {
     return false;
@@ -285,11 +286,14 @@ export function spawnDaemon(): SpawnResult & { exited: Promise<number | null> } 
   return { pid: child.pid, exited };
 }
 
-/** Wait until the daemon answers, or give up when it exits or the deadline passes. */
+/**
+ * Wait until the daemon answers, or give up when it exits or the deadline passes. The deadline covers a
+ * new daemon that first waits up to 30 seconds for a busy one holding the lock, then stops it if it never answers.
+ */
 export async function waitForDaemon(
   exited: Promise<number | null>,
   socket: string = socketPath(),
-  deadlineMs = 10_000,
+  deadlineMs = 45_000,
 ): Promise<void> {
   const deadline = Date.now() + deadlineMs;
   let gone: number | null | undefined;
@@ -297,7 +301,7 @@ export async function waitForDaemon(
     gone = c;
   });
   while (Date.now() < deadline) {
-    if (await daemonResponding(socket, 250)) return;
+    if (await daemonResponding(socket, 1_000)) return;
     // A second daemon exits 0 because one is already running; keep polling for that one.
     if (gone !== undefined && gone !== 0) {
       throw new DaemonError("start_failed", `the tunnel daemon exited with code ${gone}; see ${logFile()}`);

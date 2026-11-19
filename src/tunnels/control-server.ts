@@ -3,17 +3,21 @@
 // The daemon's control API: HTTP and JSON over a Unix socket. The run directory
 // is mode 0700 and the socket 0600, so only the signed-in user can connect.
 
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, rmSync, statSync, type Stats } from "node:fs";
 import { dirname } from "node:path";
 import { ApprovalStore, type ApprovalStoreOptions, type ApprovalView } from "./approvals";
 import type { AuthFlow } from "./auth-flow";
+import type { CaStatus } from "./ca";
 import { mergeSuffixList, type CaActions } from "./ca-actions";
 import type { Directory } from "./directory";
 import { callerOf, gateAdd, gateCa, gateEdit, gateRemove, gateShare, gateUnshare, gateUp, type Gate } from "./gating";
 import { ForegroundNotFound, listForeground, stopForeground, type ForegroundTunnel } from "./foreground";
 import { HostnameError } from "./hosts-block";
-import { DEFAULT_ADHOC_TTL_MINUTES, ManagerError, type ManagerEvent, type TunnelManager } from "./manager";
+import { DEFAULT_ADHOC_TTL_MINUTES, ManagerError, type HostsStatusView, type ManagerEvent, type TunnelManager } from "./manager";
 import { TUNNEL_STATES } from "./states";
+import type { TailscaleStatusView } from "./tailscale";
+
+const STATUS_PROBE_WAIT_MS = 2_000;
 
 export interface ControlServerOptions {
   socketPath: string;
@@ -37,6 +41,8 @@ export interface ControlServerOptions {
   /** Trusting and untrusting the local CA behind POST /v1/ca/trust and /untrust. */
   caActions?: CaActions;
   approvals?: Pick<ApprovalStoreOptions, "now" | "timers" | "ttlMs" | "newId">;
+  /** How long status waits on each probe before answering with the probe's last value. Default 2000. */
+  statusProbeWaitMs?: number;
 }
 
 export interface ControlServer {
@@ -53,6 +59,11 @@ function json(body: unknown, status = 200): Response {
 
 function fail(status: number, code: string, message: string, state?: string): Response {
   return json({ error: { code, message, ...(state ? { state } : {}) } }, status);
+}
+
+function sameFile(path: string, ref: Stats): boolean {
+  const now = statSync(path, { throwIfNoEntry: false });
+  return now !== undefined && now.ino === ref.ino && now.dev === ref.dev;
 }
 
 const STATUS_FOR: Record<ManagerError["code"], number> = {
@@ -136,19 +147,42 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
 
   mkdirSync(dirname(opts.socketPath), { recursive: true, mode: 0o700 });
   chmodSync(dirname(opts.socketPath), 0o700);
-  rmSync(opts.socketPath, { force: true });
+  // Bun deletes its socket's path when the server stops, even after another daemon put its own socket
+  // there. Binding a private path and renaming it into place means Bun only ever deletes that private
+  // path, and the rename replaces an old socket with no moment where the path is missing.
+  const binding = `${opts.socketPath}.${process.pid}`;
+  rmSync(binding, { force: true });
 
   const unavailable = (what: string): never => {
     throw new ManagerError("upstream", `${what} is not available in this daemon`);
   };
 
+  // The CLI and the app read status to tell a live daemon from a dead one, so a slow probe must not hold it up.
+  const probeWaitMs = opts.statusProbeWaitMs ?? STATUS_PROBE_WAIT_MS;
+  const lastProbe: { ca?: CaStatus; hosts?: HostsStatusView; signedIn?: boolean; tailscale?: TailscaleStatusView } = {};
+  const probe = async <K extends keyof typeof lastProbe>(
+    key: K,
+    run: Promise<NonNullable<(typeof lastProbe)[K]>> | undefined,
+  ): Promise<(typeof lastProbe)[K]> => {
+    if (run === undefined) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<(typeof lastProbe)[K]>((r) => {
+      timer = setTimeout(() => r(lastProbe[key]), probeWaitMs);
+    });
+    try {
+      return await Promise.race([run.then((v) => (lastProbe[key] = v)), late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const status = async (): Promise<unknown> => {
     const tunnels = manager.list();
     const [ca, hosts, signedIn, tailscale] = await Promise.all([
-      manager.caStatus(),
-      manager.hostsStatus(),
-      opts.directory?.signedIn(),
-      manager.tailscaleStatus(),
+      probe("ca", manager.caStatus()),
+      probe("hosts", manager.hostsStatus()),
+      probe("signedIn", opts.directory?.signedIn()),
+      probe("tailscale", manager.tailscaleStatus()),
     ]);
     const byState: Record<string, number> = Object.fromEntries(TUNNEL_STATES.map((s) => [s, 0]));
     for (const t of tunnels) byState[t.state] = (byState[t.state] ?? 0) + 1;
@@ -162,9 +196,9 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
       ...(signedIn === undefined ? {} : { signed_in: signedIn }),
       tunnels: { total: tunnels.length, enabled: tunnels.filter((t) => t.enabled).length, by_state: byState },
       https: manager.httpsStatus(),
-      ca,
-      hosts,
-      tailscale,
+      ...(ca ? { ca } : {}),
+      ...(hosts ? { hosts } : {}),
+      ...(tailscale ? { tailscale } : {}),
     };
   };
 
@@ -298,6 +332,7 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
     };
     const directory = (): Directory => opts.directory ?? unavailable("the server directory");
 
+    if (path === "/v1/ping" && method === "GET") return json({ pid: process.pid, version: opts.version });
     if (path === "/v1/status" && method === "GET") return json(await status());
     if (path === "/v1/settings") {
       if (method === "GET") return json(manager.settings());
@@ -413,7 +448,7 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
   };
 
   const server = Bun.serve({
-    unix: opts.socketPath,
+    unix: binding,
     async fetch(req, srv) {
       // The event stream is long-lived, opening an ad-hoc tunnel waits for a session, and approving
       // runs a slow action: keep Bun's idle timer from closing any of them.
@@ -435,7 +470,9 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
       }
     },
   });
-  chmodSync(opts.socketPath, 0o600);
+  chmodSync(binding, 0o600);
+  renameSync(binding, opts.socketPath);
+  const bound = statSync(opts.socketPath);
 
   return {
     approvals,
@@ -443,7 +480,8 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
       for (const close of [...closers]) close();
       approvals.stop();
       await server.stop();
-      rmSync(opts.socketPath, { force: true });
+      // A daemon that took over has its own socket at this path; leave that one alone.
+      if (sameFile(opts.socketPath, bound)) rmSync(opts.socketPath, { force: true });
     },
   };
 }

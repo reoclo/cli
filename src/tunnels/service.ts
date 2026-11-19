@@ -26,7 +26,11 @@ export function xml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** The launchd agent. It restarts the daemon after a crash but not after a clean exit, so `daemon stop` sticks. */
+/**
+ * The launchd agent. It restarts the daemon after a crash but not after a clean exit, so `daemon stop` sticks.
+ * Interactive, not Background: the daemon carries the user's live connections, and a Background job runs at
+ * the lowest priority, so on a busy Mac it went unanswered for 20 seconds and more and took a minute to connect.
+ */
 export function launchdPlist(spec: ServiceSpec): string {
   const args = spec.command.map((a) => `    <string>${xml(a)}</string>`).join("\n");
   const env = Object.entries(spec.env)
@@ -54,7 +58,7 @@ ${env}
     <false/>
   </dict>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Interactive</string>
   <key>StandardOutPath</key>
   <string>${xml(spec.logPath)}</string>
   <key>StandardErrorPath</key>

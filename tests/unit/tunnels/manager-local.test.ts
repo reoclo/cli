@@ -7,6 +7,7 @@ import tls from "node:tls";
 import { LeafIssuer, createCa } from "../../../src/tunnels/ca";
 import { emptyConfig, saveConfig } from "../../../src/tunnels/config";
 import { TunnelManager } from "../../../src/tunnels/manager";
+import { ManualTimers } from "../../helpers/fake-pool";
 import { freePort } from "../../helpers/fake-ws-gateway";
 import { messageOf, rejectionOf } from "../../helpers/rejection";
 
@@ -77,6 +78,45 @@ function secureConnect(servername: string): Promise<tls.TLSSocket> {
 function closed(sock: net.Socket): Promise<void> {
   return new Promise((resolve) => (sock.destroyed ? resolve() : sock.once("close", () => resolve())));
 }
+
+describe("the HTTPS listener", () => {
+  it("listens once its busy port is free, and the tunnel comes up without a restart", async () => {
+    const timers = new ManualTimers();
+    const m = new TunnelManager({
+      configPath,
+      timers,
+      log: (line) => logs.push(line),
+      certs: new LeafIssuer({ dir: join(dir, "ca") }),
+      createPool: () => {
+        throw new Error("a local tunnel must not create a pool");
+      },
+    });
+    const taken = net.createServer();
+    await new Promise<void>((r) => taken.listen(httpsPort, "127.0.0.1", () => r()));
+    try {
+      expect((await m.add(local())).state).toBe("failed");
+      expect(m.httpsStatus().listening).toBe(false);
+      expect(timers.delays).toEqual([5000]);
+
+      await new Promise<void>((r) => taken.close(() => r()));
+      const listening = new Promise<void>((resolve) => {
+        const off = m.onEvent(() => {
+          if (!m.httpsStatus().listening) return;
+          off();
+          resolve();
+        });
+      });
+      timers.fire();
+      await listening;
+      expect(m.get("app").state).toBe("active");
+      expect((await secureConnect(HOST)).authorized).toBe(true);
+    } finally {
+      taken.close();
+      await m.stop();
+    }
+    expect(timers.pending.size).toBe(0);
+  });
+});
 
 describe("a local tunnel", () => {
   it("forwards bytes over a real TLS connection to a TCP echo server and counts them", async () => {
