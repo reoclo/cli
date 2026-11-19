@@ -156,6 +156,52 @@ describe("forward TCP", () => {
     expect(view.detail).toBe(`local port ${port} is already in use`);
     await new Promise<void>((r) => taken.close(() => r()));
   });
+
+  it("takes a busy port once it is free, trying again with a growing delay", async () => {
+    const m = newManager();
+    const taken = net.createServer();
+    const port = await new Promise<number>((r) => taken.listen(0, "127.0.0.1", () => r((taken.address() as net.AddressInfo).port)));
+    await m.add({ ...(await forward("prod-db")), local_port: port });
+    expect(timers.delays).toEqual([5000]);
+
+    const stillBusy = new Promise<void>((resolve) => {
+      const off = m.onEvent(() => {
+        if (timers.delays.length !== 2) return;
+        off();
+        resolve();
+      });
+    });
+    timers.fire();
+    await stillBusy;
+    expect(timers.delays).toEqual([5000, 10000]);
+    expect(m.get("prod-db").state).toBe("failed");
+
+    await new Promise<void>((r) => taken.close(() => r()));
+    const listening = new Promise<void>((resolve) => {
+      const off = m.onEvent(() => {
+        if (m.get("prod-db").state !== "ready") return;
+        off();
+        resolve();
+      });
+    });
+    timers.fire();
+    await listening;
+    expect(m.get("prod-db").detail).toBeUndefined();
+    expect(timers.pending.size).toBe(0);
+    const client = await connect(port);
+    client.destroy();
+  });
+
+  it("stops trying a busy port once the tunnel is brought down", async () => {
+    const m = newManager();
+    const taken = net.createServer();
+    const port = await new Promise<number>((r) => taken.listen(0, "127.0.0.1", () => r((taken.address() as net.AddressInfo).port)));
+    await m.add({ ...(await forward("prod-db")), local_port: port });
+    expect(timers.pending.size).toBe(1);
+    await m.down("prod-db");
+    expect(timers.pending.size).toBe(0);
+    await new Promise<void>((r) => taken.close(() => r()));
+  });
 });
 
 describe("forward UDP", () => {

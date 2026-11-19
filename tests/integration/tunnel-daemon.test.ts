@@ -8,12 +8,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import net from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ControlClient } from "../../src/tunnels/control-client";
 import { saveConfig, emptyConfig } from "../../src/tunnels/config";
 import { startDaemon, type DaemonHandle } from "../../src/tunnels/daemon";
+import { pidFile } from "../../src/tunnels/paths";
 import type { TunnelState } from "../../src/tunnels/states";
 import { freePort, startFakeWsGateway, type FakeWsGateway } from "../helpers/fake-ws-gateway";
 import { seedTenantProfile } from "../helpers/seed-profile";
@@ -259,5 +260,18 @@ describe("tunnel daemon with a fake gateway", () => {
     await client.down("hook");
     const close = await gw.waitForFrame((f) => f["type"] === "tunnel_listen_close");
     expect(close["listen_id"]).toBe(open["listen_id"]);
+  });
+
+  it("shuts down when another daemon takes its lock, and leaves that daemon's pid file", async () => {
+    daemon = await startDaemon({ directUrl: gw.url, log: () => undefined, ownershipCheckMs: 20 });
+    writeFileSync(pidFile(), "4000000");
+    const outcome = await Promise.race([
+      daemon.shutdownRequested.then(() => "shut down"),
+      new Promise<string>((r) => setTimeout(() => r("still running"), 5000)),
+    ]);
+    expect(outcome).toBe("shut down");
+    await daemon.stop();
+    daemon = undefined;
+    expect(readFileSync(pidFile(), "utf8")).toBe("4000000");
   });
 });
