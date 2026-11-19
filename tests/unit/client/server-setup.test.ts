@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildSetupCommand,
   parseAdminUser,
   parseFirewallPorts,
   parseInstallUrl,
@@ -121,5 +122,40 @@ describe("portsBlockedByHardening", () => {
 
   test("ports and ranges the caller opens are not reported", () => {
     expect(portsBlockedByHardening(ports, ["8080/tcp", "9000:9100/tcp"])).toEqual([]);
+  });
+});
+
+describe("buildSetupCommand with tunnelsOnly", () => {
+  const base = {
+    adminUser: "ubuntu",
+    installUrl: "https://get.example.test",
+    token: "rt_x",
+    gatewayUrl: null,
+    harden: true,
+    firewallAllow: ["8080"],
+    trustedIps: ["203.0.113.0/24"],
+  };
+
+  test("adds --tunnels-only and leaves out the port and fail2ban flags", () => {
+    for (const target of ["ssh", "paste", "cloud-init"] as const) {
+      const cmd = buildSetupCommand({ ...base, tunnelsOnly: true }, target);
+      expect(cmd).toContain("--tunnels-only");
+      expect(cmd).toContain("--harden");
+      expect(cmd).not.toContain("--firewall-allow");
+      expect(cmd).not.toContain("--fail2ban-ignore");
+    }
+  });
+
+  test("keeps the port and fail2ban flags when tunnelsOnly is off", () => {
+    const cmd = buildSetupCommand(base, "paste");
+    expect(cmd).not.toContain("--tunnels-only");
+    expect(cmd).toContain("--firewall-allow 8080");
+    expect(cmd).toContain("--fail2ban-ignore");
+  });
+
+  test("--tunnels-only stays when hardening is off", () => {
+    const cmd = buildSetupCommand({ ...base, harden: false, tunnelsOnly: true }, "paste");
+    expect(cmd).toContain("--tunnels-only");
+    expect(cmd).not.toContain("--harden");
   });
 });

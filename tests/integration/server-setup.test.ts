@@ -197,3 +197,31 @@ test("servers rm without --yes aborts non-interactively", async () => {
   expect(r.exitCode).not.toBe(0);
   expect(gw.serverDeletes).toEqual([]);
 });
+
+test("servers add --tunnels-only asks for a tunnels-only token and drops the port and fail2ban flags", async () => {
+  const r = await $`bun run src/index.ts servers add --ssh root@203.0.113.9 --tunnels-only --firewall-allow 8080 --trusted-ip 203.0.113.7 --yes`
+    .env(env())
+    .quiet();
+
+  expect(gw.runnerTokenQueries).toEqual([`?tenant_id=${gw.tenantId}&network_access=tunnels_only`]);
+  expect(sshScript()).toContain("--tunnels-only");
+  expect(sshScript()).toContain("--harden");
+  expect(sshScript()).not.toContain("--firewall-allow");
+  expect(sshScript()).not.toContain("--fail2ban-ignore");
+  expect(r.stderr.toString()).toContain("--firewall-allow and --trusted-ip are ignored");
+});
+
+test("servers add --tunnels-only without --ssh prints the command and says how to reach the server", async () => {
+  const r = await $`bun run src/index.ts servers add --name web-2 --tunnels-only`.env(env()).quiet();
+
+  expect(r.stdout.toString()).toContain("--tunnels-only");
+  expect(r.stderr.toString()).toContain("reoclo tunnel");
+  expect(gw.runnerTokenQueries).toEqual([`?tenant_id=${gw.tenantId}&network_access=tunnels_only`]);
+});
+
+test("servers add without --tunnels-only requests an ordinary token", async () => {
+  const r = await $`bun run src/index.ts servers add --name web-2`.env(env()).quiet();
+
+  expect(r.stdout.toString()).not.toContain("--tunnels-only");
+  expect(gw.runnerTokenQueries).toEqual([`?tenant_id=${gw.tenantId}`]);
+});

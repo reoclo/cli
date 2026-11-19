@@ -1,8 +1,8 @@
 /**
  * Server tools: server inspection and health checks, the proxy IP allowlist,
- * and server setup. Setup and hardening need root on the server, so those tools
- * only produce what a person or agent then runs. Decommissioning is the one
- * destructive tool and must name the server's slug. No create/reboot tools.
+ * network access, and server setup. Setup and hardening need root on the server,
+ * so those tools only produce what a person or agent then runs. Decommissioning
+ * and changing network access must name the server's slug. No create/reboot tools.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,6 +22,7 @@ import {
   scannedPorts,
   type PortScan,
 } from "../../client/server-setup";
+import { serviceTunnels, type NetworkAccess } from "../../client/network-access";
 
 interface RunnerTokenResponse {
   token: { id: string; expires_at: string };
@@ -268,21 +269,27 @@ export function registerServerTools(
         .boolean()
         .optional()
         .describe("Default true: no root or password SSH logins, default-deny firewall, fail2ban, automatic security updates"),
+      tunnels_only: z
+        .boolean()
+        .optional()
+        .describe("Default false. When true the server accepts no inbound traffic: setup opens no ports (not even SSH) and skips fail2ban, and the server is reached with `reoclo tunnel`. firewall_allow and trusted_ips are ignored."),
       firewall_allow: firewallAllowSchema,
       trusted_ips: trustedIpsSchema,
     },
-    async ({ target, admin_user, name, hostname, harden, firewall_allow, trusted_ips, ...args }) => {
+    async ({ target, admin_user, name, hostname, harden, tunnels_only, firewall_allow, trusted_ips, ...args }) => {
       try {
         const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const tunnelsOnly = tunnels_only ?? false;
         const options = {
           adminUser: parseAdminUser(admin_user ?? "ubuntu"),
           hostname: hostname === undefined ? undefined : parseHostname(hostname),
           harden: harden ?? true,
-          firewallAllow: parseFirewallPorts(firewall_allow ?? []),
-          trustedIps: parseTrustedIps(trusted_ips ?? []),
+          tunnelsOnly,
+          firewallAllow: tunnelsOnly ? [] : parseFirewallPorts(firewall_allow ?? []),
+          trustedIps: tunnelsOnly ? [] : parseTrustedIps(trusted_ips ?? []),
         };
         const created = await client.post<RunnerTokenResponse>(
-          `/admin/runners/tokens?tenant_id=${tenantId}`,
+          `/admin/runners/tokens?tenant_id=${tenantId}${tunnelsOnly ? "&network_access=tunnels_only" : ""}`,
           { label: name },
         );
         if (!created.runner_install_url) {
@@ -342,6 +349,77 @@ export function registerServerTools(
           ...(portScanError === undefined ? {} : { port_scan_error: portScanError }),
           command: buildHardenCliCommand(srv.slug, { adminUser, sshOnly: ssh_only, firewallAllow, trustedIps }),
         });
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "get_server_network_access",
+    "Show whether a server takes public traffic or only traffic through `reoclo tunnel` (tunnels-only): its mode, enforcement status, drift reasons, the last exposure probe, what blocks switching to tunnels-only, and the listening services with the `reoclo tunnel` command that reaches each. Needs a connected runner for a live view.",
+    {
+      ...ctx.orgParam,
+      server_id: z.string().min(1).describe("Server ID"),
+    },
+    async ({ server_id, ...args }) => {
+      try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const access = await client.get<NetworkAccess>(
+          `/tenants/${tenantId}/servers/${server_id}/network-access`,
+        );
+        return asToolResult({
+          ...access,
+          tunnel_commands: serviceTunnels(server_id, access.services),
+        });
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "set_server_network_access",
+    "Set a server's network access to `public` or `tunnels_only`. Tunnels-only closes every inbound port on the server, including SSH, so it is reached only through `reoclo tunnel`; it is refused while a public domain, the managed proxy or a preview environment still uses the server (the error lists them). Returns at once with status `applying`; poll get_server_network_access until it is `enforced` (or `public`). Needs a runner server. Call this only after the user has confirmed this exact server and mode.",
+    {
+      ...ctx.orgParam,
+      server_id: z.string().min(1).describe("Server ID"),
+      mode: z.enum(["public", "tunnels_only"]).describe("The network access to apply"),
+      confirm_slug: z.string().min(1).describe("The server's slug, which must match the server being changed"),
+    },
+    async ({ server_id, mode, confirm_slug, ...args }) => {
+      try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const srv = await client.get<{ slug: string }>(`/tenants/${tenantId}/servers/${server_id}`);
+        if (srv.slug !== confirm_slug) {
+          throw new Error(`confirm_slug '${confirm_slug}' does not match server slug '${srv.slug}'.`);
+        }
+        const access = await client.put<NetworkAccess>(
+          `/tenants/${tenantId}/servers/${server_id}/network-access`,
+          { mode },
+        );
+        return asToolResult(access);
+      } catch (error: unknown) {
+        return asToolError(error);
+      }
+    },
+  );
+
+  server.tool(
+    "reapply_server_network_access",
+    "Apply a server's network access again, for one whose status is `drifted` or `failed`. It re-sends the mode already set and changes nothing else. Returns at once with status `applying`.",
+    {
+      ...ctx.orgParam,
+      server_id: z.string().min(1).describe("Server ID"),
+    },
+    async ({ server_id, ...args }) => {
+      try {
+        const { tenantId, client } = await ctx.resolveOrg(args.organization);
+        const access = await client.post<NetworkAccess>(
+          `/tenants/${tenantId}/servers/${server_id}/network-access/reapply`,
+          {},
+        );
+        return asToolResult(access);
       } catch (error: unknown) {
         return asToolError(error);
       }

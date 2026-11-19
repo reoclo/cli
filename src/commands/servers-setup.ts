@@ -131,6 +131,7 @@ export function registerServersSetup(program: Command, g: Command): void {
     .option("--name <name>", "name shown for the server, which also sets its slug (default: --hostname, or the SSH host)")
     .option("--hostname <name>", "hostname to register the server under")
     .option("--no-harden", "skip hardening (root and password SSH, firewall, fail2ban, updates)")
+    .option("--tunnels-only", "accept no inbound traffic: open no ports, reach the server with 'reoclo tunnel'")
     .option("--firewall-allow <ports>", "extra ports to open, e.g. 8080,9000:9100/udp (repeatable)", collect, [])
     .option("--trusted-ip <ip>", "address or CIDR that fail2ban never bans (repeatable)", collect, [])
     .option("--install-url <url>", "where setup is served (default: follows the API you are logged in to)")
@@ -146,6 +147,7 @@ export function registerServersSetup(program: Command, g: Command): void {
         name?: string;
         hostname?: string;
         harden: boolean;
+        tunnelsOnly?: boolean;
         firewallAllow: string[];
         trustedIp: string[];
         installUrl?: string;
@@ -167,12 +169,19 @@ export function registerServersSetup(program: Command, g: Command): void {
           throw badUsage("--name is required without --ssh: the new server needs a name");
         }
         const waitTimeout = parseIntFlag(opts.waitTimeout, "--wait-timeout", 1, 3600);
+        const tunnelsOnly = opts.tunnelsOnly === true;
+        if (tunnelsOnly && (opts.firewallAllow.length > 0 || opts.trustedIp.length > 0)) {
+          process.stderr.write(
+            "note: --tunnels-only opens no inbound ports and skips fail2ban, so --firewall-allow and --trusted-ip are ignored.\n",
+          );
+        }
         const shared = {
           adminUser: resolveAdminUser(opts.user, dest?.user),
           hostname: opts.hostname === undefined ? undefined : parseHostname(opts.hostname),
           harden: opts.harden,
-          firewallAllow: parseFirewallPorts(opts.firewallAllow),
-          trustedIps: parseTrustedIps(opts.trustedIp),
+          tunnelsOnly,
+          firewallAllow: tunnelsOnly ? [] : parseFirewallPorts(opts.firewallAllow),
+          trustedIps: tunnelsOnly ? [] : parseTrustedIps(opts.trustedIp),
         };
 
         const fmt = resolveFormat(globalOutput(program));
@@ -196,9 +205,11 @@ export function registerServersSetup(program: Command, g: Command): void {
         }
 
         if (dest) {
-          const hardening = opts.harden
-            ? " and harden it (no root or password SSH logins, default-deny firewall)"
-            : "";
+          const hardening = tunnelsOnly
+            ? " with no inbound traffic (the firewall closes every port, including SSH; reach it with 'reoclo tunnel')"
+            : opts.harden
+              ? " and harden it (no root or password SSH logins, default-deny firewall)"
+              : "";
           await confirmOrExit(
             `Set up ${formatSshDestination(dest)} as a Reoclo server${hardening}? [y/N] `,
             opts.yes,
@@ -206,8 +217,9 @@ export function registerServersSetup(program: Command, g: Command): void {
         }
 
         const tid = await requireTenantId(ctx);
+        const networkAccess = tunnelsOnly ? "&network_access=tunnels_only" : "";
         const created = await ctx.client.post<RunnerTokenResponse>(
-          `/admin/runners/tokens?tenant_id=${tid}`,
+          `/admin/runners/tokens?tenant_id=${tid}${networkAccess}`,
           { label: name },
         );
         const tokenPath = `/admin/runners/tokens/${created.token.id}`;
@@ -233,6 +245,11 @@ export function registerServersSetup(program: Command, g: Command): void {
           process.stderr.write(
             `\nThis command holds a single-use token that expires at ${created.token.expires_at}.\n`,
           );
+          if (tunnelsOnly) {
+            process.stderr.write(
+              "This server will accept no inbound traffic. Reach it with 'reoclo tunnel' once it connects.\n",
+            );
+          }
           return;
         }
 

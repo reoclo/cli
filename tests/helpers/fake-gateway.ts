@@ -37,6 +37,14 @@ export interface FakeGateway {
   trafficRequests: string[];
   /** JSON bodies POSTed to create a runner token. */
   runnerTokenBodies: Array<Record<string, unknown>>;
+  /** Query string of every runner token create request. */
+  runnerTokenQueries: string[];
+  /** What the network-access routes answer with, an optional 409 detail for writes, and the requests they got. */
+  networkAccess: {
+    current: Record<string, unknown>;
+    conflict: Record<string, unknown> | null;
+    requests: Array<{ method: string; path: string; body: unknown }>;
+  };
   /** Ids of runner tokens that were revoked. */
   runnerTokenRevokes: string[];
   /** Ids of servers that were decommissioned. */
@@ -192,6 +200,37 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
   const findingRequests: string[] = [];
   const trafficRequests: string[] = [];
   const runnerTokenBodies: Array<Record<string, unknown>> = [];
+  const runnerTokenQueries: string[] = [];
+  const networkAccess: FakeGateway["networkAccess"] = {
+    current: {
+      mode: "tunnels_only",
+      status: "drifted",
+      state: "enforced",
+      changed_at: "2026-11-19T09:00:00Z",
+      changed_by_user_id: null,
+      applied_at: "2026-11-19T09:00:05Z",
+      error: null,
+      drift_reasons: [{ code: "firewall_inactive", detail: "ufw is not active" }],
+      last_probe: {
+        probed_at: "2026-11-19T10:00:00Z",
+        address: "203.0.113.20",
+        ports_checked: [22, 80, 443],
+        open_ports: [],
+        skipped_reason: null,
+      },
+      port_scan_updated_at: "2026-11-19T10:00:00Z",
+      blockers: [],
+      services: [
+        { port: 5432, protocol: "tcp", bind_address: "127.0.0.1", process: "postgres" },
+        { port: 5432, protocol: "tcp", bind_address: "::1", process: "postgres" },
+        { port: 51820, protocol: "udp", bind_address: "0.0.0.0", process: "wireguard" },
+      ],
+      supported: true,
+      unsupported_reason: null,
+    },
+    conflict: null,
+    requests: [],
+  };
   const runnerTokenRevokes: string[] = [];
   const serverDeletes: string[] = [];
   const findings = new Map<string, Record<string, unknown>>();
@@ -446,6 +485,7 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
       // POST /mcp/admin/runners/tokens?tenant_id=
       if (url.pathname === "/mcp/admin/runners/tokens" && req.method === "POST") {
         runnerTokenBodies.push((await req.json()) as Record<string, unknown>);
+        runnerTokenQueries.push(url.search);
         return Response.json(
           {
             token: { id: "tok-1", expires_at: "2026-01-01T01:00:00Z" },
@@ -1366,6 +1406,26 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
           scanned_at: "2026-01-01T00:00:00Z",
         });
       }
+      // /mcp/tenants/{tid}/servers/{sid}/network-access[/reapply]
+      const networkMatch = url.pathname.match(
+        new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/network-access(/reapply)?$`),
+      );
+      if (networkMatch) {
+        const body = req.method === "PUT" ? ((await req.json()) as { mode?: string }) : undefined;
+        networkAccess.requests.push({
+          method: req.method,
+          path: networkMatch[2] ? "reapply" : "",
+          body,
+        });
+        if (req.method === "GET") return Response.json(networkAccess.current);
+        if (networkAccess.conflict) {
+          return Response.json({ detail: networkAccess.conflict }, { status: 409 });
+        }
+        return Response.json(
+          { ...networkAccess.current, ...(body?.mode ? { mode: body.mode } : {}), status: "applying", state: "applying" },
+          { status: 202 },
+        );
+      }
       // /mcp/tenants/{tid}/servers/{sid}/uptime
       const uptimeMatch = url.pathname.match(
         new RegExp(`^/mcp/tenants/${TENANT_ID}/servers/([^/]+)/uptime$`),
@@ -1892,6 +1952,8 @@ export function startFakeGateway(opts: { hideCosts?: boolean } = {}): FakeGatewa
     findingRequests,
     trafficRequests,
     runnerTokenBodies,
+    runnerTokenQueries,
+    networkAccess,
     runnerTokenRevokes,
     serverDeletes,
     stop: () => {
