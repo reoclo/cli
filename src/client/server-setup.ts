@@ -31,6 +31,9 @@ export interface SetupOptions extends Omit<HardenOptions, "sshOnly"> {
   gatewayUrl: string | null;
   hostname?: string;
   harden: boolean;
+  /** The server accepts no inbound traffic. Setup opens no ports and skips
+   *  fail2ban, so `firewallAllow` and `trustedIps` are not used. */
+  tunnelsOnly?: boolean;
 }
 
 export interface SshDestination {
@@ -197,7 +200,12 @@ export function buildSetupCommand(opts: SetupOptions, target: SetupTarget): stri
   ];
   if (opts.gatewayUrl) args.push(`--gateway ${opts.gatewayUrl}`);
   if (opts.hostname) args.push(`--hostname ${opts.hostname}`);
-  if (opts.harden) args.push(...hardeningArgs(opts.firewallAllow, opts.trustedIps, target));
+  if (opts.tunnelsOnly) args.push("--tunnels-only");
+  if (opts.harden) {
+    args.push(
+      ...(opts.tunnelsOnly ? ["--harden"] : hardeningArgs(opts.firewallAllow, opts.trustedIps, target)),
+    );
+  }
   args.push(opts.check ? "--check" : "--yes");
   return renderCommand(opts.installUrl, args, target);
 }

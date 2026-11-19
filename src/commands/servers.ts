@@ -7,6 +7,7 @@ import type { Server } from "../client/types";
 import { requireCapability, withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { confirmOrExit, promptYesNo } from "../ui/prompt";
+import { registerServersNetwork } from "./servers-network";
 import { registerServersPower } from "./servers-power";
 import { registerServersSetup } from "./servers-setup";
 import { SERVER_ROLES } from "../client/enums";
@@ -278,5 +279,6 @@ export function registerServers(program: Command): void {
   );
 
   registerServersPower(program, g);
+  registerServersNetwork(program, g);
   registerServersSetup(program, g);
 }

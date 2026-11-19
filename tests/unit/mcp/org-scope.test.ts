@@ -60,7 +60,9 @@ test("every tenant-scoped tool spreads orgParam and resolves the org before call
     expect(resolveCalls, `${tool.name} must call resolveOrg`).toEqual(["acme"]);
     expect(ambientPaths, `${tool.name} must not use the ambient client`).toEqual([]);
     for (const p of resolvedPaths) {
-      expect(p, `${tool.name} path must be tenant-scoped to the resolved org`).toMatch(/^\/tenants\/T-ACME\//);
+      expect(p, `${tool.name} path must be tenant-scoped to the resolved org`).toMatch(
+        /^(\/tenants\/T-ACME\/|\/admin\/runners\/tokens\?tenant_id=T-ACME(&|$))/,
+      );
     }
   }
 });
