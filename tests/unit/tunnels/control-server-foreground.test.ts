@@ -7,6 +7,7 @@ import { startControlServer, type ControlServer } from "../../../src/tunnels/con
 import { ForegroundNotFound, type ForegroundTunnel } from "../../../src/tunnels/foreground";
 import { TunnelManager } from "../../../src/tunnels/manager";
 import { FakePool } from "../../helpers/fake-pool";
+import { subscribe } from "../../helpers/events";
 
 let dir: string;
 let socket: string;
@@ -62,6 +63,15 @@ afterEach(async () => {
 });
 
 describe("terminal tunnels on the control socket", () => {
+  it("includes terminal counters in the daemon traffic stream", async () => {
+    const stream = await subscribe(socket, "event: traffic");
+    tunnels = [{ ...entry, traffic: { bytes_in: 21, bytes_out: 34, streams: 1 } }];
+    const text = await stream.text;
+    const body = text.split("event: traffic\ndata: ")[1]?.split("\n")[0];
+    expect(JSON.parse(body ?? "{}")).toEqual({
+      tunnels: [{ name: "terminal:4242", traffic: { bytes_in: 21, bytes_out: 34, streams: 1 } }],
+    });
+  });
   it("lists them", async () => {
     tunnels = [entry];
     expect(await client.foreground()).toEqual([entry]);

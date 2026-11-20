@@ -47,6 +47,7 @@ import { dirname, join } from "node:path";
 import { TlsProxy } from "./tls-proxy";
 import { PoolError, type Lease, type PoolLike, type PoolState, type Timers } from "./pool";
 import { isFailureState, reportFor, type StateReport, type TunnelState } from "./states";
+import { Reconnect, canRecover, type RetryView } from "./reconnect";
 
 export interface PoolKey {
   org: string;
@@ -62,6 +63,7 @@ export interface TunnelTraffic {
 }
 
 export interface TunnelView extends StateReport {
+  readonly retry?: RetryView;
   name: string;
   org: string;
   server: string;
@@ -133,6 +135,7 @@ export interface ManagerOptions {
   /** The root hosts helper. Without it no hosts entries are written. */
   hosts?: HostsSink;
   now?: () => number;
+  random?: () => number;
   /** Longest wait for a session to open when a caller asks to verify the connection. Default 30 s. */
   connectTimeoutMs?: number;
   tailscale?: Tailscale;
@@ -209,8 +212,7 @@ interface Runtime {
   lease?: Lease;
   reverseId?: string;
   connecting: boolean;
-  attempt: number;
-  retryTimer?: unknown;
+  retry: Reconnect;
   /** The local listener could not bind. */
   localError?: string;
   bindTimer?: unknown;
@@ -462,6 +464,8 @@ export class TunnelManager {
 
   async up(name: string, o: { verify?: boolean } = {}): Promise<TunnelView> {
     const rt = this.require(name);
+    const recovering = rt.retry.waiting || isFailureState(this.stateOf(rt).state);
+    rt.retry.reset();
     if (!rt.cfg.enabled) {
       rt.cfg = { ...rt.cfg, enabled: true };
       await this.save((file) => this.replace(file, rt.cfg));
@@ -471,6 +475,7 @@ export class TunnelManager {
     rt.failure = undefined;
     await this.activate(rt, { reset: true });
     if (o.verify) await this.verify(rt);
+    else if (recovering && !this.holdsSession(rt)) void this.connectHeld(rt);
     return this.view(rt);
   }
 
@@ -684,11 +689,7 @@ export class TunnelManager {
 
   private async deactivate(rt: Runtime): Promise<void> {
     rt.active = false;
-    if (rt.retryTimer !== undefined) {
-      this.timers.clear(rt.retryTimer);
-      rt.retryTimer = undefined;
-    }
-    rt.attempt = 0;
+    rt.retry.reset();
     if (rt.bindTimer !== undefined) {
       this.timers.clear(rt.bindTimer);
       rt.bindTimer = undefined;
@@ -771,10 +772,16 @@ export class TunnelManager {
         // The session is gone for good: its leases are void.
         rt.lease = undefined;
         rt.reverseId = undefined;
-        // Only a lost connection is worth retrying; sign-in, permission, quota and terminal states need someone to act.
-        if (this.holdsSession(rt) && (state.state === "server_offline" || state.state === "failed")) {
+        // Enabled listeners recover too, even when no local client is currently connecting.
+        if (rt.active && canRecover(state.state)) {
           this.scheduleRetry(rt);
+        } else {
+          rt.retry.reset();
         }
+      }
+      if (state.state === "active") {
+        rt.retry.reset();
+        if (this.holdsSession(rt) && !rt.lease) void this.connectHeld(rt);
       }
       this.emitTunnel(rt);
     }
@@ -796,7 +803,8 @@ export class TunnelManager {
         lease.release();
         return;
       }
-      rt.lease = lease;
+      if (this.holdsSession(rt)) rt.lease = lease;
+      else lease.release();
       const cfg = rt.cfg;
       if (isReverse(cfg)) {
         const local = splitHostPort(cfg.local_target);
@@ -808,10 +816,10 @@ export class TunnelManager {
           proto: "tcp",
         });
       }
-      rt.attempt = 0;
+      rt.retry.reset();
     } catch (err) {
       if (err instanceof PoolError) {
-        if (rt.active && (err.state === "server_offline" || err.state === "failed" || err.state === "reconnecting")) {
+        if (rt.active && canRecover(err.state)) {
           this.scheduleRetry(rt);
         }
       } else {
@@ -832,14 +840,13 @@ export class TunnelManager {
   }
 
   private scheduleRetry(rt: Runtime): void {
-    if (rt.retryTimer !== undefined || !rt.active) return;
-    const max = this.opts.maxBackoffMs ?? 30_000;
-    const delay = Math.min(max, 1000 * 2 ** rt.attempt);
-    rt.attempt++;
-    rt.retryTimer = this.timers.set(() => {
-      rt.retryTimer = undefined;
-      if (rt.active) void this.connectHeld(rt);
-    }, delay);
+    if (!rt.active || this.stopping) return;
+    rt.retry.schedule(() => {
+      if (!rt.active) return;
+      // Expiration invalidated the old session. Reset allows the pool to obtain fresh credentials.
+      if (rt.entry?.pool.state.state === "expired") rt.entry.pool.reset();
+      void this.connectHeld(rt);
+    });
   }
 
   // ── local listeners ──────────────────────────────────────────────────────
@@ -1050,7 +1057,7 @@ export class TunnelManager {
 
   private relay(rt: Runtime, sock: net.Socket, remote: { remoteHost: string; remotePort: number }): void {
     const pool = rt.entry?.pool;
-    if (!pool) {
+    if (!pool || rt.retry.waiting) {
       sock.destroy();
       return;
     }
@@ -1273,7 +1280,7 @@ export class TunnelManager {
     remote: { remoteHost: string; remotePort: number },
   ): void {
     const pool = rt.entry?.pool;
-    if (!pool) return;
+    if (!pool || rt.retry.waiting) return;
     const session = pool.activeSession();
     if (session) {
       pool.touch();
@@ -1298,7 +1305,7 @@ export class TunnelManager {
       closedIn: 0,
       closedOut: 0,
       connecting: false,
-      attempt: 0,
+      retry: new Reconnect(this.timers, this.opts),
       bindAttempt: 0,
       path: viaOf(cfg) === "tailscale" ? "tailscale" : "relay",
       tailnetPeers: new Set(),
@@ -1419,6 +1426,7 @@ export class TunnelManager {
       ...(rt.peer ? { peer: rt.peer } : {}),
       ...this.shareView(rt),
       ...this.stateOf(rt),
+      ...(rt.retry.view ? { retry: rt.retry.view } : {}),
       ...(rt.adhoc ? { adhoc: true, expires_at: new Date(rt.adhoc.expiresAt).toISOString() } : {}),
       traffic: this.traffic(rt),
     };

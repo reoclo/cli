@@ -28,6 +28,7 @@ function newManager(): TunnelManager {
   const m = new TunnelManager({
     configPath,
     timers,
+    random: () => 1,
     createPool: (key) => {
       keys.push(key);
       const id = key.server_id;

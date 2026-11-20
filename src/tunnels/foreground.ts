@@ -10,6 +10,14 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { realRunner, type CommandRunner } from "./command-runner";
 import { foregroundDir } from "./paths";
+import { z } from "zod";
+import type { SessionTraffic } from "../client/tunnel-session";
+
+const trafficSchema = z.object({
+  bytes_in: z.number().int().nonnegative(),
+  bytes_out: z.number().int().nonnegative(),
+  streams: z.number().int().nonnegative(),
+});
 
 export interface ForegroundForward {
   kind: "forward" | "reverse";
@@ -23,6 +31,7 @@ export interface ForegroundForward {
 export type ForegroundState = "active" | "reconnecting";
 
 export interface ForegroundTunnel {
+  readonly traffic?: SessionTraffic;
   id: string;
   pid: number;
   org: string;
@@ -44,11 +53,12 @@ function writeEntry(file: string, entry: ForegroundTunnel): void {
 
 /** This process's entry, removed when the process exits for any reason short of a kill. */
 export class ForegroundRegistration {
+  private trafficTimer?: ReturnType<typeof setInterval>;
   private entry: ForegroundTunnel;
   private readonly file: string;
   private readonly onExit = (): void => this.remove();
 
-  constructor(input: Pick<ForegroundTunnel, "org" | "server" | "forwards">) {
+  constructor(input: Pick<ForegroundTunnel, "org" | "server" | "forwards">, traffic?: () => SessionTraffic) {
     const dir = foregroundDir();
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.file = join(dir, `${process.pid}.json`);
@@ -61,6 +71,25 @@ export class ForegroundRegistration {
     };
     writeEntry(this.file, this.entry);
     process.once("exit", this.onExit);
+    if (traffic) {
+      this.recordTraffic(traffic());
+      this.trafficTimer = setInterval(() => {
+        try {
+          this.recordTraffic(traffic());
+        } catch (error) {
+          clearInterval(this.trafficTimer);
+          process.stderr.write(`tunnel: traffic reporting stopped: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+      }, 1000);
+      this.trafficTimer.unref();
+    }
+  }
+
+  recordTraffic(traffic: SessionTraffic): void {
+    const old = this.entry.traffic;
+    if (old?.bytes_in === traffic.bytes_in && old.bytes_out === traffic.bytes_out && old.streams === traffic.streams) return;
+    this.entry = { ...this.entry, traffic };
+    writeEntry(this.file, this.entry);
   }
 
   setState(state: ForegroundState): void {
@@ -70,6 +99,7 @@ export class ForegroundRegistration {
   }
 
   remove(): void {
+    clearInterval(this.trafficTimer);
     process.off("exit", this.onExit);
     rmSync(this.file, { force: true });
   }
@@ -118,6 +148,8 @@ function parseEntry(text: string): ForegroundTunnel | undefined {
   }
   const forwards = value.forwards.map(parseForward);
   if (forwards.some((f) => f === undefined)) return undefined;
+  const traffic = trafficSchema.optional().safeParse(value.traffic);
+  if (!traffic.success) return undefined;
   return {
     id: String(value.pid),
     pid: value.pid as number,
@@ -126,6 +158,7 @@ function parseEntry(text: string): ForegroundTunnel | undefined {
     state: value.state,
     started_at: value.started_at,
     forwards: forwards as ForegroundForward[],
+    ...(traffic.data ? { traffic: traffic.data } : {}),
   };
 }
 

@@ -100,6 +100,7 @@ describe("TunnelSession.attachTcpSocket", () => {
     await gw.waitForFrame((f) => f["type"] === "tunnel_close");
     await new Promise<void>((r) => server.close(() => r()));
     await session.stop();
+    expect(session.trafficSnapshot()).toEqual({ bytes_in: 5, bytes_out: 5, streams: 0 });
   });
 });
 
@@ -122,6 +123,7 @@ describe("TunnelSession.forwardUdpDatagram", () => {
     peer.close();
     listener.close();
     await session.stop();
+    expect(session.trafficSnapshot()).toEqual({ bytes_in: 4, bytes_out: 4, streams: 0 });
   });
 });
 

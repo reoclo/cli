@@ -138,11 +138,12 @@ describe("helperLine", () => {
 
 describe("tunnel trust suffixes", () => {
   it("merges requested suffixes into the existing ones, sorted and unique", () => {
-    expect(mergeSuffixes(["internal"], ["corp.example.com", "internal"])).toEqual(["corp.example.com", "internal"]);
+    expect(mergeSuffixes(["internal"], ["corp.example", "internal"])).toEqual(["corp.example", "internal"]);
     expect(mergeSuffixes([], [])).toEqual([]);
   });
 
   it("turns a dangerous suffix into a usage error", () => {
     expect(() => mergeSuffixes([], ["com"])).toThrow(UsageError);
+    expect(() => mergeSuffixes([], ["corp.example.com"])).toThrow(UsageError);
   });
 });

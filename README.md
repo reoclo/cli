@@ -422,6 +422,20 @@ Tunnels survive transient runner reconnects: if the runner disconnects briefly, 
 
 Large transfers are fine. The CLI sends stream data in frames of at most 64 KiB, so a big upload through a tunnel no longer closes the connection.
 
+### Saved tunnel recovery and desktop telemetry
+
+From 0.116.0, the daemon automatically recovers enabled saved tunnels after a lost session or an offline pool, including tunnels without `keep_up`. A maximum-duration expiration opens a fresh session. Retries grow from 1 second to a 30-second cap with jitter. Disabling or removing the tunnel cancels recovery, and daemon shutdown cancels every timer. Authorization failures and operator closures still require action; quota failures remain visible until capacity is available.
+
+The control API includes `retry: { attempt, next_at }` while a retry is scheduled. `next_at` is an RFC 3339 timestamp. `POST /v1/tunnels/:name/up` cancels the delay and retries immediately. Busy local listeners retain their separate 5 to 60 second retry schedule.
+
+Terminal sessions publish cumulative payload counters to their temporary registration file once per second. The daemon includes them in its traffic events under `terminal:<id>`, so the desktop can graph terminal sessions alongside saved tunnels. Older running terminals must be restarted with the new CLI before they can report counters.
+
+### Local certificate domains
+
+CA trust permits `.test`, `.localhost`, `.internal`, `.home.arpa`, `.example` and `.invalid`, including their roots and subdomains. Names are normalized to lowercase, with one trailing dot removed. Public DNS domains and `.local` are rejected at the shared CLI and daemon trust boundary. Remove legacy unsupported suffixes before trusting a replacement CA.
+
+This policy uses RFC 2606 and RFC 6761, with RFC 8375 for `home.arpa` and ICANN resolution 2024.07.29.06 for `internal`. Host-file allowlists keep their existing rules; certificate trust is more restrictive.
+
 ### Concurrent tunnel limit
 
 Each user and each organization can hold a limited number of open tunnels at once. When you hit the limit, the tunnel exits instead of retrying, with a message such as:
