@@ -85,7 +85,18 @@ function resolveSelfPath(): string {
 // what catches edge cases like a brew tap symlinked into a non-standard
 // prefix, or a pnpm install whose path doesn't trip our pnpm pattern.
 
-export type InstallMethod = "homebrew" | "npm" | "pnpm" | "yarn" | "mise" | "asdf" | "raw";
+export type InstallMethod =
+  | "homebrew"
+  | "npm"
+  | "pnpm"
+  | "yarn"
+  | "mise"
+  | "asdf"
+  | "desktop"
+  | "raw";
+
+/** Installs whose package manager performs the upgrade, so we print its command. */
+type ManagedMethod = Exclude<InstallMethod, "raw" | "desktop">;
 
 export interface InstallDetectionContext {
   /** stat-existence check — injectable for testing */
@@ -107,6 +118,10 @@ function defaultReadFile(path: string): string | null {
 
 /** Layer A: anchored path-component substring patterns. */
 function probePathPatterns(selfPath: string): InstallMethod | null {
+  // The copy bundled with Reoclo for Mac. The app replaces the whole bundle on
+  // update, so swapping this one binary would break the bundle's code seal.
+  if (/\.app\/Contents\/Resources\/reoclo$/.test(selfPath)) return "desktop";
+
   // pnpm / yarn must come BEFORE npm because their install layouts include
   // a `node_modules` directory deeper inside.
   if (/\/(?:\.local\/share\/)?pnpm\/(?:global|store)\//.test(selfPath)) return "pnpm";
@@ -196,6 +211,20 @@ export function detectInstallMethod(
   if (pattern) return pattern;
 
   return "raw";
+}
+
+/**
+ * The `--version` line. The Homebrew test and the Reoclo app read the first
+ * word as the version, so a plain install prints it bare and only the desktop
+ * copy adds its install type after it.
+ */
+export function versionLine(version: string, method: InstallMethod): string {
+  return method === "desktop" ? `${version} (Reoclo for Mac)` : version;
+}
+
+/** The install method of the running binary, following symlinks to the real file. */
+export function currentInstallMethod(): InstallMethod {
+  return detectInstallMethod(resolveSelfPath());
 }
 
 // ── Build target detection ────────────────────────────────────────────────────
@@ -454,7 +483,7 @@ export function delegatedUpgradeArgv(method: InstallMethod, bareVersion: string)
   }
 }
 
-const INSTALL_METHOD_LABELS: Record<Exclude<InstallMethod, "raw">, string> = {
+const INSTALL_METHOD_LABELS: Record<ManagedMethod, string> = {
   homebrew: "Homebrew",
   npm: "npm",
   pnpm: "pnpm",
@@ -464,11 +493,8 @@ const INSTALL_METHOD_LABELS: Record<Exclude<InstallMethod, "raw">, string> = {
 };
 
 /** The printed fallback for a managed install: what to run by hand. */
-export function managedUpgradeInstructions(
-  method: Exclude<InstallMethod, "raw">,
-  bareVersion: string,
-): string[] {
-  const commands: Record<Exclude<InstallMethod, "raw">, string> = {
+export function managedUpgradeInstructions(method: ManagedMethod, bareVersion: string): string[] {
+  const commands: Record<ManagedMethod, string> = {
     homebrew: "brew upgrade reoclo/tap/reoclo",
     npm: `npm i -g @reoclo/cli@${bareVersion}`,
     pnpm: `pnpm add -g @reoclo/cli@${bareVersion}`,
@@ -501,6 +527,14 @@ export function registerUpgrade(program: Command): void {
       .option("--check", "only check, do not upgrade")
       .action(async (opts: UpgradeOpts) => {
         const current = VERSION;
+        const self = resolveSelfPath();
+        const method = detectInstallMethod(self);
+
+        // The app owns this copy, so there is nothing to swap and no network to ask.
+        if (method === "desktop" && !opts.check) {
+          process.stdout.write("This reoclo comes with Reoclo for Mac and updates with the app.\n");
+          return;
+        }
 
         // Resolve the version we want.
         let latest: string;
@@ -527,11 +561,9 @@ export function registerUpgrade(program: Command): void {
           return;
         }
 
-        const self = resolveSelfPath();
-        const method = detectInstallMethod(self);
         const bareVersion = latest.replace(/^v/, "");
 
-        if (method !== "raw") {
+        if (method !== "raw" && method !== "desktop") {
           // A managed install must not be in-place-swapped (the manager owns
           // the binary), but a command named `upgrade` that only prints
           // instructions reads as broken (REO-380): run the manager's own

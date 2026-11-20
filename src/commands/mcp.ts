@@ -10,6 +10,7 @@ import type { HttpClient } from "../client/http";
 import { startTokenRefreshLoop, PROACTIVE_SKEW_MS } from "../auth/proactive";
 import { loadConfig } from "../config/store";
 import { jwtExpiresAt } from "../auth/renew";
+import { registerMcpAgents } from "./mcp-agents";
 
 export interface McpBootstrapResult {
   ctx: ResolvedContext;
@@ -141,12 +142,12 @@ async function orgScopeFor(org: string): Promise<OrgScope> {
 }
 
 export function registerMcp(program: Command): void {
-  program
+  const mcp = program
     .command("mcp")
     // No command-local `--profile` — the global flag is honored by bootstrap()
     // (which reads the captured global override, then $REOCLO_PROFILE, then the
     // active profile).
-    .description("start the stdio MCP server")
+    .description("start the stdio MCP server, or register it with coding agents")
     .action(async () => {
       const start = await resolveMcpStart();
       const signedOut = "signedOut" in start ? signedOutMcpError(start.signedOut) : undefined;
@@ -218,4 +219,5 @@ export function registerMcp(program: Command): void {
         console.log = origLog;
       }
     });
+  registerMcpAgents(mcp);
 }

@@ -25,5 +25,7 @@ export function upgradeCommandFor(method: InstallMethod, bareVersion: string): s
       return `asdf install reoclo ${bareVersion} && asdf global reoclo ${bareVersion}`;
     case "raw":
       return "reoclo upgrade";
+    case "desktop":
+      return "update the Reoclo app";
   }
 }
