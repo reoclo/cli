@@ -451,12 +451,15 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
     return fail(404, "not_found", `no route for ${method} ${path}`);
   };
 
+  // The event stream is long-lived, opening an ad-hoc tunnel waits for a session, and approving
+  // runs a slow action (trusting the CA waits on a password prompt). Bun closes a connection that
+  // gets no bytes for 10 seconds, and srv.timeout(req, 0) does not stop that on a unix socket, so
+  // the idle timer is off for the whole server. Bun's types leave idleTimeout off unix servers, but
+  // the runtime honors it, hence the cast through unknown.
   const server = Bun.serve({
     unix: binding,
-    async fetch(req, srv) {
-      // The event stream is long-lived, opening an ad-hoc tunnel waits for a session, and approving
-      // runs a slow action: keep Bun's idle timer from closing any of them.
-      srv.timeout(req, 0);
+    idleTimeout: 0,
+    async fetch(req: Request) {
       const caller = callerOf(req.headers);
       const client = caller.agent ? `${caller.client} (${caller.agent})` : caller.client;
       try {
@@ -473,7 +476,7 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
         return fail(500, "internal", message);
       }
     },
-  });
+  } as unknown as Bun.Serve.Options<undefined>);
   chmodSync(binding, 0o600);
   renameSync(binding, opts.socketPath);
   const bound = statSync(opts.socketPath);

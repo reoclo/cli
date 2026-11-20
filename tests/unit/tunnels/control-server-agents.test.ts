@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalView } from "../../../src/tunnels/approvals";
@@ -383,6 +384,31 @@ describe("certificate authority routes", () => {
     await cli.approve(reply.body.id);
     expect(caCalls).toEqual([["trust", []]]);
   });
+
+  it("answers a trust request that waits on a password prompt for longer than Bun's 10 second idle timeout", async () => {
+    await server.stop();
+    server = boot({
+      caActions: {
+        ...caActions,
+        trust: async (suffixes) => {
+          await new Promise((resolve) => setTimeout(resolve, 14_000));
+          return { lines: ["trusted the local CA"], suffixes };
+        },
+      },
+    });
+    // A raw socket with no body, like the desktop app's HTTP client: Bun's own fetch hides the closed
+    // connection, and a request that carries a body is not cut off.
+    const reply = await new Promise<string>((resolve, reject) => {
+      const conn = net.connect(socket);
+      let received = "";
+      conn.setEncoding("utf8");
+      conn.on("data", (chunk: string) => (received += chunk));
+      conn.on("error", reject);
+      conn.on("close", () => resolve(received));
+      conn.write("POST /v1/ca/trust HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    expect(reply.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+  }, 30_000);
 
   it("answers 502 when the daemon cannot change trust", async () => {
     await server.stop();
