@@ -365,8 +365,8 @@ describe("certificate authority routes", () => {
     expect((await cli.settings()).ca_suffixes).toEqual(["internal"]);
   });
 
-  it("rejects an invalid suffix", async () => {
-    expect(await failure(cli.request("POST", "/v1/ca/trust", { domains: ["com"] }))).toMatchObject({ status: 400, code: "invalid" });
+  it.each(["com", "company.com", "host.local", "test.evil.com"])("rejects an unsafe suffix %s", async (domain) => {
+    expect(await failure(cli.request("POST", "/v1/ca/trust", { domains: [domain] }))).toMatchObject({ status: 400, code: "invalid" });
     expect(caCalls).toEqual([]);
   });
 

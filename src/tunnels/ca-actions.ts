@@ -4,13 +4,12 @@
 // and the daemon's POST /v1/ca/trust and /untrust. The CA and trust modules load
 // on demand, as the CLI always loaded them.
 
-import { assertValidSuffix } from "./hosts-block";
+import { parseCaDomain } from "./ca-domains";
 import { caCertFile } from "./paths";
 
 /** The suffixes the CA must cover: the existing ones plus the new ones, each checked. Throws HostnameError. */
 export function mergeSuffixList(existing: readonly string[], requested: readonly string[]): string[] {
-  for (const s of requested) assertValidSuffix(s);
-  return [...new Set([...existing, ...requested])].sort();
+  return [...new Set([...existing, ...requested].map(parseCaDomain))].sort();
 }
 
 export interface TrustResult {
@@ -25,6 +24,7 @@ export interface CaActions {
 
 export const localCaActions: CaActions = {
   async trust(suffixes) {
+    const allowed = suffixes.map(parseCaDomain);
     const ca = await import("./ca");
     const trust = await import("./trust");
     const env = trust.defaultTrustEnv();
@@ -32,11 +32,11 @@ export const localCaActions: CaActions = {
     const lines: string[] = [];
 
     const before = ca.readCaInfo();
-    if (before && !ca.suffixesMatch(before, suffixes)) {
+    if (before && !ca.suffixesMatch(before, allowed)) {
       lines.push("the allowed suffixes changed, so the old CA is replaced");
       await trust.removeTrust(env, { certPath, sha1: before.sha1 });
     }
-    const { ca: current, change } = await ca.ensureCa(suffixes);
+    const { ca: current, change } = await ca.ensureCa(allowed);
     const target = { certPath, certPem: current.certPem, sha1: current.sha1 };
 
     if (change === "unchanged" && (await trust.checkTrust(env, target))) {

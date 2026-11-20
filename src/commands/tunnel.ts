@@ -500,7 +500,7 @@ Saved tunnels (kept up by the tunnel daemon):
               org: ctx.orgSlug ?? "",
               server: parsed.server,
               forwards: registered,
-            });
+            }, () => session.trafficSnapshot());
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             process.stderr.write(`tunnel: warning: this tunnel will not appear in the desktop app: ${msg}\n`);

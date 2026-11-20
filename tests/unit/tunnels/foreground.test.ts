@@ -41,6 +41,14 @@ afterEach(() => {
 });
 
 describe("the terminal tunnel registry", () => {
+  it("persists terminal traffic for the daemon without losing its forward list", () => {
+    const reg = inDir(() => new ForegroundRegistration({ org: "acme", server: "prod-1", forwards }));
+    reg.recordTraffic({ bytes_in: 20, bytes_out: 40, streams: 2 });
+    const [listed] = inDir(() => listForeground());
+    reg.remove();
+    expect(listed?.traffic).toEqual({ bytes_in: 20, bytes_out: 40, streams: 2 });
+    expect(listed?.forwards).toEqual(forwards);
+  });
   it("lists a registered tunnel and forgets it when removed", () => {
     const reg = inDir(() => new ForegroundRegistration({ org: "acme", server: "prod-1", forwards }));
     const [listed] = inDir(() => listForeground());

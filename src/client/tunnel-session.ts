@@ -96,6 +96,12 @@ export interface ReadyState {
   reverses: { boundPort: number }[];
 }
 
+export interface SessionTraffic {
+  readonly bytes_in: number;
+  readonly bytes_out: number;
+  readonly streams: number;
+}
+
 interface TcpStream {
   proto: "tcp";
   sock: net.Socket;
@@ -123,6 +129,12 @@ const UDP_IDLE_MS = 60_000;
 const RENEW_SKEW_SECONDS = PROACTIVE_SKEW_MS / 1000;
 
 export class TunnelSession {
+  private receivedBytes = 0;
+  private sentBytes = 0;
+
+  trafficSnapshot(): SessionTraffic {
+    return { bytes_in: this.receivedBytes, bytes_out: this.sentBytes, streams: this.streams.size };
+  }
   private ws?: WebSocket;
   /** WS that is currently in the connecting state (not yet open) */
   private connectingWs?: WebSocket;
@@ -352,6 +364,9 @@ export class TunnelSession {
   private send(msg: object): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      if ("type" in msg && msg.type === "tunnel_data" && "data" in msg && typeof msg.data === "string") {
+        this.sentBytes += Buffer.byteLength(msg.data, "base64");
+      }
     }
   }
 
@@ -843,6 +858,7 @@ export class TunnelSession {
         if (!s) return;
         const data =
           typeof msg.data === "string" ? Buffer.from(msg.data, "base64") : Buffer.alloc(0);
+        this.receivedBytes += data.length;
         if (s.proto === "tcp") {
           // Note: bounded flow control comes in Phase 6 (bandwidth policy).
           // For now we log when the local app's read buffer is full so it's visible.

@@ -220,11 +220,13 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
         const unsubscribe = manager.onEvent(onEvent);
         subscribers.add(send);
         let lastForeground = "[]";
+        let terminalTraffic: ForegroundTunnel[] = [];
         const pushForeground = (): void => {
           let next: string;
           let tunnels: ForegroundTunnel[] = [];
           try {
             tunnels = foreground.list();
+            terminalTraffic = tunnels;
             next = JSON.stringify(tunnels);
           } catch (err) {
             next = `error: ${err instanceof Error ? err.message : String(err)}`;
@@ -238,9 +240,11 @@ export function startControlServer(opts: ControlServerOptions): ControlServer {
         };
         pushForeground();
         const timer = setInterval(() => {
-          const snapshot = manager.trafficSnapshot();
-          if (snapshot.length > 0) send("traffic", { tunnels: snapshot });
           pushForeground();
+          const snapshot = manager.trafficSnapshot();
+          snapshot.push(...terminalTraffic.flatMap((tunnel) => tunnel.traffic
+            ? [{ name: `terminal:${tunnel.id}`, traffic: tunnel.traffic }] : []));
+          if (snapshot.length > 0) send("traffic", { tunnels: snapshot });
         }, opts.trafficIntervalMs ?? 1000);
         const heartbeat = setInterval(() => {
           try {
