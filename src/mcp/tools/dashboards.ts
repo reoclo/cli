@@ -170,7 +170,7 @@ export function registerDashboardTools(
 
   server.tool(
     "dashboard_get",
-    "Get one dashboard with its panels resolved and populated with data for the caller. Panels the caller may not see are absent. To edit a dashboard, take name, description, visibility and each panel's instance_id, type, size, config, layout and mobile_order from this result and send them to dashboard_update.",
+    "Get one dashboard with its panels resolved for the caller. Panels the caller may not see are absent. Lazy panels (every metric chart, plus spend budgets, traffic routes and log tails) come back pending with no data; to check that a metric chart has data, read its series with dashboard_series. To edit a dashboard, take name, description, visibility and each panel's instance_id, type, size, config, layout and mobile_order from this result and send them to dashboard_update.",
     { ...ctx.orgParam, dashboard_id: z.guid().describe("Dashboard ID") },
     async ({ dashboard_id, ...args }) => {
       try {
