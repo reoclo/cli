@@ -15,6 +15,14 @@ export const TAILSCALE_PATH_ENV = "REOCLO_TAILSCALE_PATH";
 export const MAC_APP_BINARY = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 export const STATUS_TTL_MS = 30_000;
 
+/**
+ * Set for every Tailscale command. The macOS app binary is the CLI only when it sees a shell (TERM,
+ * SHLVL); started by launchd, as the daemon is, it starts as the GUI instead, prints "The Tailscale GUI
+ * failed to start" and exits 0. TAILSCALE_BE_CLI=1 makes it the CLI wherever it runs. The open source
+ * CLI ignores it.
+ */
+export const TAILSCALE_CLI_ENV: Readonly<Record<string, string>> = { TAILSCALE_BE_CLI: "1" };
+
 export interface TailscalePeer {
   host_name: string;
   dns_name: string;
@@ -237,7 +245,7 @@ export class Tailscale {
     if (bin === undefined) {
       return { installed: false, running: false, https_certificates: false, peers: [], error: "Tailscale is not installed on this machine" };
     }
-    const res = await this.runner(bin, ["status", "--json"]);
+    const res = await this.runner(bin, ["status", "--json"], { env: TAILSCALE_CLI_ENV });
     let parsed: unknown;
     try {
       parsed = JSON.parse(res.stdout);
@@ -258,7 +266,7 @@ export class Tailscale {
   async served(): Promise<ServedPort[]> {
     const bin = this.find();
     if (bin === undefined) return [];
-    const res = await this.runner(bin, ["serve", "status", "--json"]);
+    const res = await this.runner(bin, ["serve", "status", "--json"], { env: TAILSCALE_CLI_ENV });
     try {
       return parseServeStatus(JSON.parse(res.stdout));
     } catch {

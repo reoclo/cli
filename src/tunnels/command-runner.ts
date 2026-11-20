@@ -15,13 +15,18 @@ export interface CommandResult {
 export interface CommandOptions {
   /** Hand the terminal to the command, so a keychain or sudo prompt can ask for a password. */
   inherit?: boolean;
+  /** Variables to set for the command, on top of this process's environment. */
+  env?: Readonly<Record<string, string>>;
 }
 
 export type CommandRunner = (cmd: string, args: string[], opts?: CommandOptions) => Promise<CommandResult>;
 
 export const realRunner: CommandRunner = (cmd, args, opts = {}) =>
   new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: opts.inherit ? "inherit" : ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, {
+      stdio: opts.inherit ? "inherit" : ["ignore", "pipe", "pipe"],
+      ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (b: Buffer) => (stdout += b.toString()));

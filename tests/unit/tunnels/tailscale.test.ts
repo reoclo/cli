@@ -1,4 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { realRunner } from "../../../src/tunnels/command-runner";
 import {
   Tailscale,
   findTailscaleBinary,
@@ -12,7 +16,17 @@ import {
   targetProblem,
   MAC_APP_BINARY,
 } from "../../../src/tunnels/tailscale";
-import { FakeTailscaleRunner, SELF_DNS, STOPPED_STATUS, TAILNET, fakeTailscale, serveJson, statusJson } from "../../helpers/fake-tailscale";
+import {
+  FakeTailscaleRunner,
+  GUI_FAILURE,
+  SELF_DNS,
+  STOPPED_STATUS,
+  TAILNET,
+  fakeTailscale,
+  serveJson,
+  statusJson,
+  writeFakeTailscaleApp,
+} from "../../helpers/fake-tailscale";
 
 describe("parseStatus", () => {
   it("reads a running node with peers and certificate domains", () => {
@@ -93,6 +107,22 @@ describe("findTailscaleBinary", () => {
   it("uses the override alone: a missing override means not installed, with no fallback", () => {
     expect(findTailscaleBinary({ override: "/custom/ts", path: "/opt/bin", exists: present("/custom/ts", "/opt/bin/tailscale") })).toBe("/custom/ts");
     expect(findTailscaleBinary({ override: "/custom/ts", path: "/opt/bin", exists: present("/opt/bin/tailscale", MAC_APP_BINARY) })).toBeUndefined();
+  });
+});
+
+describe("the macOS app binary", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "reoclo-tailscale-app-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("is run as the CLI, so a daemon started by launchd reads its state and served ports", async () => {
+    const app = writeFakeTailscaleApp(dir, { serve: serveJson([{ port: 8443, proxy: "http://127.0.0.1:1" }]) });
+    expect((await realRunner(app, ["status", "--json"])).stdout).toContain(GUI_FAILURE);
+    const ts = new Tailscale({ find: () => app, ttlMs: 0 });
+    expect(await ts.status()).toMatchObject({ installed: true, running: true, https_certificates: true, self_dns_name: SELF_DNS });
+    expect(await ts.served()).toEqual([{ port: 8443, kind: "https", target: "http://127.0.0.1:1" }]);
   });
 });
 

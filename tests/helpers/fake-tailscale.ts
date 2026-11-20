@@ -3,8 +3,11 @@
 // Synthetic Tailscale for the tunnel tests: `status --json` and `serve status
 // --json` answers in the CLI's real shape with made-up names and addresses, a
 // command runner that serves them and records every call, and a fake
-// `tailscale serve` child process. Nothing here runs the real CLI.
+// `tailscale serve` child process, and a script that stands in for the macOS
+// app binary. Nothing here runs the real CLI.
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CommandResult, CommandRunner } from "../../src/tunnels/command-runner";
 import type { ShareExit, ShareProcess, ShareSpawner } from "../../src/tunnels/shares";
 import { Tailscale } from "../../src/tunnels/tailscale";
@@ -71,6 +74,40 @@ export function serveJson(ports: Array<{ port: number; proxy?: string; tcp?: str
     }
   }
   return ports.length === 0 ? "{}" : JSON.stringify({ TCP, Web });
+}
+
+/** What the macOS app binary prints, with exit code 0, when it starts as the GUI instead of the CLI. */
+export const GUI_FAILURE = "The Tailscale GUI failed to start: The operation couldn't be completed. (Tailscale.CLIError error 3.)";
+
+/**
+ * Writes a stand-in for the macOS app binary (/Applications/Tailscale.app/Contents/MacOS/Tailscale) into
+ * `dir` and returns its path. The real binary is the CLI only when it sees a shell (TERM, SHLVL) or
+ * TAILSCALE_BE_CLI=1; under launchd it starts as the GUI. The stand-in models a launchd job: it is the
+ * GUI unless TAILSCALE_BE_CLI=1. As the CLI it answers `status --json` and `serve status --json` from
+ * the given JSON, and a `serve` child says it is available and stays up until it is stopped.
+ */
+export function writeFakeTailscaleApp(dir: string, o: { status?: string; serve?: string } = {}): string {
+  writeFileSync(join(dir, "status.json"), o.status ?? statusJson());
+  writeFileSync(join(dir, "serve.json"), o.serve ?? "{}");
+  const bin = join(dir, "Tailscale");
+  writeFileSync(
+    bin,
+    `#!/bin/sh
+if [ "$TAILSCALE_BE_CLI" != "1" ]; then
+  echo "${GUI_FAILURE}"
+  exit 0
+fi
+here=$(dirname "$0")
+case "$1 $2" in
+  "status --json") cat "$here/status.json" ;;
+  "serve status") cat "$here/serve.json" ;;
+  serve*) echo "Available within your tailnet:"; exec sleep 60 ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return bin;
 }
 
 export class FakeTailscaleRunner {

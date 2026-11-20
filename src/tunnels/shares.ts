@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CommandRunner } from "./command-runner";
 import type { Timers } from "./pool";
-import type { Tailscale } from "./tailscale";
+import { TAILSCALE_CLI_ENV, type Tailscale } from "./tailscale";
 
 export interface ShareSpec {
   name: string;
@@ -45,10 +45,11 @@ export interface ShareProcess {
   kill(signal?: "SIGTERM" | "SIGKILL"): void;
 }
 
-export type ShareSpawner = (bin: string, args: string[]) => ShareProcess;
+/** Starts a child with `env` set on top of this process's environment. */
+export type ShareSpawner = (bin: string, args: string[], env: Readonly<Record<string, string>>) => ShareProcess;
 
-export const realSpawner: ShareSpawner = (bin, args) => {
-  const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+export const realSpawner: ShareSpawner = (bin, args, env) => {
+  const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } });
   const exited = new Promise<ShareExit>((resolve) => {
     child.once("error", () => resolve({ code: 127, signal: null }));
     child.once("close", (code, signal) => resolve({ code, signal }));
@@ -109,11 +110,12 @@ function lastLine(text: string): string {
   return lines[lines.length - 1] ?? "";
 }
 
+export const HTTPS_CERTIFICATES_OFF =
+  "HTTPS certificates are not enabled for this tailnet, and an https share needs one; turn on HTTPS under HTTPS Certificates at https://login.tailscale.com/admin/dns and the share comes up on its own";
+
 /** A plain reason for a serve command that ended, from what it printed. */
 export function explainExit(exit: ShareExit, output: string): string {
-  if (/https.*(not enabled|disabled)|enable.*https|certificates?.*(not enabled|disabled)/i.test(output)) {
-    return "HTTPS certificates are not enabled for this tailnet; turn them on under DNS in the Tailscale admin console";
-  }
+  if (/https.*(not enabled|disabled)|enable.*https|certificates?.*(not enabled|disabled)/i.test(output)) return HTTPS_CERTIFICATES_OFF;
   const line = lastLine(output);
   const how = exit.signal ? `was stopped by ${exit.signal}` : `exited with code ${exit.code ?? "?"}`;
   return line === "" ? `tailscale serve ${how}` : `tailscale serve ${how}: ${line}`;
@@ -217,7 +219,7 @@ export class ShareSupervisor {
     if (bin === undefined) return this.retryLater(entry, "failed", "Tailscale is not installed on this machine");
     entry.tail = "";
     entry.status = { ...entry.status, state: "starting", url: check.url, error: undefined };
-    const proc = this.spawnFn(bin, serveArgs(spec));
+    const proc = this.spawnFn(bin, serveArgs(spec), TAILSCALE_CLI_ENV);
     entry.proc = proc;
     this.record(proc.pid, spec);
     this.opts.onChange(spec.name);
@@ -241,12 +243,13 @@ export class ShareSupervisor {
     if (!info.installed) {
       return { ok: false, error: "Tailscale is not installed on this machine; install it from https://tailscale.com/download" };
     }
+    if (info.error !== undefined) {
+      return { ok: false, error: `Tailscale did not report its state (${info.error}); the share comes up once it does` };
+    }
     if (!info.running) {
-      return { ok: false, error: `Tailscale is not running (${info.backend_state ?? info.error ?? "state unknown"}); start it and the share comes up on its own` };
+      return { ok: false, error: `Tailscale is not running (${info.backend_state ?? "state unknown"}); start it and the share comes up on its own` };
     }
-    if (spec.kind === "https" && !info.https_certificates) {
-      return { ok: false, error: "HTTPS certificates are not enabled for this tailnet; turn them on under DNS in the Tailscale admin console" };
-    }
+    if (spec.kind === "https" && !info.https_certificates) return { ok: false, error: HTTPS_CERTIFICATES_OFF };
     if (info.self_dns_name === undefined) return { ok: false, error: "this machine has no name on the tailnet yet" };
     const taken = (await this.opts.tailscale.served()).find((s) => s.port === spec.port);
     if (taken && !(taken.target ?? "").includes(`127.0.0.1:${spec.upstream}`)) {
