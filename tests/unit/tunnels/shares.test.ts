@@ -3,19 +3,21 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandRunner } from "../../../src/tunnels/command-runner";
-import { MAX_RESTART_DELAY_MS, ShareSupervisor, explainExit, serveArgs, type ShareSpec } from "../../../src/tunnels/shares";
+import { MAX_RESTART_DELAY_MS, ShareSupervisor, explainExit, realSpawner, serveArgs, type ShareSpawner, type ShareSpec } from "../../../src/tunnels/shares";
 import { Tailscale } from "../../../src/tunnels/tailscale";
 import { ManualTimers } from "../../helpers/fake-pool";
 import {
   Changes,
   FakeSpawner,
   FakeTailscaleRunner,
+  GUI_FAILURE,
   SELF_DNS,
   STOPPED_STATUS,
   fakeTailscale,
   fireDelay,
   serveJson,
   statusJson,
+  writeFakeTailscaleApp,
 } from "../../helpers/fake-tailscale";
 
 let dir: string;
@@ -27,10 +29,10 @@ let changes: Changes;
 let logs: string[];
 let supervisors: ShareSupervisor[];
 
-function make(o: { tailscale?: Tailscale; ps?: CommandRunner; killed?: Array<[number, string]> } = {}): ShareSupervisor {
+function make(o: { tailscale?: Tailscale; spawn?: ShareSpawner; ps?: CommandRunner; killed?: Array<[number, string]> } = {}): ShareSupervisor {
   const s = new ShareSupervisor({
     tailscale: o.tailscale ?? fakeTailscale(runner),
-    spawn: spawner.spawn,
+    spawn: o.spawn ?? spawner.spawn,
     pidFile,
     timers,
     log: (l) => logs.push(l),
@@ -257,12 +259,23 @@ describe("what keeps a share from starting", () => {
     expect(sup.status("db")?.state).toBe("starting");
   });
 
-  it("says HTTPS certificates are off for an https share only", async () => {
+  it("says it could not read Tailscale's state, in Tailscale's words, rather than that Tailscale is stopped", async () => {
+    runner.status = `${GUI_FAILURE}\n`;
+    const sup = make();
+    await sup.start(db);
+    await changes.until(() => sup.status("db")?.state === "failed", "the share to fail");
+    expect(sup.status("db")?.error).toContain(GUI_FAILURE);
+    expect(sup.status("db")?.error).not.toContain("not running");
+    expect(spawner.procs).toHaveLength(0);
+  });
+
+  it("says HTTPS certificates are off for an https share only, and where to turn them on", async () => {
     runner.status = statusJson({ certDomains: null });
     const sup = make();
     await sup.start(web);
     await changes.until(() => sup.status("web")?.state === "failed", "the https share to fail");
     expect(sup.status("web")?.error).toContain("HTTPS certificates are not enabled");
+    expect(sup.status("web")?.error).toContain("https://login.tailscale.com/admin/dns");
     await sup.start(db);
     await spawned(1);
     expect(sup.status("db")?.state).toBe("starting");
@@ -288,6 +301,16 @@ describe("what keeps a share from starting", () => {
     await sup.start(db);
     await changes.until(() => sup.status("db")?.state === "failed", "the share to fail");
     expect(sup.status("db")?.error).toContain("no name on the tailnet");
+  });
+});
+
+describe("the macOS app binary", () => {
+  it("brings a share up through a real serve child, run as the CLI as it is under launchd", async () => {
+    const app = writeFakeTailscaleApp(dir);
+    const sup = make({ tailscale: new Tailscale({ find: () => app, ttlMs: 0 }), spawn: realSpawner });
+    await sup.start(web);
+    await changes.until(() => sup.status("web")?.state === "active", "the share to be active");
+    expect(sup.status("web")).toMatchObject({ url: `https://${SELF_DNS}:443`, restarts: 0 });
   });
 });
 
