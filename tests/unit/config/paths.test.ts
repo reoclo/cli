@@ -39,6 +39,17 @@ test("configDir honors XDG_CONFIG_HOME", () => {
   expect(posixConfigDir(home, join(home, "xdg"))).toBe(join(home, "xdg", "reoclo"));
 });
 
+test("with XDG_CONFIG_HOME set, an existing ~/.reoclo config the daemon wrote is still read", () => {
+  writeConfigIn(join(home, ".reoclo"));
+  expect(posixConfigDir(home, join(home, "xdg"))).toBe(join(home, ".reoclo"));
+});
+
+test("with XDG_CONFIG_HOME set, a config inside it wins over ~/.reoclo", () => {
+  writeConfigIn(join(home, ".reoclo"));
+  writeConfigIn(join(home, "xdg", "reoclo"));
+  expect(posixConfigDir(home, join(home, "xdg"))).toBe(join(home, "xdg", "reoclo"));
+});
+
 test("without XDG_CONFIG_HOME, configDir follows a config that only exists in ~/.config/reoclo", () => {
   writeConfigIn(join(home, ".config", "reoclo"));
   expect(posixConfigDir(home, undefined)).toBe(join(home, ".config", "reoclo"));

@@ -25,7 +25,7 @@ import { registerProviders } from "./commands/providers";
 import { registerRegistry } from "./commands/registry";
 import { registerSchedule } from "./commands/schedule";
 import { registerMcp } from "./commands/mcp";
-import { registerUpgrade } from "./commands/upgrade";
+import { currentInstallMethod, registerUpgrade, versionLine } from "./commands/upgrade";
 import { registerCompletion } from "./commands/completion";
 import { registerExec } from "./commands/exec";
 import { registerCheckout } from "./commands/checkout";
@@ -93,7 +93,7 @@ if (import.meta.main) {
   const program = new Command()
     .name(PROGRAM_NAME)
     .description("Reoclo CLI")
-    .version(VERSION)
+    .version(versionLine(VERSION, currentInstallMethod()))
     .option("-o, --output <fmt>", "output format: text|json|yaml", "text")
     .option("--no-color", "disable ANSI colors")
     .option("--quiet", "suppress non-error output")

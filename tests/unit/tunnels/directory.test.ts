@@ -75,31 +75,40 @@ describe("ApiDirectory", () => {
     expect(boots[0]).toMatchObject({ org: "acme", ignoreProjectOrg: true });
   });
 
-  it("reads the stored port scan from the server record", async () => {
-    const dir = directory(() => ({
-      port_scan: {
-        listening_ports: [
-          { port: 5432, protocol: "tcp", address: "127.0.0.1", process: "postgres", pid: 10, state: "LISTEN" },
-          { port: 8080, protocol: "tcp", address: "0.0.0.0", process: null },
-        ],
-      },
-    }));
+  // The server record's stored snapshot is null until something scans the server, so the daemon
+  // runs the same live scan as `reoclo servers ports`.
+  it("scans the server's listening ports live, including loopback and zone-suffixed addresses", async () => {
+    const scan = {
+      server_id: SERVER_ID,
+      listening_ports: [
+        { port: 22, protocol: "tcp", address: "0.0.0.0", process: null, pid: null, state: "LISTEN" },
+        { port: 53, protocol: "udp", address: "127.0.0.53%lo", process: "systemd-resolve", pid: 612, state: "UNCONN" },
+        { port: 631, protocol: "tcp", address: "[::1]", process: "cupsd", pid: 801, state: "LISTEN" },
+        { port: 14400, protocol: "tcp", address: "127.0.0.1", process: "rootlesskit", pid: 2210, state: "LISTEN" },
+      ],
+      docker_port_bindings: [],
+      firewall: { detected: true, backend: "ufw", active: true, rules: [], raw_output: "" },
+      preview_port_range: [10000, 19999],
+      scanned_at: "2026-11-20T10:00:00Z",
+    };
+    const dir = directory((path) => (path.endsWith("/ports") ? scan : { port_scan: null }));
     expect(await dir.ports("acme", SERVER_ID)).toEqual([
-      { port: 5432, protocol: "tcp", bind_address: "127.0.0.1", process: "postgres" },
-      { port: 8080, protocol: "tcp", bind_address: "0.0.0.0", process: "" },
+      { port: 22, protocol: "tcp", bind_address: "0.0.0.0", process: "" },
+      { port: 53, protocol: "udp", bind_address: "127.0.0.53%lo", process: "systemd-resolve" },
+      { port: 631, protocol: "tcp", bind_address: "[::1]", process: "cupsd" },
+      { port: 14400, protocol: "tcp", bind_address: "127.0.0.1", process: "rootlesskit" },
     ]);
-    expect(requests).toEqual([`/tenants/t1/servers/${SERVER_ID}`]);
+    expect(requests).toEqual([`/tenants/t1/servers/${SERVER_ID}/ports`]);
   });
 
-  it("answers an empty list for a server that was never scanned", async () => {
-    expect(await directory(() => ({ port_scan: null })).ports("acme", SERVER_ID)).toEqual([]);
-    expect(await directory(() => ({})).ports("acme", SERVER_ID)).toEqual([]);
+  it("answers an empty list for a server with nothing listening", async () => {
+    expect(await directory(() => ({ listening_ports: [] })).ports("acme", SERVER_ID)).toEqual([]);
   });
 
-  it("finds a server by slug before reading its scan", async () => {
-    const dir = directory((path) => (path.endsWith("/servers/") ? servers : { port_scan: { listening_ports: [] } }));
+  it("finds a server by slug before scanning it", async () => {
+    const dir = directory((path) => (path.endsWith("/servers/") ? servers : { listening_ports: [] }));
     await dir.ports("acme", "prod-1");
-    expect(requests).toEqual(["/tenants/t1/servers/", `/tenants/t1/servers/${SERVER_ID}`]);
+    expect(requests).toEqual(["/tenants/t1/servers/", `/tenants/t1/servers/${SERVER_ID}/ports`]);
   });
 
   it("resolves a server name to the ids an ad-hoc tunnel needs", async () => {

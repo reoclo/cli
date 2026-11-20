@@ -31,4 +31,8 @@ describe("upgradeCommandFor", () => {
   test("raw installs self-upgrade via the CLI", () => {
     expect(upgradeCommandFor("raw", "0.49.0")).toBe("reoclo upgrade");
   });
+
+  test("the desktop copy never suggests an in-place upgrade", () => {
+    expect(upgradeCommandFor("desktop", "0.49.0")).not.toContain("reoclo upgrade");
+  });
 });

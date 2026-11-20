@@ -33,17 +33,19 @@ export function defaultConfigDir(): string {
 
 /** The config directory on macOS and Linux, given the home and XDG_CONFIG_HOME. */
 export function posixConfigDir(home: string, xdgConfigHome: string | undefined): string {
-  if (xdgConfigHome) return join(xdgConfigHome, "reoclo");
   // XDG_CONFIG_HOME is usually exported by an interactive shell's rc file only,
   // so launchd jobs, cron and agent subprocesses run without it and lost a login
-  // saved under ~/.config/reoclo. Keep ~/.reoclo when it holds a config, else
-  // follow an existing ~/.config/reoclo one.
+  // saved under ~/.config/reoclo. The same split runs the other way: the Reoclo
+  // app's daemon has no XDG_CONFIG_HOME and writes ~/.reoclo, which a shell that
+  // exports one must still read. Follow whichever directory already holds a config.
   const legacy = join(home, ".reoclo");
-  const xdgDefault = join(home, ".config", "reoclo");
-  if (!existsSync(join(legacy, "config.json")) && existsSync(join(xdgDefault, "config.json"))) {
-    return xdgDefault;
+  const hasConfig = (dir: string): boolean => existsSync(join(dir, "config.json"));
+  if (xdgConfigHome) {
+    const xdg = join(xdgConfigHome, "reoclo");
+    return !hasConfig(xdg) && hasConfig(legacy) ? legacy : xdg;
   }
-  return legacy;
+  const xdgDefault = join(home, ".config", "reoclo");
+  return !hasConfig(legacy) && hasConfig(xdgDefault) ? xdgDefault : legacy;
 }
 
 export function cacheDir(): string {

@@ -1,7 +1,7 @@
 // src/tunnels/directory.ts
 //
 // What the daemon asks the Reoclo API for: the organizations of the signed-in
-// profile, an organization's servers and their stored port scans, and the ids
+// profile, an organization's servers and their live port scans, and the ids
 // an ad-hoc tunnel needs. Errors become ManagerErrors so the control API
 // answers 401, 403 or 404 instead of a bare 500.
 
@@ -46,7 +46,7 @@ export interface Directory {
   signedIn(): Promise<boolean>;
   orgs(): Promise<OrgView[]>;
   servers(org: string): Promise<ServerView[]>;
-  /** The port scan stored on the server record; empty when the server was never scanned. */
+  /** A live scan of what the server is listening on, the same one `reoclo servers ports` runs. */
   ports(org: string, server: string, profile?: string): Promise<PortView[]>;
   resolve(input: { org: string; server: string; profile?: string }): Promise<ResolvedServer>;
 }
@@ -67,8 +67,8 @@ export function translateUpstream(err: unknown): ManagerError {
   return new ManagerError("upstream", message);
 }
 
-interface ScanRecord {
-  port_scan?: { listening_ports?: Array<{ port?: number; protocol?: string; address?: string; process?: string | null }> } | null;
+interface PortScan {
+  listening_ports: Array<{ port: number; protocol: string; address: string; process: string | null }>;
 }
 
 export class ApiDirectory implements Directory {
@@ -101,11 +101,12 @@ export class ApiDirectory implements Directory {
     return this.guard(async () => {
       const { ctx, tenantId } = await this.context(org, profile);
       const serverId = await resolveServer(ctx.client, tenantId, server);
-      const record = await ctx.client.get<ScanRecord>(`/tenants/${tenantId}/servers/${serverId}`);
-      return (record.port_scan?.listening_ports ?? []).map((p) => ({
-        port: Number(p.port),
-        protocol: p.protocol ?? "tcp",
-        bind_address: p.address ?? "",
+      // The record's stored port_scan is null until something has scanned the server.
+      const scan = await ctx.client.get<PortScan>(`/tenants/${tenantId}/servers/${serverId}/ports`);
+      return scan.listening_ports.map((p) => ({
+        port: p.port,
+        protocol: p.protocol,
+        bind_address: p.address,
         process: p.process ?? "",
       }));
     });

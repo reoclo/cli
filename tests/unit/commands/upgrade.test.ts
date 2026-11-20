@@ -3,6 +3,7 @@ import {
   delegatedUpgradeArgv,
   detectInstallMethod,
   managedUpgradeInstructions,
+  versionLine,
   resolveLatestVersion,
 } from "../../../src/commands/upgrade";
 
@@ -361,5 +362,41 @@ describe("managedUpgradeInstructions (REO-380)", () => {
       "Installed via mise. Upgrade with:",
       "  mise install reoclo@0.81.0 && mise use -g reoclo@0.81.0",
     ]);
+  });
+});
+
+describe("detectInstallMethod, the desktop app's copy", () => {
+  const NO_MARKERS = { fileExists: (_p: string) => false, readFile: (_p: string) => null };
+
+  test("a copy inside /Applications/Reoclo.app is desktop", () => {
+    expect(
+      detectInstallMethod("/Applications/Reoclo.app/Contents/Resources/reoclo", NO_MARKERS),
+    ).toBe("desktop");
+  });
+
+  test("a copy inside ~/Applications/Reoclo.app is desktop", () => {
+    expect(
+      detectInstallMethod(
+        "/Users/me/Applications/Reoclo.app/Contents/Resources/reoclo",
+        NO_MARKERS,
+      ),
+    ).toBe("desktop");
+  });
+
+  test("a binary that only sits in a folder named .app elsewhere stays raw", () => {
+    expect(detectInstallMethod("/Users/me/tools.app/reoclo", NO_MARKERS)).toBe("raw");
+  });
+});
+
+describe("versionLine", () => {
+  test("a plain install prints the bare version, which Homebrew and the app parse", () => {
+    expect(versionLine("0.116.2", "raw")).toBe("0.116.2");
+    expect(versionLine("0.116.2", "homebrew")).toBe("0.116.2");
+  });
+
+  test("the desktop copy keeps the version first and names its install type after it", () => {
+    const line = versionLine("0.116.2", "desktop");
+    expect(line.split(/\s+/)[0]).toBe("0.116.2");
+    expect(line).not.toBe("0.116.2");
   });
 });
