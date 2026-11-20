@@ -121,7 +121,7 @@ async function failure(p: Promise<unknown>): Promise<DaemonError> {
 }
 
 describe("directory routes", () => {
-  it("lists organizations, servers and the stored port scan", async () => {
+  it("lists organizations, servers and a server's ports", async () => {
     expect(await cli.orgs()).toEqual([{ id: "t1", slug: "acme", name: "Acme" }]);
     expect((await cli.servers("acme"))[0]).toMatchObject({ id: "s1", slug: "prod-1", connection_type: "runner" });
     expect(await cli.ports("acme", "prod-1")).toEqual([
