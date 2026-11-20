@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { Command } from "commander";
-import { registerAlerts } from "../../../src/commands/alerts";
+import { instancesQuery, registerAlerts } from "../../../src/commands/alerts";
 import { getCompletionSpec } from "../../../src/client/command-meta";
 
 function alertsCmd(): Command {
@@ -154,5 +154,34 @@ describe("reoclo alerts", () => {
     const fromFile = set.options.find((o) => o.long === "--from-file");
     expect(fromFile).toBeDefined();
     expect(fromFile?.mandatory).toBe(true);
+  });
+});
+
+describe("instancesQuery", () => {
+  afterEach(() => setSystemTime());
+
+  test("turns a relative since into an ISO timestamp", () => {
+    setSystemTime(new Date("2026-11-20T12:00:00Z"));
+    expect(instancesQuery({ state: "resolved", since: "7d" })).toBe(
+      "?state=resolved&since=2026-11-13T12%3A00%3A00.000Z",
+    );
+  });
+
+  test("passes an ISO since through as a timestamp", () => {
+    expect(instancesQuery({ since: "2026-11-01T08:30:00Z" })).toBe("?since=2026-11-01T08%3A30%3A00.000Z");
+  });
+
+  test("splits --resource into kind and id", () => {
+    expect(instancesQuery({ severity: "critical", resource: "server:web-1" })).toBe(
+      "?severity=critical&resource_kind=server&resource_id=web-1",
+    );
+  });
+
+  test("is empty with no filters", () => {
+    expect(instancesQuery({})).toBe("");
+  });
+
+  test("rejects a since it cannot read", () => {
+    expect(() => instancesQuery({ since: "last week" })).toThrow("invalid time spec");
   });
 });

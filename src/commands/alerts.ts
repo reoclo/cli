@@ -6,6 +6,28 @@ import { withCompletion } from "../client/command-meta";
 import { cacheList } from "../completion/populate";
 import { openFindingsNote } from "./findings";
 import { globalOutput, printList, printMutation, printObject, resolveFormat } from "../ui/output";
+import { parseTimeSpec } from "../util/time";
+
+export interface InstanceFilters {
+  state?: string;
+  severity?: string;
+  resource?: string;
+  since?: string;
+}
+
+/** Query string for GET /alerts/instances. The API takes `since` as ISO 8601, so a window such as 7d is turned into a timestamp here. */
+export function instancesQuery(filters: InstanceFilters): string {
+  const params = new URLSearchParams();
+  if (filters.state) params.set("state", filters.state);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.resource) {
+    const [kind, id] = filters.resource.split(":");
+    if (kind) params.set("resource_kind", kind);
+    if (id) params.set("resource_id", id);
+  }
+  if (filters.since) params.set("since", parseTimeSpec(filters.since).toISOString());
+  return params.toString() ? `?${params.toString()}` : "";
+}
 
 const ALERT_STATES = ["firing", "acknowledged", "resolved"];
 const ALERT_SEVERITIES = ["info", "warn", "critical"];
@@ -156,29 +178,14 @@ export function registerAlerts(program: Command): void {
       .option("--state <state>", "filter by state (firing|acknowledged|resolved)")
       .option("--severity <severity>", "filter by severity (info|warn|critical)")
       .option("--resource <kind:id>", "filter by resource (e.g. server:my-server)")
-      .option("--since <duration>", "filter to instances fired within duration (for example 24h, 7d)")
+      .option("--since <spec>", "filter to instances fired since a time (for example 24h, 7d or ISO 8601)")
       .action(
-        async (opts: {
-          state?: string;
-          severity?: string;
-          resource?: string;
-          since?: string;
-        }) => {
+        async (opts: InstanceFilters) => {
           const fmt = resolveFormat(globalOutput(program));
           const ctx = await bootstrap();
           const tid = await requireTenantId(ctx);
-          const params = new URLSearchParams();
-          if (opts.state) params.set("state", opts.state);
-          if (opts.severity) params.set("severity", opts.severity);
-          if (opts.resource) {
-            const [kind, id] = opts.resource.split(":");
-            if (kind) params.set("resource_kind", kind);
-            if (id) params.set("resource_id", id);
-          }
-          if (opts.since) params.set("since", opts.since);
-          const qs = params.toString() ? `?${params.toString()}` : "";
           const list = await ctx.client.get<AlertInstance[]>(
-            `/tenants/${tid}/alerts/instances${qs}`,
+            `/tenants/${tid}/alerts/instances${instancesQuery(opts)}`,
           );
           cacheList("alert-instances", list);
           printList(
@@ -264,15 +271,13 @@ export function registerAlerts(program: Command): void {
     g
       .command("history")
       .description("list recently resolved alerts (sugar for list --state=resolved)")
-      .option("--since <duration>", "look-back window (default: 7d)")
+      .option("--since <spec>", "look-back window, for example 24h or ISO 8601 (default: 7d)")
       .action(async (opts: { since?: string }) => {
         const fmt = resolveFormat(globalOutput(program));
         const ctx = await bootstrap();
         const tid = await requireTenantId(ctx);
-        const since = opts.since ?? "7d";
-        const list = await ctx.client.get<AlertInstance[]>(
-          `/tenants/${tid}/alerts/instances?state=resolved&since=${encodeURIComponent(since)}`,
-        );
+        const qs = instancesQuery({ state: "resolved", since: opts.since ?? "7d" });
+        const list = await ctx.client.get<AlertInstance[]>(`/tenants/${tid}/alerts/instances${qs}`);
         printList(
           list as unknown as Array<Record<string, unknown>>,
           [
