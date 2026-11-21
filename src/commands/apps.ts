@@ -25,6 +25,7 @@ import { parseSetFlags } from "../util/parse-set";
 import { assertPushTarget, parseBuildPlacement } from "../util/build-placement";
 import { parseHealthCheck } from "../util/health-check";
 import { parseSubmodules, withSubmodules } from "../util/submodules";
+import { parseBlueGreen } from "../util/blue-green";
 import {
   applicationPath,
   setSubmodules,
@@ -566,6 +567,10 @@ export function registerApps(program: Command): void {
       )
       .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive")
       .option(
+        "--blue-green <mode>",
+        "start each new version beside the running one until its health check passes: on or off",
+      )
+      .option(
         "--env <KEY=VAL>",
         "env var (repeatable)",
         (val: string, prev?: string[]) => [...(prev ?? []), val],
@@ -589,12 +594,14 @@ export function registerApps(program: Command): void {
             pushRepository?: string;
             healthCheck?: string;
             submodules?: string;
+            blueGreen?: string;
             env?: string[];
             set?: string[];
           },
         ) => {
           const submodules =
             opts.submodules === undefined ? undefined : parseSubmodules(opts.submodules);
+          const blueGreen = opts.blueGreen === undefined ? undefined : parseBlueGreen(opts.blueGreen);
           const ctx = await bootstrap();
           const tid = await requireTenantId(ctx);
           const aid = await resolveApp(ctx.client, tid, idOrSlug);
@@ -635,6 +642,7 @@ export function registerApps(program: Command): void {
             if (hc.http_path !== undefined) setPath(["deploy", "health_check", "http_path"], hc.http_path);
             if (hc.command !== undefined) setPath(["deploy", "health_check", "command"], hc.command);
           }
+          if (blueGreen !== undefined) setPath(["deploy", "blue_green"], blueGreen);
           if (opts.env && opts.env.length > 0) {
             const envMap: Record<string, string> = {};
             for (const kv of opts.env) {

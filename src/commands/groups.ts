@@ -26,7 +26,8 @@ import type { DeploymentCancelResult, Repository } from "../client/types";
 import { parseLimit } from "../util/parse-limit";
 import { badUsage } from "../util/parse-flag";
 import { parseSubmodules, withSubmodules } from "../util/submodules";
-import { groupPath, setSubmodules, setSubmodulesAfterCreate } from "../client/submodules";
+import { groupPath, setSubmodulesAfterCreate } from "../client/submodules";
+import { parseBlueGreen } from "../util/blue-green";
 
 export interface GroupRead {
   id: string;
@@ -511,18 +512,25 @@ export function registerGroups(program: Command): void {
     .command("set <group>")
     .description("update stack settings (id or slug)")
     .option("--submodules <mode>", "check out git submodules on deploy: off, on or recursive")
-    .action(async (ref: string, opts: { submodules?: string }) => {
-      if (opts.submodules === undefined) {
+    .option(
+      "--blue-green <mode>",
+      "roll out every service with a health check beside its running container: on or off",
+    )
+    .action(async (ref: string, opts: { submodules?: string; blueGreen?: string }) => {
+      if (opts.submodules === undefined && opts.blueGreen === undefined) {
         const e = badUsage("no fields to update");
         e.exitCode = 4;
         throw e;
       }
-      const submodules = parseSubmodules(opts.submodules);
+      // One PATCH carries every setting given; the API leaves the others alone.
+      const body: Record<string, unknown> = {};
+      if (opts.submodules !== undefined) body["submodules"] = parseSubmodules(opts.submodules);
+      if (opts.blueGreen !== undefined) body["blue_green"] = parseBlueGreen(opts.blueGreen);
       const ctx = await bootstrap();
       const tid = await requireTenantId(ctx);
       const group = await resolveGroup(ctx.client.get.bind(ctx.client), tid, ref);
-      const updated = await setSubmodules(ctx.client, groupPath(tid, group.id), submodules);
-      printMutation(program, { ...updated, submodules }, `✓ stack updated: ${group.slug}`);
+      const updated = await ctx.client.patch<Record<string, unknown>>(groupPath(tid, group.id), body);
+      printMutation(program, { ...updated, ...body }, `✓ stack updated: ${group.slug}`);
     });
 
   // No requireCapability: the endpoint needs the applications:delete
