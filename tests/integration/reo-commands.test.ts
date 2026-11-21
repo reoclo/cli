@@ -52,7 +52,7 @@ beforeEach(() => {
           return Response.json({ build: { buildpack: "node" }, deploy: { replicas: 2 } });
         case `GET ${base}/application-groups/`:
           return Response.json([
-            { id: GROUP, slug: "web", name: "Web", kind: "compose", server_id: SERVER, submodules: "on" },
+            { id: GROUP, slug: "web", name: "Web", kind: "compose", server_id: SERVER, submodules: "on", blue_green: true },
             { id: "g-2", slug: "plain", name: "Plain", kind: "compose", server_id: SERVER },
           ]);
         case `PATCH ${base}/application-groups/${GROUP}`:
@@ -296,6 +296,43 @@ test("stacks config set without a field exits 4 and a bad value exits 2", async 
   expect(bad.exitCode).toBe(2);
   expect(bad.stderr).toContain("expected one of: off, on, recursive");
   expect(seen.some((s) => s.method === "PATCH")).toBe(false);
+});
+
+test("stacks config set --blue-green on turns the stack's setting on", async () => {
+  const r = await run(["stacks", "config", "set", "web", "--blue-green", "on"]);
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("stack updated: web");
+  expect(bodyOf("PATCH", `/tenants/${T}/application-groups/${GROUP}`)).toEqual({ blue_green: true });
+});
+
+test("stacks config set sends --blue-green and --submodules in one patch", async () => {
+  const r = await run(["stacks", "config", "set", "web", "--blue-green", "off", "--submodules", "on"]);
+  expect(r.exitCode).toBe(0);
+  expect(seen.filter((s) => s.method === "PATCH")).toHaveLength(1);
+  expect(bodyOf("PATCH", `/tenants/${T}/application-groups/${GROUP}`)).toEqual({
+    submodules: "on",
+    blue_green: false,
+  });
+});
+
+test("a bad --blue-green value exits 2 before any request", async () => {
+  const stack = await run(["stacks", "config", "set", "web", "--blue-green", "maybe"]);
+  expect(stack.exitCode).toBe(2);
+  expect(stack.stderr).toContain("expected one of: on, off");
+  const app = await run(["apps", "config", "set", APP, "--blue-green", "yes"]);
+  expect(app.exitCode).toBe(2);
+  expect(seen).toHaveLength(0);
+});
+
+test("stacks get shows the blue-green setting", async () => {
+  const r = await run(["-o", "json", "stacks", "get", "web"]);
+  expect((JSON.parse(r.stdout) as { blue_green: boolean }).blue_green).toBe(true);
+});
+
+test("apps config set --blue-green on sends a deploy-only config patch", async () => {
+  const r = await run(["apps", "config", "set", APP, "--blue-green", "on"]);
+  expect(r.exitCode).toBe(0);
+  expect(bodyOf("PATCH", `/tenants/${T}/applications/${APP}/config`)).toEqual({ deploy: { blue_green: true } });
 });
 
 test("stacks get shows the submodules mode, off when absent", async () => {
