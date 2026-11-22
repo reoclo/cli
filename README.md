@@ -64,4 +64,4 @@ Issues and feature requests: <https://github.com/reoclo/cli/issues>
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+Apache-2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
