@@ -1,6 +1,6 @@
 {
   "name": "@reoclo/cli",
-  "version": "0.120.0",
+  "version": "0.121.0",
   "description": "Reoclo command-line interface",
   "license": "Apache-2.0",
   "bin": {
