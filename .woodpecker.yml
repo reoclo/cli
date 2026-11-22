@@ -14,6 +14,10 @@
 #   github_release_token — GitHub PAT with contents:write on reoclo/cli
 #   homebrew_tap_token   — GitHub PAT with contents:write on reoclo/homebrew-tap
 #                          (optional: if unset, the homebrew step logs and skips)
+#   macos_developer_id_p12, macos_developer_id_p12_password, asc_api_key_json
+#                        — Developer ID certificate and App Store Connect key that
+#                          scripts/sign-macos.sh signs and notarizes the macOS
+#                          binaries with (tag events only)
 #
 # Re-running the same tag is safe: an existing release with the same tag is
 # reused, and assets that are already attached are skipped — a retry after a
@@ -107,6 +111,12 @@ steps:
       HOMEBREW_TAP_REPO: reoclo/homebrew-tap
       HOMEBREW_TAP_TOKEN:
         from_secret: homebrew_tap_token
+      MACOS_DEVELOPER_ID_P12:
+        from_secret: macos_developer_id_p12
+      MACOS_DEVELOPER_ID_P12_PASSWORD:
+        from_secret: macos_developer_id_p12_password
+      ASC_API_KEY_JSON:
+        from_secret: asc_api_key_json
     commands:
       - apt-get update
       # python3 + build-essential are required for node-pty's native build
@@ -123,6 +133,8 @@ steps:
       - 'set -e; for f in $(find tests/unit -name "*.test.ts" | sort); do echo "==> $f"; bun test "$f" > /tmp/reoclo-test.log 2>&1 || { cat /tmp/reoclo-test.log; echo "FAILED: $f"; exit 1; }; done'
       - bun run typecheck
       - bun run build
+      # Signed before the checksums, so every channel ships the notarized files.
+      - bash scripts/sign-macos.sh
       - cd dist && sha256sum reoclo-* > SHA256SUMS && cd ..
       - bash scripts/release.sh
       - bash scripts/publish-homebrew.sh
