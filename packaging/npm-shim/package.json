@@ -2,7 +2,7 @@
   "name": "@reoclo/cli",
   "version": "0.0.0-placeholder",
   "description": "Reoclo CLI",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://reoclo.com",
   "repository": { "type": "git", "url": "git+https://github.com/reoclo/cli.git" },
   "bin": { "reoclo": "bin.js", "rc": "bin.js" },

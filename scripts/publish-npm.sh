@@ -74,7 +74,7 @@ publish_platform() {
   cp "dist/$artifact" "$dir/$exe"
   chmod 755 "$dir/$exe"
   jq -n --arg name "$name" --arg ver "$VER" --arg os "$os" --arg cpu "$cpu" \
-    '{name: $name, version: $ver, description: "Reoclo CLI binary for \($os)-\($cpu); install @reoclo/cli instead", license: "MIT", homepage: "https://reoclo.com", repository: {type: "git", url: "git+https://github.com/reoclo/cli.git"}, os: [$os], cpu: [$cpu]}' \
+    '{name: $name, version: $ver, description: "Reoclo CLI binary for \($os)-\($cpu); install @reoclo/cli instead", license: "Apache-2.0", homepage: "https://reoclo.com", repository: {type: "git", url: "git+https://github.com/reoclo/cli.git"}, os: [$os], cpu: [$cpu]}' \
     > "$dir/package.json"
   publish "$name" "$dir"
 }

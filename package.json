@@ -2,7 +2,7 @@
   "name": "@reoclo/cli",
   "version": "0.120.0",
   "description": "Reoclo command-line interface",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "bin": {
     "reoclo": "./dist/reoclo"
   },
