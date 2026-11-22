@@ -67,6 +67,20 @@ Equivalent direct URL (handy in environments where the redirect isn't followed):
 curl -sSL https://github.com/reoclo/cli/releases/latest/download/install.sh | bash
 ```
 
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install reoclo/tap/reoclo
+```
+
+**npm:**
+
+```bash
+npm i -g @reoclo/cli
+```
+
+The npm package is a small shim that pulls in the binary for your platform, the same one the other channels install.
+
 ### Manual install
 
 If you'd rather download the binary yourself, every release attaches a binary per platform plus a `SHA256SUMS` file. Pick the right one from [the latest release](https://github.com/reoclo/cli/releases/latest):
@@ -101,6 +115,16 @@ Verify against `SHA256SUMS`:
 curl -L -o SHA256SUMS https://github.com/reoclo/cli/releases/latest/download/SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
+
+### macOS signing
+
+From 0.120.0 the macOS binaries are signed with the Developer ID of BOXMARSHALL LTD and notarized by Apple, so macOS runs a binary you downloaded in a browser without a Gatekeeper prompt. Every channel above installs the same signed files. To check yours:
+
+```bash
+codesign -dvv "$(command -v reoclo)" 2>&1 | grep -E 'Authority=Developer ID Application|TeamIdentifier'
+```
+
+If macOS blocks an older binary you downloaded in a browser, run `reoclo upgrade`, or clear the quarantine flag once with `xattr -d com.apple.quarantine "$(command -v reoclo)"`.
 
 ### Self-update
 
@@ -537,6 +561,8 @@ Run tests and typecheck:
 bun test tests/unit/
 bun run typecheck
 ```
+
+A local build leaves the macOS binaries signed ad hoc. Releases are built on Woodpecker when a `vX.Y.Z` tag is pushed: the tag pipeline signs and notarizes the macOS binaries with `scripts/sign-macos.sh` before it writes `SHA256SUMS`, then publishes the GitHub release and the Homebrew formula. npm publishes from the GitHub release.
 
 ## Reporting issues
 
