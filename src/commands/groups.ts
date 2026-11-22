@@ -38,6 +38,8 @@ export interface GroupRead {
   repository_id?: string | null;
   deploy_branch?: string | null;
   auto_deploy?: boolean;
+  require_ci?: boolean;
+  blue_green?: boolean;
   submodules?: string | null;
   compose_file_path?: string | null;
   application_count?: number;
@@ -434,7 +436,8 @@ export function registerGroups(program: Command): void {
         name: r.name,
         kind: r.kind,
         apps: r.application_count ?? "",
-        ci: (r as { require_ci?: boolean }).require_ci ? "on" : "off",
+        ci: r.require_ci ? "on" : "off",
+        "blue-green": r.blue_green ? "on" : "off",
         "last deploy": r.latest_deployment
           ? `#${r.latest_deployment.deployment_number} ${r.latest_deployment.status}`
           : "",
@@ -447,6 +450,7 @@ export function registerGroups(program: Command): void {
           { key: "kind", label: "KIND" },
           { key: "apps", label: "APPS" },
           { key: "ci", label: "CI" },
+          { key: "blue-green", label: "BLUE-GREEN" },
           { key: "last deploy", label: "LAST DEPLOY" },
         ],
         fmt,
