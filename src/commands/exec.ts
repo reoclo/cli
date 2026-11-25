@@ -239,6 +239,25 @@ export function buildAutomationExecBody(args: {
   return body;
 }
 
+/** Exit codes of a process ended by a signal: 128 plus the signal number. */
+const INTERRUPT_SIGNALS = [
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+  ["SIGHUP", 129],
+] as const;
+
+/** Call `onInterrupt` with the exit code of the first interrupt signal; returns the remover. */
+function onInterruptSignals(onInterrupt: (exitCode: number) => void): () => void {
+  const handlers = INTERRUPT_SIGNALS.map(([name, code]) => {
+    const handler = (): void => onInterrupt(code);
+    process.once(name, handler);
+    return [name, handler] as const;
+  });
+  return () => {
+    for (const [name, handler] of handlers) process.off(name, handler);
+  };
+}
+
 export function registerExec(program: Command): void {
   const execCmd = withCompletion(program.command("exec <serverIdOrName> [command...]"), {
     args: [{ slot: 0, resource: "servers" }],
@@ -374,19 +393,29 @@ export function registerExec(program: Command): void {
           // CI / automation-key path: flat /api/automation/v1/exec + run_context.
           const sid = requireServerUuid(serverIdOrName);
           const ci = detectCiContext();
-          const r = await execOnServer(
-            ctx.client.withTimeout(execClientTimeoutMs(timeoutSeconds)),
-            buildAutomationExecBody({
-              serverId: sid,
-              command,
-              cwd: opts.cwd,
-              env: mergedEnv,
-              timeoutSeconds: opts.timeout !== undefined ? timeoutSeconds : undefined,
-              runId: ci.runId,
-              runContext: ci.runContext,
-            }),
-          );
-          res = buildAutomationExecOutput(r);
+          // A CI job that is cancelled signals this process; stop the remote
+          // command with it instead of leaving it to run on the server.
+          const interrupt = new AbortController();
+          const removeInterruptHandlers = onInterruptSignals((code) => interrupt.abort(code));
+          try {
+            const r = await execOnServer(
+              ctx.client.withTimeout(execClientTimeoutMs(timeoutSeconds)),
+              buildAutomationExecBody({
+                serverId: sid,
+                command,
+                cwd: opts.cwd,
+                env: mergedEnv,
+                timeoutSeconds: opts.timeout !== undefined ? timeoutSeconds : undefined,
+                runId: ci.runId,
+                runContext: ci.runContext,
+              }),
+              undefined,
+              interrupt.signal,
+            );
+            res = buildAutomationExecOutput(r);
+          } finally {
+            removeInterruptHandlers();
+          }
         } else {
           const tid = await requireTenantId(ctx);
           const serverId = await resolveServer(ctx.client, tid, serverIdOrName);
