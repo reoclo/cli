@@ -41,6 +41,8 @@ export interface AutomationExecRequest {
   timeout_seconds?: number;
   run_id?: string;
   run_context?: RunContext;
+  /** Seconds without a poll after which the API stops the command (30-600). */
+  abandon_after_seconds?: number;
 }
 
 export interface AutomationExecResult {
