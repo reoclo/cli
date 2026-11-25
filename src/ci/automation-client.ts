@@ -93,17 +93,59 @@ export function pollBudgetAttempts(
   return Math.max(MIN_POLL_ATTEMPTS, Math.ceil(windowMs / intervalMs));
 }
 
+/** Exit code of a command stopped by Ctrl+C (128 + SIGINT). A signal that stops
+ *  the command passes its own code (128 + signal number) as the abort reason. */
+const EXIT_INTERRUPTED = 130;
+
+/** Ask the API to stop a running exec command. Best effort: the caller is
+ *  already on its way out, so a refusal or an unreachable API is only noted. */
+export async function cancelOperation(
+  client: Pick<HttpClient, "post">,
+  operationId: string,
+): Promise<void> {
+  try {
+    await client.post(`/operations/${operationId}/cancel`, {});
+  } catch (err) {
+    process.stderr.write(
+      `warning: could not cancel operation ${operationId}: ${(err as Error).message}\n`,
+    );
+  }
+}
+
+function interruptedErr(signal: AbortSignal, operationId: string): Error & { exitCode: number } {
+  const code = typeof signal.reason === "number" ? signal.reason : EXIT_INTERRUPTED;
+  return exitErr(`interrupted, cancelled operation ${operationId}`, code);
+}
+
+/** Resolves with the abort of `signal`; never resolves when there is none. */
+function aborted(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return new Promise<void>(() => {});
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+}
+
+/**
+ * Poll until the operation is terminal. When `signal` aborts, the operation is
+ * cancelled on the server and the poll ends with an interrupted error, so a
+ * CI job that is cancelled stops its remote command too.
+ */
 export async function pollUntilComplete(
-  client: Pick<HttpClient, "get">,
+  client: Pick<HttpClient, "get"> & Partial<Pick<HttpClient, "post">>,
   operationId: string,
   sleep: (ms: number) => Promise<void> = defaultSleep,
   intervalMs = POLL_INTERVAL_MS,
   maxAttempts = MIN_POLL_ATTEMPTS,
+  signal?: AbortSignal,
 ): Promise<OperationDetail> {
+  const abort = aborted(signal);
   for (let i = 0; i < maxAttempts; i++) {
+    if (signal?.aborted) {
+      if (client.post) await cancelOperation({ post: client.post.bind(client) }, operationId);
+      throw interruptedErr(signal, operationId);
+    }
     const detail = await client.get<OperationDetail>(`/operations/${operationId}`);
     if (TERMINAL.has(detail.status)) return detail;
-    await sleep(intervalMs);
+    await Promise.race([sleep(intervalMs), abort]);
   }
   throw exitErr(`operation ${operationId} did not complete after ${maxAttempts} polls`, 1);
 }
@@ -112,6 +154,7 @@ export async function execOnServer(
   client: PostGet,
   req: AutomationExecRequest,
   sleep: (ms: number) => Promise<void> = defaultSleep,
+  signal?: AbortSignal,
 ): Promise<AutomationExecResult> {
   const res = await client.post<ExecResponse>("/exec", req);
   if (TERMINAL.has(res.status)) {
@@ -129,6 +172,7 @@ export async function execOnServer(
     sleep,
     POLL_INTERVAL_MS,
     pollBudgetAttempts(req.timeout_seconds),
+    signal,
   );
   const r = detail.result ?? {};
   return {

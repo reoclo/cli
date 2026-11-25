@@ -52,6 +52,71 @@ describe("execOnServer", () => {
   });
 });
 
+describe("execOnServer interrupted by a signal", () => {
+  function exitCodeOf(err: unknown): number | undefined {
+    return (err as { exitCode?: number }).exitCode;
+  }
+
+  test("cancels the operation on the server and exits with the signal's code", async () => {
+    const abort = new AbortController();
+    const { client, calls } = stubClient(
+      [{ operation_id: "op3", status: "running" }, {}],
+      [{ status: "running" }],
+    );
+    // The first poll sleeps; the signal arrives while the command runs.
+    const sleep = () => {
+      abort.abort(143);
+      return Promise.resolve();
+    };
+
+    const err = await execOnServer(client, { server_id: UUID, command: "slow" }, sleep, abort.signal).catch(
+      (e: unknown) => e,
+    );
+
+    expect(exitCodeOf(err)).toBe(143);
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "POST /exec",
+      "GET /operations/op3",
+      "POST /operations/op3/cancel",
+    ]);
+  });
+
+  test("a signal that arrives before the first poll still cancels the operation", async () => {
+    const abort = new AbortController();
+    const { client, calls } = stubClient([{ operation_id: "op4", status: "running" }, {}], []);
+    abort.abort();
+
+    const err = await execOnServer(client, { server_id: UUID, command: "slow" }, async () => {}, abort.signal).catch(
+      (e: unknown) => e,
+    );
+
+    expect(exitCodeOf(err)).toBe(130);
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /exec", "POST /operations/op4/cancel"]);
+  });
+
+  test("a cancel the API refuses still ends the command with the signal's code", async () => {
+    const abort = new AbortController();
+    abort.abort(129);
+    const calls: string[] = [];
+    const client = {
+      post: <T>(path: string): Promise<T> => {
+        calls.push(path);
+        return path === "/exec"
+          ? Promise.resolve({ operation_id: "op5", status: "running" } as T)
+          : Promise.reject(new Error("API unreachable"));
+      },
+      get: <T>(): Promise<T> => Promise.reject(new Error("not polled")),
+    };
+
+    const err = await execOnServer(client, { server_id: UUID, command: "slow" }, async () => {}, abort.signal).catch(
+      (e: unknown) => e,
+    );
+
+    expect(exitCodeOf(err)).toBe(129);
+    expect(calls).toEqual(["/exec", "/operations/op5/cancel"]);
+  });
+});
+
 describe("pollBudgetAttempts", () => {
   test("scales the poll window with the command timeout (+margin)", () => {
     // 900s timeout + 60s margin = 960s window @2s = 480 polls (was capped at 300).
