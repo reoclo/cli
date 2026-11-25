@@ -252,6 +252,14 @@ describe("buildAutomationExecBody", () => {
     });
     expect(body.env).toEqual({ A: "1" });
   });
+
+  test("asks the API to stop the command once this process stops polling", () => {
+    const body = buildAutomationExecBody({
+      serverId: "11111111-2222-3333-4444-555555555555",
+      command: "x",
+    });
+    expect(body.abandon_after_seconds).toBe(60);
+  });
 });
 
 describe("buildAutomationExecOutput", () => {

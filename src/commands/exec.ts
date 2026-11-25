@@ -221,6 +221,14 @@ export function selectTenantExecClient(
   return client.withBaseUrl(ctx.streamsUrl).withPrefix("");
 }
 
+/**
+ * Asks the API to stop the command once this process stops polling for its
+ * result (REO-859). A CI runner that kills a cancelled job's container never
+ * lets the interrupt handler send its cancel, and the lease covers that. The
+ * CLI polls every 2 seconds, so 60 seconds is 30 missed polls.
+ */
+export const EXEC_ABANDON_AFTER_SECONDS = 60;
+
 export function buildAutomationExecBody(args: {
   serverId: string;
   command: string;
@@ -230,7 +238,11 @@ export function buildAutomationExecBody(args: {
   runId?: string;
   runContext?: RunContext;
 }): AutomationExecRequest {
-  const body: AutomationExecRequest = { server_id: args.serverId, command: args.command };
+  const body: AutomationExecRequest = {
+    server_id: args.serverId,
+    command: args.command,
+    abandon_after_seconds: EXEC_ABANDON_AFTER_SECONDS,
+  };
   if (args.cwd) body.working_directory = args.cwd;
   if (args.env && Object.keys(args.env).length > 0) body.env = args.env;
   if (args.timeoutSeconds !== undefined) body.timeout_seconds = args.timeoutSeconds;
